@@ -26,8 +26,8 @@ import sibarum.tactroller.atchung.TactrollerInputBridge;
 public final class CalculatorApp {
 
     /** Window and capture size, in the engine's logical coordinates. */
-    private static final int W = 360;
-    private static final int H = 520;
+    private static final int W = 420;
+    private static final int H = 600;
 
     private static final Color BG = Color.rgb(0x11141b);
     private static final Color PANEL = Color.rgb(0x1b2130);
@@ -44,11 +44,15 @@ public final class CalculatorApp {
         args = java.util.Arrays.stream(args).filter(s -> !s.isBlank()).toArray(String[]::new);
 
         Gui gui = new Gui();
-        gui.minSize(Length.em(18), Length.em(26));
-        buildUi(gui);
+        gui.minSize(Length.em(21), Length.em(30));
+        Engine engine = buildUi(gui);
         zoomShortcuts(gui);
 
         if (args.length >= 1 && args[0].equals("--capture")) {
+            // Exercise the whole symbolic vertical before the shot: the wheel's 1/0 must render as ω.
+            for (String k : new String[]{"1", "÷", "0", "="}) {
+                engine.press(k);
+            }
             GuiApp.capture(gui, W, H, 0.06f, 0.07f, 0.09f, args.length >= 2 ? args[1] : "calculator.png");
             System.out.println("captured");
             return;
@@ -107,24 +111,27 @@ public final class CalculatorApp {
         }
     }
 
-    private static void buildUi(Gui gui) {
+    private static Engine buildUi(Gui gui) {
         Node display = gui.text("0")
                 .width(Length.FILL).height(Length.rem(5))
                 .background(PANEL).corner(Length.rem(0.75f)).border(Length.rem(0.1f), LINE)
                 .lit(true).elevation(Length.rem(0.5f))
                 .padding(Length.dp(16))
-                .textSize(Length.rem(2.25f)).textColor(INK)
+                .textSize(Length.rem(1.75f)).textColor(INK)
                 .align(TextLayout.HAlign.RIGHT, TextLayout.VAlign.MIDDLE);
 
         Engine engine = new Engine(display);
 
-        // The keypad: rows of flex-grown buttons, no hard-coded rects anywhere.
+        // The keypad: rows of flex-grown buttons, no hard-coded rects anywhere. Beyond digits: the
+        // constants e/i/π, the wheel's ω (= 1/0), plotting variables x/y/z, ^ for n^x, and log(x, n)
+        // for log base n (via the log/comma/paren keys).
         String[][] rows = {
-                {"C", "±", "%", "÷"},
-                {"7", "8", "9", "×"},
-                {"4", "5", "6", "−"},
-                {"1", "2", "3", "+"},
-                {"0", ".", "DEL", "="},
+                {"C", "DEL", "(", ")", "÷"},
+                {"7", "8", "9", "^", "×"},
+                {"4", "5", "6", "log", "−"},
+                {"1", "2", "3", ",", "+"},
+                {"0", ".", "x", "y", "z"},
+                {"e", "i", "π", "ω", "="},
         };
         Node pad = gui.column().width(Length.FILL).height(Length.FILL).gap(Length.rem(0.5f));
         for (String[] row : rows) {
@@ -132,7 +139,8 @@ public final class CalculatorApp {
                     .alignItems(AlignItems.STRETCH);
             for (String label : row) {
                 boolean accent = label.equals("=");
-                boolean op = "÷×−+C±%DEL".contains(label);
+                boolean op = java.util.Set.of("÷", "×", "−", "+", "^", "log", ",", "(", ")", "C", "DEL")
+                        .contains(label);
                 Node b = key(gui, label,
                         accent ? Color.WHITE : (op ? DIM : INK),
                         accent ? BTN_BLUE : PANEL,
@@ -151,6 +159,7 @@ public final class CalculatorApp {
                 .padding(Length.dp(16)).gap(Length.rem(0.75f))
                 .children(display, pad);
         gui.root().background(BG).children(root);
+        return engine;
     }
 
     /** One keypad button: lit, elevated, restyled per interaction state. */
@@ -176,15 +185,24 @@ public final class CalculatorApp {
     }
 
     /**
-     * The calculator state machine. Handlers arrive on worker threads, so all state transitions are
-     * synchronized; the only output is the display handle, which is thread-safe by framework contract.
+     * The symbolic expression engine, backed by SymEngine through symengine-panama. The entry is an
+     * expression string in display form (π, ω, ×, ^, ...); "=" translates it to SymEngine syntax,
+     * parses (which auto-simplifies), and prettifies the canonical result back.
+     *
+     * <p>Wheel algebra falls out of SymEngine's extended arithmetic: 1/0 is complex infinity
+     * ({@code zoo}, shown as ω) and 0/0 is undefined ({@code nan}, shown as ⊥), with the wheel
+     * identities ω+a=ω, 0·ω=⊥, 1/ω=0 holding under simplification.
+     *
+     * <p>Handlers arrive on worker threads, so all state transitions are synchronized; the only
+     * output is the display handle, which is thread-safe by framework contract.
      */
     private static final class Engine {
+        /** Entry characters that end an operand — a following operand token implies multiplication. */
+        private static final String OPERAND_TAIL = "0123456789.)eiπωxyz";
+
         private final Node display;
-        private String entry = "0";
-        private double acc;
-        private char pending;      // 0 = none
-        private boolean fresh = true; // next digit starts a new entry
+        private String entry = "";
+        private boolean justEvaluated;
 
         Engine(Node display) {
             this.display = display;
@@ -192,49 +210,60 @@ public final class CalculatorApp {
 
         synchronized void press(String label) {
             switch (label) {
-                case "C" -> { entry = "0"; acc = 0; pending = 0; fresh = true; }
-                case "±" -> entry = entry.startsWith("-") ? entry.substring(1) : ("-" + entry);
-                case "%" -> { entry = trim(value() / 100); fresh = true; }
-                case "DEL" -> entry = entry.length() > 1 && !fresh ? entry.substring(0, entry.length() - 1) : "0";
-                case "." -> {
-                    if (fresh) { entry = "0."; fresh = false; }
-                    else if (!entry.contains(".")) { entry += "."; }
+                case "C" -> { entry = ""; justEvaluated = false; }
+                case "DEL" -> {
+                    if (justEvaluated) { entry = ""; justEvaluated = false; }
+                    else if (!entry.isEmpty()) { entry = entry.substring(0, entry.length() - 1); }
                 }
-                case "+", "−", "×", "÷" -> { commit(); pending = label.charAt(0); fresh = true; }
-                case "=" -> { commit(); pending = 0; fresh = true; }
-                default -> { // digit
-                    entry = fresh || entry.equals("0") ? label : entry + label;
-                    fresh = false;
+                case "=" -> {
+                    if (!entry.isEmpty()) {
+                        entry = evaluate(entry);
+                        justEvaluated = true;
+                    }
+                }
+                case "+", "−", "×", "÷", "^", ",", ")" -> { entry += label; justEvaluated = false; }
+                default -> { // an operand token: digit, ., (, log(, e, i, π, ω, x, y, z
+                    String token = label.equals("log") ? "log(" : label;
+                    if (justEvaluated) { entry = ""; }
+                    if (!entry.isEmpty() && OPERAND_TAIL.indexOf(entry.charAt(entry.length() - 1)) >= 0
+                            && !isDigitLike(token) ) {
+                        entry += "×";   // implicit multiplication: 2π, xy, 3(x+1), ω(...)
+                    }
+                    entry += token;
+                    justEvaluated = false;
                 }
             }
-            display.text(entry);
+            display.text(entry.isEmpty() ? "0" : entry);
         }
 
-        private void commit() {
-            double v = value();
-            acc = switch (pending) {
-                case '+' -> acc + v;
-                case '−' -> acc - v;
-                case '×' -> acc * v;
-                case '÷' -> v == 0 ? Double.NaN : acc / v;
-                default -> v;
-            };
-            entry = trim(acc);
+        /** Digits and the dot continue a number rather than starting a new operand. */
+        private static boolean isDigitLike(String token) {
+            char c = token.charAt(0);
+            return (c >= '0' && c <= '9') || c == '.';
         }
 
-        private double value() {
+        private static String evaluate(String displayForm) {
             try {
-                return Double.parseDouble(entry);
-            } catch (NumberFormatException e) {
-                return 0;
+                return prettify(sibarum.symengine.Expr.parse(toSymEngine(displayForm)).str());
+            } catch (sibarum.symengine.SymEngineException e) {
+                return "Error";
+            } catch (Throwable t) {   // native library missing/unloadable
+                return "CAS unavailable";
             }
         }
 
-        private static String trim(double v) {
-            if (Double.isNaN(v)) {
-                return "Error";
-            }
-            return v == Math.rint(v) && Math.abs(v) < 1e15 ? String.valueOf((long) v) : String.valueOf(v);
+        private static String toSymEngine(String s) {
+            return s.replace("×", "*").replace("÷", "/").replace("−", "-").replace("^", "**")
+                    .replace("π", "pi").replace("ω", "zoo")
+                    .replaceAll("\\be\\b", "E").replaceAll("\\bi\\b", "I");
+        }
+
+        private static String prettify(String s) {
+            // The wheel bottom prints as its definition 0/0 (the font has no ⊥ glyph); it re-parses to nan.
+            return s.replace("**", "^")
+                    .replaceAll("\\bzoo\\b", "ω").replaceAll("\\bnan\\b", "0/0")
+                    .replaceAll("\\bpi\\b", "π")
+                    .replaceAll("\\bE\\b", "e").replaceAll("\\bI\\b", "i");
         }
     }
 

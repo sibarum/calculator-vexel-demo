@@ -4,6 +4,12 @@ A deceptively simple calculator built on [vexelray-gui](../vexelray-gui): a disp
 grid of lit, elevated keys, rendered as one batched SDF draw. Click handlers run on worker threads
 and mutate the display through its thread-safe `Node` handle.
 
+It is symbolic, backed by SymEngine through [symengine-panama](../symengine-panama), with a wheel
+algebra: `1/0 = ω` (complex infinity) and `0/0` is the wheel bottom, with `ω+a=ω`, `0·ω=0/0`,
+`1/ω=0`. The keypad has the constants `e`, `i`, `π`, the wheel's `ω`, plotting variables `x y z`,
+`^` for powers, and `log(x, n)` for log base n. Arithmetic is exact (`1/3 + 1/6` → `1/2`), and
+adjacency multiplies (`2π`, `3(x+1)`).
+
 ## Prerequisites
 
 The sibling stack installed to the local Maven repo, in order: `supirvast`, `vexelray`,
