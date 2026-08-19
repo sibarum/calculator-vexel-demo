@@ -49,8 +49,8 @@ public final class CalculatorApp {
         zoomShortcuts(gui);
 
         if (args.length >= 1 && args[0].equals("--capture")) {
-            // Exercise the whole COTT vertical before the shot: 0^w must render as -1.
-            for (String k : new String[]{"alg", "0", "^", "ω", "="}) {
+            // Exercise the whole COTT vertical before the shot: 0^(w/2) must render as i.
+            for (String k : new String[]{"0", "^", "(", "ω", "÷", "2", ")", "="}) {
                 engine.press(k);
             }
             GuiApp.capture(gui, W, H, 0.06f, 0.07f, 0.09f, args.length >= 2 ? args[1] : "calculator.png");
@@ -125,8 +125,8 @@ public final class CalculatorApp {
         // The keypad: rows of flex-grown buttons, no hard-coded rects anywhere. Beyond digits: the
         // constants e/i/π, the wheel's ω (= 1/0), plotting variables x/y/z, ^ for n^x, and log(x, n)
         // for log base n (via the log/comma/paren keys).
-        // "alg" toggles the engine: SymEngine (classical CAS) <-> COTT (the wheel-algebra torus,
-        // reduced by the bundled Maude interpreter through maude-wrapper).
+        // "alg" toggles the engine: COTT (the wheel-algebra torus, the default,
+        // reduced by the bundled Maude interpreter through maude-wrapper) <-> SymEngine.
         String[][] rows = {
                 {"C", "DEL", "(", ")", "alg", "÷"},
                 {"7", "8", "9", "^", "×"},
@@ -205,8 +205,8 @@ public final class CalculatorApp {
         private final Node display;
         private String entry = "";
         private boolean justEvaluated;
-        /** false = SymEngine (classical CAS); true = COTT (wheel-algebra torus via Maude). */
-        private boolean cott;
+        /** true = COTT (the wheel-algebra torus via Maude, the default); false = SymEngine. */
+        private boolean cott = true;
 
         Engine(Node display) {
             this.display = display;
@@ -368,6 +368,86 @@ public final class CalculatorApp {
             }
         }
 
+        /** An exact rational, kept in lowest terms with a positive denominator. */
+        private record Rat(long num, long den) {
+            static final Rat ZERO = new Rat(0, 1);
+            static final Rat ONE = new Rat(1, 1);
+
+            Rat {
+                if (den == 0) {
+                    throw new SyntaxException("Error");
+                }
+                long g = gcd(Math.abs(num), Math.abs(den));
+                if (g != 0) {
+                    num /= g;
+                    den /= g;
+                }
+                if (den < 0) {
+                    num = -num;
+                    den = -den;
+                }
+            }
+
+            private static long gcd(long a, long b) {
+                return b == 0 ? a : gcd(b, a % b);
+            }
+
+            boolean isZero() {
+                return num == 0;
+            }
+
+            Rat add(Rat o) {
+                return new Rat(num * o.den + o.num * den, den * o.den);
+            }
+
+            Rat neg() {
+                return new Rat(-num, den);
+            }
+
+            Rat mul(Rat o) {
+                return new Rat(num * o.num, den * o.den);
+            }
+
+            Rat div(Rat o) {
+                if (o.isZero()) {
+                    throw new SyntaxException("Error");
+                }
+                return new Rat(num * o.den, den * o.num);
+            }
+
+            /** Maude's Rat literal form. */
+            @Override
+            public String toString() {
+                return den == 1 ? String.valueOf(num) : num + "/" + den;
+            }
+        }
+
+        /** An exponent n + mω, both parts exact rationals. */
+        private record ExpVal(Rat n, Rat m) {
+            ExpVal add(ExpVal o) {
+                return new ExpVal(n.add(o.n), m.add(o.m));
+            }
+
+            ExpVal neg() {
+                return new ExpVal(n.neg(), m.neg());
+            }
+
+            /** Partial: a twist times a twist would be ω squared, the next floor of the tower. */
+            ExpVal mul(ExpVal o) {
+                if (!m.isZero() && !o.m.isZero()) {
+                    throw new SyntaxException("ω² not in COTT");
+                }
+                return new ExpVal(n.mul(o.n), m.isZero() ? n.mul(o.m) : m.mul(o.n));
+            }
+
+            ExpVal div(ExpVal o) {
+                if (!o.m.isZero()) {
+                    throw new SyntaxException("÷ω not in COTT");
+                }
+                return new ExpVal(n.div(o.n), m.div(o.n));
+            }
+        }
+
         /** Display expression -> COTT-GRADED term. Precedence: ^ over × ÷ over + −. */
         private static final class Parser {
             private final String s;
@@ -414,25 +494,73 @@ public final class CalculatorApp {
                 return a;
             }
 
-            /** Exponent forms: n, ω (grade -> twist), (n), or (p÷q) rational. */
+            /**
+             * An exponent is n + mω with n and m rational. Parenthesised exponents take a full
+             * expression, so {@code 0^(ω÷2)} is the half twist; a bare exponent is a single
+             * signed factor, so {@code 0^ω÷2} stays (0^ω)÷2 as precedence demands.
+             *
+             * <p>A twist-free exponent goes through {@code gpow}, which keeps the multiplicity.
+             * Anything with an ω component routes through COTT's own power law, which is defined
+             * on points rather than multiplicity-carrying terms.
+             */
             private String power(String a) {
-                if (p < s.length() && peek() == 'ω') {
-                    next();
-                    return "gr(pt(" + a + ") ^ xp(0, 1))";
-                }
+                ExpVal e;
                 if (p < s.length() && peek() == '(') {
                     next();
-                    String num = integer();
-                    if (p < s.length() && peek() == '÷') {
-                        next();
-                        String den = integer();
-                        expect(')');
-                        return "gpow(" + a + ", " + num + "/" + den + ")";
-                    }
+                    e = expExpr();
                     expect(')');
-                    return "gpow(" + a + ", " + num + ")";
+                } else {
+                    e = expFactorSigned();
                 }
-                return "gpow(" + a + ", " + integer() + ")";
+                if (e.m().isZero()) {
+                    return "gpow(" + a + ", " + e.n() + ")";
+                }
+                return "gr(pt(" + a + ") ^ xp(" + e.n() + ", " + e.m() + "))";
+            }
+
+            private ExpVal expExpr() {
+                ExpVal a = expTerm();
+                while (p < s.length() && (peek() == '+' || peek() == '−')) {
+                    char op = next();
+                    ExpVal b = expTerm();
+                    a = op == '+' ? a.add(b) : a.add(b.neg());
+                }
+                return a;
+            }
+
+            private ExpVal expTerm() {
+                ExpVal a = expFactorSigned();
+                while (p < s.length() && (peek() == '×' || peek() == '÷')) {
+                    char op = next();
+                    ExpVal b = expFactorSigned();
+                    a = op == '×' ? a.mul(b) : a.div(b);
+                }
+                return a;
+            }
+
+            private ExpVal expFactorSigned() {
+                if (p < s.length() && peek() == '−') {
+                    next();
+                    return expFactorSigned().neg();
+                }
+                if (p >= s.length()) {
+                    throw new SyntaxException("Error");
+                }
+                char c = peek();
+                if (c == '(') {
+                    next();
+                    ExpVal e = expExpr();
+                    expect(')');
+                    return e;
+                }
+                if (c == 'ω') {
+                    next();
+                    return new ExpVal(Rat.ZERO, Rat.ONE);
+                }
+                if (c >= '0' && c <= '9') {
+                    return new ExpVal(new Rat(Long.parseLong(integer()), 1), Rat.ZERO);
+                }
+                throw new SyntaxException("'" + c + "' not in an exponent");
             }
 
             private void expect(char c) {
@@ -461,6 +589,10 @@ public final class CalculatorApp {
                 if (c == 'ω') {
                     next();
                     return "gp(1, -1, 0)";
+                }
+                if (c == 'i') {   // i = 0^(ω/2), the half twist
+                    next();
+                    return "gp(1, 0, 1/2)";
                 }
                 if (c >= '0' && c <= '9') {
                     String n = integer();
