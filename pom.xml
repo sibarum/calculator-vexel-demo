@@ -23,6 +23,7 @@
         <vexelray.version>0.1.0-SNAPSHOT</vexelray.version>
         <tactroller.version>1.0-SNAPSHOT</tactroller.version>
         <symengine-panama.version>0.1.0-SNAPSHOT</symengine-panama.version>
+        <maude-wrapper.version>0.1.0-SNAPSHOT</maude-wrapper.version>
 
         <app.mainClass>dev.vexelray.demo.calculator.CalculatorApp</app.mainClass>
         <!-- Program args for exec:exec (one token; empty = interactive). -->
@@ -40,6 +41,12 @@
             <groupId>sibarum.symengine</groupId>
             <artifactId>symengine-panama</artifactId>
             <version>${symengine-panama.version}</version>
+        </dependency>
+        <!-- The COTT wheel-algebra engine: equational rewriting via the bundled Maude interpreter. -->
+        <dependency>
+            <groupId>sibarum.maude</groupId>
+            <artifactId>maude-wrapper</artifactId>
+            <version>${maude-wrapper.version}</version>
         </dependency>
         <!-- Input at the application edge: the tactroller->atchung bridge. -->
         <dependency>

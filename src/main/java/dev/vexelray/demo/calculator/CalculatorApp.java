@@ -125,8 +125,10 @@ public final class CalculatorApp {
         // The keypad: rows of flex-grown buttons, no hard-coded rects anywhere. Beyond digits: the
         // constants e/i/π, the wheel's ω (= 1/0), plotting variables x/y/z, ^ for n^x, and log(x, n)
         // for log base n (via the log/comma/paren keys).
+        // "alg" toggles the engine: SymEngine (classical CAS) <-> COTT (the wheel-algebra torus,
+        // reduced by the bundled Maude interpreter through maude-wrapper).
         String[][] rows = {
-                {"C", "DEL", "(", ")", "÷"},
+                {"C", "DEL", "(", ")", "alg", "÷"},
                 {"7", "8", "9", "^", "×"},
                 {"4", "5", "6", "log", "−"},
                 {"1", "2", "3", ",", "+"},
@@ -139,7 +141,7 @@ public final class CalculatorApp {
                     .alignItems(AlignItems.STRETCH);
             for (String label : row) {
                 boolean accent = label.equals("=");
-                boolean op = java.util.Set.of("÷", "×", "−", "+", "^", "log", ",", "(", ")", "C", "DEL")
+                boolean op = java.util.Set.of("÷", "×", "−", "+", "^", "log", ",", "(", ")", "C", "DEL", "alg")
                         .contains(label);
                 Node b = key(gui, label,
                         accent ? Color.WHITE : (op ? DIM : INK),
@@ -203,6 +205,8 @@ public final class CalculatorApp {
         private final Node display;
         private String entry = "";
         private boolean justEvaluated;
+        /** false = SymEngine (classical CAS); true = COTT (wheel-algebra torus via Maude). */
+        private boolean cott;
 
         Engine(Node display) {
             this.display = display;
@@ -211,13 +215,20 @@ public final class CalculatorApp {
         synchronized void press(String label) {
             switch (label) {
                 case "C" -> { entry = ""; justEvaluated = false; }
+                case "alg" -> {
+                    cott = !cott;
+                    entry = "";
+                    justEvaluated = false;
+                    display.text(cott ? "alg: COTT" : "alg: sym");
+                    return;
+                }
                 case "DEL" -> {
                     if (justEvaluated) { entry = ""; justEvaluated = false; }
                     else if (!entry.isEmpty()) { entry = entry.substring(0, entry.length() - 1); }
                 }
                 case "=" -> {
                     if (!entry.isEmpty()) {
-                        entry = evaluate(entry);
+                        entry = cott ? Cott.evaluate(entry) : evaluate(entry);
                         justEvaluated = true;
                     }
                 }
@@ -264,6 +275,196 @@ public final class CalculatorApp {
                     .replaceAll("\\bzoo\\b", "ω").replaceAll("\\bnan\\b", "0/0")
                     .replaceAll("\\bpi\\b", "π")
                     .replaceAll("\\bE\\b", "e").replaceAll("\\bI\\b", "i");
+        }
+    }
+
+    /**
+     * The COTT engine: the display expression is compiled to a COTT-GRADED term, reduced by the
+     * bundled Maude interpreter (maude-wrapper), and the canonical {@code gp(m, g, t)} form is
+     * shown as {@code [m]·0^g·W^t} with its phase shadow when one exists. Integer literals are
+     * multiplicities ({@code 2} = [2]·1), ω is grade −1, ÷ is multiplication by the inverse,
+     * − is multiplication by −1 (a grade shift of 2). The classical constants and variables
+     * (e, i, π, x, y, z, log) have no COTT meaning and report as such.
+     */
+    private static final class Cott {
+        private static sibarum.maude.MaudeSession session;
+
+        private static synchronized sibarum.maude.MaudeSession maude() throws java.io.IOException {
+            if (session == null) {
+                sibarum.maude.MaudeSession m = sibarum.maude.MaudeSession.start();
+                try (java.io.InputStream in = sibarum.maude.MaudeSession.class
+                        .getResourceAsStream("/cott.maude")) {
+                    m.load(new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+                }
+                session = m;
+            }
+            return session;
+        }
+
+        static String evaluate(String displayForm) {
+            try {
+                String term = new Parser(displayForm).parse();
+                String result = maude().reduce("COTT-GRADED", term).term();
+                return pretty(result);
+            } catch (SyntaxException e) {
+                return e.getMessage();
+            } catch (Throwable t) {   // maude missing/unloadable
+                return "COTT unavailable";
+            }
+        }
+
+        /** gp(m, g, t) -> [m]·0^g·W^t (ω^|g| for negative grades) + phase shadow; else raw term. */
+        private static String pretty(String term) {
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("^gp\\((-?\\d+), (-?\\d+), (-?\\d+)\\)$").matcher(term);
+            if (!m.matches()) {
+                return term;   // formal sum / stuck projection: show the honest normal form
+            }
+            long mult = Long.parseLong(m.group(1));
+            long g = Long.parseLong(m.group(2));
+            long t = Long.parseLong(m.group(3));
+            StringBuilder s = new StringBuilder();
+            if (mult != 1) {
+                s.append('[').append(mult).append(']');
+            }
+            if (g > 0) {
+                dot(s).append(g == 1 ? "0" : "0^" + g);
+            } else if (g < 0) {
+                dot(s).append(g == -1 ? "ω" : "ω^" + (-g));
+            }
+            if (t != 0) {
+                dot(s).append(t == 1 ? "W" : "W^" + t);
+            }
+            if (s.isEmpty()) {
+                s.append('1');
+            }
+            if (t == 0) {   // the trace plane can see this point: show its phase shadow
+                String phase = switch ((int) (((g % 4) + 4) % 4)) {
+                    case 0 -> "1"; case 1 -> "0"; case 2 -> "-1"; default -> "ω";
+                };
+                if (!s.toString().equals(phase)) {
+                    s.append(" ~ ").append(phase);
+                }
+            }
+            return s.toString();
+        }
+
+        private static StringBuilder dot(StringBuilder s) {
+            if (!s.isEmpty()) {
+                s.append('·');
+            }
+            return s;
+        }
+
+        private static final class SyntaxException extends RuntimeException {
+            SyntaxException(String message) {
+                super(message);
+            }
+        }
+
+        /** Display expression -> COTT-GRADED term. Precedence: ^ over × ÷ over + −. */
+        private static final class Parser {
+            private final String s;
+            private int p;
+
+            Parser(String s) {
+                this.s = s;
+            }
+
+            String parse() {
+                String e = expr();
+                if (p < s.length()) {
+                    throw new SyntaxException("Error");
+                }
+                return e;
+            }
+
+            private String expr() {
+                String a = term();
+                while (p < s.length() && (peek() == '+' || peek() == '−')) {
+                    char op = next();
+                    String b = term();
+                    a = "gadd(" + a + ", " + (op == '+' ? b : neg(b)) + ")";
+                }
+                return a;
+            }
+
+            private String term() {
+                String a = factor();
+                while (p < s.length() && (peek() == '×' || peek() == '÷')) {
+                    char op = next();
+                    String b = factor();
+                    a = "gmul(" + a + ", " + (op == '×' ? b : "gpow(" + b + ", -1)") + ")";
+                }
+                return a;
+            }
+
+            private String factor() {
+                String a = primary();
+                if (p < s.length() && peek() == '^') {
+                    next();
+                    a = "gpow(" + a + ", " + integer() + ")";
+                }
+                return a;
+            }
+
+            private String primary() {
+                if (p >= s.length()) {
+                    throw new SyntaxException("Error");
+                }
+                char c = peek();
+                if (c == '−') {   // unary minus: multiply by -1
+                    next();
+                    return neg(primary());
+                }
+                if (c == '(') {
+                    next();
+                    String e = expr();
+                    if (p >= s.length() || next() != ')') {
+                        throw new SyntaxException("Error");
+                    }
+                    return e;
+                }
+                if (c == 'ω') {
+                    next();
+                    return "gp(1, -1, 0)";
+                }
+                if (c >= '0' && c <= '9') {
+                    String n = integer();
+                    // The literal 0 is COTT's circle point 0 (grade 1), not the integer zero —
+                    // there is no multiplicity 0. Other integers are multiplicities at grade 0.
+                    return Long.parseLong(n) == 0 ? "gp(1, 1, 0)" : "gp(" + n + ", 0, 0)";
+                }
+                throw new SyntaxException("'" + c + "' not in COTT");
+            }
+
+            /** An integer literal, optional leading − (for exponents and literals). */
+            private String integer() {
+                StringBuilder n = new StringBuilder();
+                if (p < s.length() && peek() == '−') {
+                    next();
+                    n.append('-');
+                }
+                if (p >= s.length() || peek() < '0' || peek() > '9') {
+                    throw new SyntaxException("Error");
+                }
+                while (p < s.length() && peek() >= '0' && peek() <= '9') {
+                    n.append(next());
+                }
+                return n.toString();
+            }
+
+            private static String neg(String term) {
+                return "gmul(gp(1, 2, 0), " + term + ")";
+            }
+
+            private char peek() {
+                return s.charAt(p);
+            }
+
+            private char next() {
+                return s.charAt(p++);
+            }
         }
     }
 
