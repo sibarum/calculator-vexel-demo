@@ -49,8 +49,8 @@ public final class CalculatorApp {
         zoomShortcuts(gui);
 
         if (args.length >= 1 && args[0].equals("--capture")) {
-            // Exercise the whole symbolic vertical before the shot: the wheel's 1/0 must render as ω.
-            for (String k : new String[]{"1", "÷", "0", "="}) {
+            // Exercise the whole COTT vertical before the shot: 0^w must render as -1.
+            for (String k : new String[]{"alg", "0", "^", "ω", "="}) {
                 engine.press(k);
             }
             GuiApp.capture(gui, W, H, 0.06f, 0.07f, 0.09f, args.length >= 2 ? args[1] : "calculator.png");
@@ -281,7 +281,7 @@ public final class CalculatorApp {
     /**
      * The COTT engine: the display expression is compiled to a COTT-GRADED term, reduced by the
      * bundled Maude interpreter (maude-wrapper), and the canonical {@code gp(m, g, t)} form is
-     * shown as {@code [m]·0^g·W^t} with its phase shadow when one exists. Integer literals are
+     * shown as [m]·0^(g+tω), naming the five known points. Integer literals are
      * multiplicities ({@code 2} = [2]·1), ω is grade −1, ÷ is multiplication by the inverse,
      * − is multiplication by −1 (a grade shift of 2). The classical constants and variables
      * (e, i, π, x, y, z, log) have no COTT meaning and report as such.
@@ -308,52 +308,58 @@ public final class CalculatorApp {
                 return pretty(result);
             } catch (SyntaxException e) {
                 return e.getMessage();
-            } catch (Throwable t) {   // maude missing/unloadable
+            } catch (sibarum.maude.MaudeException e) {
+                return "Error";   // maude rejected the term
+            } catch (Throwable t) {   // maude missing or unloadable
                 return "COTT unavailable";
             }
         }
 
-        /** gp(m, g, t) -> [m]·0^g·W^t (ω^|g| for negative grades) + phase shadow; else raw term. */
+        /**
+         * gp(m, g, t) -> a readable point. Grades and twists are rationals. The five named
+         * points come out by name -- 0^0 = 1, 0^1 = 0, 0^-1 = ω, 0^ω = -1, 0^(ω/2) = i --
+         * and anything else prints as [m]·0^(g+tω). A non-gp result (a formal sum, a stuck
+         * power) prints as the honest Maude normal form rather than being faked.
+         */
         private static String pretty(String term) {
             java.util.regex.Matcher m = java.util.regex.Pattern
-                    .compile("^gp\\((-?\\d+), (-?\\d+), (-?\\d+)\\)$").matcher(term);
+                    .compile("^gp\\((-?\\d+), (-?\\d+(?:/\\d+)?), (-?\\d+(?:/\\d+)?)\\)$").matcher(term);
             if (!m.matches()) {
-                return term;   // formal sum / stuck projection: show the honest normal form
+                return term;
             }
-            long mult = Long.parseLong(m.group(1));
-            long g = Long.parseLong(m.group(2));
-            long t = Long.parseLong(m.group(3));
-            StringBuilder s = new StringBuilder();
-            if (mult != 1) {
-                s.append('[').append(mult).append(']');
-            }
-            if (g > 0) {
-                dot(s).append(g == 1 ? "0" : "0^" + g);
-            } else if (g < 0) {
-                dot(s).append(g == -1 ? "ω" : "ω^" + (-g));
-            }
-            if (t != 0) {
-                dot(s).append(t == 1 ? "W" : "W^" + t);
-            }
-            if (s.isEmpty()) {
-                s.append('1');
-            }
-            if (t == 0) {   // the trace plane can see this point: show its phase shadow
-                String phase = switch ((int) (((g % 4) + 4) % 4)) {
-                    case 0 -> "1"; case 1 -> "0"; case 2 -> "-1"; default -> "ω";
-                };
-                if (!s.toString().equals(phase)) {
-                    s.append(" ~ ").append(phase);
-                }
-            }
-            return s.toString();
+            String mult = m.group(1);
+            String named = name(m.group(2), m.group(3));
+            String body = named != null ? named : "0^(" + exponent(m.group(2), m.group(3)) + ")";
+            return mult.equals("1") ? body : "[" + mult + "]·" + body;
         }
 
-        private static StringBuilder dot(StringBuilder s) {
-            if (!s.isEmpty()) {
-                s.append('·');
+        /** The points that have names; null for everything else. */
+        private static String name(String g, String t) {
+            if (t.equals("0")) {
+                return switch (g) {
+                    case "0" -> "1";
+                    case "1" -> "0";
+                    case "-1" -> "ω";
+                    default -> null;
+                };
             }
-            return s;
+            if (g.equals("0")) {
+                return switch (t) {
+                    case "1" -> "-1";
+                    case "1/2" -> "i";
+                    default -> null;
+                };
+            }
+            return null;
+        }
+
+        /** The exponent g + tω, with zero parts and unit coefficients dropped. */
+        private static String exponent(String g, String t) {
+            if (t.equals("0")) {
+                return g;
+            }
+            String tw = t.equals("1") ? "ω" : t + "ω";
+            return g.equals("0") ? tw : g + "+" + tw;
         }
 
         private static final class SyntaxException extends RuntimeException {
@@ -403,9 +409,36 @@ public final class CalculatorApp {
                 String a = primary();
                 if (p < s.length() && peek() == '^') {
                     next();
-                    a = "gpow(" + a + ", " + integer() + ")";
+                    a = power(a);
                 }
                 return a;
+            }
+
+            /** Exponent forms: n, ω (grade -> twist), (n), or (p÷q) rational. */
+            private String power(String a) {
+                if (p < s.length() && peek() == 'ω') {
+                    next();
+                    return "gr(pt(" + a + ") ^ xp(0, 1))";
+                }
+                if (p < s.length() && peek() == '(') {
+                    next();
+                    String num = integer();
+                    if (p < s.length() && peek() == '÷') {
+                        next();
+                        String den = integer();
+                        expect(')');
+                        return "gpow(" + a + ", " + num + "/" + den + ")";
+                    }
+                    expect(')');
+                    return "gpow(" + a + ", " + num + ")";
+                }
+                return "gpow(" + a + ", " + integer() + ")";
+            }
+
+            private void expect(char c) {
+                if (p >= s.length() || next() != c) {
+                    throw new SyntaxException("Error");
+                }
             }
 
             private String primary() {
@@ -455,7 +488,7 @@ public final class CalculatorApp {
             }
 
             private static String neg(String term) {
-                return "gmul(gp(1, 2, 0), " + term + ")";
+                return "gmul(gp(1, 0, 1), " + term + ")";
             }
 
             private char peek() {
