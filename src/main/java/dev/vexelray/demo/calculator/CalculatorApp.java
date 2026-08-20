@@ -6,6 +6,7 @@ import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.app.GuiApp;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
+import dev.vexelray.gui.widget.TextField;
 import dev.vexelray.text.TextLayout;
 import sibarum.tactroller.api.BackendException;
 import sibarum.tactroller.api.CoordinateSpace;
@@ -112,15 +113,28 @@ public final class CalculatorApp {
     }
 
     private static Engine buildUi(Gui gui) {
-        Node display = gui.text("0")
+        // The display is an editable field, not a label: type the expression directly, or build it
+        // from the keypad, or mix the two. Enter evaluates, exactly like the "=" key.
+        TextField display = new TextField(gui, "");
+        display.node()
                 .width(Length.FILL).height(Length.rem(5))
                 .background(PANEL).corner(Length.rem(0.75f)).border(Length.rem(0.1f), LINE)
                 .lit(true).elevation(Length.rem(0.5f))
                 .padding(Length.dp(16))
-                .textSize(Length.rem(1.75f)).textColor(INK)
-                .align(TextLayout.HAlign.RIGHT, TextLayout.VAlign.MIDDLE);
+                .textSize(Length.rem(1.75f)).textColor(INK);
 
         Engine engine = new Engine(display);
+        gui.focusable(display.node(), true);
+        gui.focus(display.node());
+        display.onSubmit(s -> engine.press("="));
+        // Typing w yields omega. Substituting in onChange re-enters once and then terminates,
+        // since the replacement contains no w. text() puts the caret at the end, which is where
+        // it already is while typing left to right.
+        display.onChange(s -> {
+            if (s.indexOf('w') >= 0) {
+                display.text(s.replace('w', 'ω'));
+            }
+        });
 
         // The keypad: rows of flex-grown buttons, no hard-coded rects anywhere. Beyond digits: the
         // constants e/i/π, the wheel's ω (= 1/0), plotting variables x/y/z, ^ for n^x, and log(x, n)
@@ -159,7 +173,7 @@ public final class CalculatorApp {
 
         Node root = gui.column().width(Length.FILL).height(Length.FILL)
                 .padding(Length.dp(16)).gap(Length.rem(0.75f))
-                .children(display, pad);
+                .children(display.node(), pad);
         gui.root().background(BG).children(root);
         return engine;
     }
@@ -202,22 +216,23 @@ public final class CalculatorApp {
         /** Entry characters that end an operand — a following operand token implies multiplication. */
         private static final String OPERAND_TAIL = "0123456789.)eiπωxyz";
 
-        private final Node display;
-        private String entry = "";
+        private final TextField display;
         private boolean justEvaluated;
         /** true = COTT (the wheel-algebra torus via Maude, the default); false = SymEngine. */
         private boolean cott = true;
 
-        Engine(Node display) {
+        Engine(TextField display) {
             this.display = display;
         }
 
         synchronized void press(String label) {
+            // The field is the source of truth -- it may have been typed into directly since the
+            // last keypad press, so read it rather than tracking a shadow copy.
+            String entry = display.text();
             switch (label) {
                 case "C" -> { entry = ""; justEvaluated = false; }
                 case "alg" -> {
                     cott = !cott;
-                    entry = "";
                     justEvaluated = false;
                     display.text(cott ? "alg: COTT" : "alg: sym");
                     return;
@@ -244,7 +259,15 @@ public final class CalculatorApp {
                     justEvaluated = false;
                 }
             }
-            display.text(entry.isEmpty() ? "0" : entry);
+            display.text(entry);
+        }
+
+        /**
+         * Typed ASCII to the keypad's glyphs. A keyboard cannot reach ×, ÷ or −, so the editable
+         * display accepts *, / and - for them, and w for omega.
+         */
+        static String normalize(String s) {
+            return s.replace('*', '×').replace('/', '÷').replace('-', '−').replace('w', 'ω');
         }
 
         /** Digits and the dot continue a number rather than starting a new operand. */
@@ -255,7 +278,7 @@ public final class CalculatorApp {
 
         private static String evaluate(String displayForm) {
             try {
-                return prettify(sibarum.symengine.Expr.parse(toSymEngine(displayForm)).str());
+                return prettify(sibarum.symengine.Expr.parse(toSymEngine(normalize(displayForm))).str());
             } catch (sibarum.symengine.SymEngineException e) {
                 return "Error";
             } catch (Throwable t) {   // native library missing/unloadable
@@ -303,7 +326,7 @@ public final class CalculatorApp {
 
         static String evaluate(String displayForm) {
             try {
-                String term = new Parser(displayForm).parse();
+                String term = new Parser(Engine.normalize(displayForm)).parse();
                 String result = maude().reduce("COTT-GRADED", term).term();
                 return pretty(result);
             } catch (SyntaxException e) {
