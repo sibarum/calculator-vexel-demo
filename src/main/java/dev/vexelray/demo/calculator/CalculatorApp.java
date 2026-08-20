@@ -8,6 +8,7 @@ import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
 import dev.vexelray.gui.widget.TextField;
 import dev.vexelray.text.TextLayout;
+import java.util.List;
 import sibarum.tactroller.api.BackendException;
 import sibarum.tactroller.api.CoordinateSpace;
 import sibarum.tactroller.api.Key;
@@ -347,6 +348,14 @@ public final class CalculatorApp {
         private static final String RAT = "(-?\\d+(?:/\\d+)?)";
 
         private static String pretty(String term) {
+            // A formal sum has no definite answer, so it comes back unreduced. Render it as a sum
+            // of its prettified parts rather than dumping the raw Maude term.
+            if (term.startsWith("gadd(") && term.endsWith(")")) {
+                List<String> parts = topLevelArgs(term.substring(5, term.length() - 1));
+                if (parts.size() > 1) {
+                    return String.join(" + ", parts.stream().map(Cott::pretty).toList());
+                }
+            }
             java.util.regex.Matcher m = java.util.regex.Pattern
                     .compile("^gp\\((-?\\d+), " + RAT + ", " + RAT + ", " + RAT + "\\)$").matcher(term);
             if (!m.matches()) {
@@ -358,6 +367,26 @@ public final class CalculatorApp {
                     ? named
                     : "0^(" + exponent(m.group(2), m.group(3), m.group(4)) + ")";
             return mult.equals("1") ? body : "[" + mult + "]·" + body;
+        }
+
+        /** Split an argument list on its top-level commas, ignoring commas inside nested parens. */
+        private static List<String> topLevelArgs(String s) {
+            List<String> parts = new java.util.ArrayList<>();
+            int depth = 0;
+            int start = 0;
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                if (c == '(') {
+                    depth++;
+                } else if (c == ')') {
+                    depth--;
+                } else if (c == ',' && depth == 0) {
+                    parts.add(s.substring(start, i).trim());
+                    start = i + 1;
+                }
+            }
+            parts.add(s.substring(start).trim());
+            return parts;
         }
 
         /** The points that have names; null for everything else. */
