@@ -51,8 +51,8 @@ public final class CalculatorApp {
         zoomShortcuts(gui);
 
         if (args.length >= 1 && args[0].equals("--capture")) {
-            // Exercise the whole COTT vertical before the shot: 0^(0/2) must NOT simplify.
-            for (String k : new String[]{"0", "^", "(", "0", "÷", "2", ")", "="}) {
+            // Exercise the COTT-OP vertical: 0 over 0 in an additive context leaves the residue 1.
+            for (String k : new String[]{"x", "+", "0", "÷", "0", "="}) {
                 engine.press(k);
             }
             GuiApp.capture(gui, W, H, 0.06f, 0.07f, 0.09f, args.length >= 2 ? args[1] : "calculator.png");
@@ -140,8 +140,8 @@ public final class CalculatorApp {
         // The keypad: rows of flex-grown buttons, no hard-coded rects anywhere. Beyond digits: the
         // constants e/i/π, the wheel's ω (= 1/0), plotting variables x/y/z, ^ for n^x, and log(x, n)
         // for log base n (via the log/comma/paren keys).
-        // "alg" toggles the engine: COTT (the wheel-algebra torus, the default,
-        // reduced by the bundled Maude interpreter through maude-wrapper) <-> SymEngine.
+        // "alg" cycles the engine: COTT-OP (the operational core, the default) then SymEngine
+        // then the legacy graded carrier. The first two run through maude-wrapper.
         String[][] rows = {
                 {"C", "DEL", "(", ")", "alg", "÷"},
                 {"7", "8", "9", "^", "×"},
@@ -217,10 +217,13 @@ public final class CalculatorApp {
         /** Entry characters that end an operand — a following operand token implies multiplication. */
         private static final String OPERAND_TAIL = "0123456789.)eiπωxyz";
 
+        /** The engines, in the order the "alg" key cycles them. */
+        private static final String[] MODES = {"COTT-OP", "sym", "graded"};
+
         private final TextField display;
         private boolean justEvaluated;
-        /** true = COTT (the wheel-algebra torus via Maude, the default); false = SymEngine. */
-        private boolean cott = true;
+        /** Index into {@link #MODES}. COTT-OP -- the operational core -- is the default. */
+        private int mode;
 
         Engine(TextField display) {
             this.display = display;
@@ -233,9 +236,9 @@ public final class CalculatorApp {
             switch (label) {
                 case "C" -> { entry = ""; justEvaluated = false; }
                 case "alg" -> {
-                    cott = !cott;
+                    mode = (mode + 1) % MODES.length;
                     justEvaluated = false;
-                    display.text(cott ? "alg: COTT" : "alg: sym");
+                    display.text("alg: " + MODES[mode]);
                     return;
                 }
                 case "DEL" -> {
@@ -244,7 +247,11 @@ public final class CalculatorApp {
                 }
                 case "=" -> {
                     if (!entry.isEmpty()) {
-                        entry = cott ? Cott.evaluate(entry) : evaluate(entry);
+                        entry = switch (mode) {
+                            case 0 -> CottOp.evaluate(entry);
+                            case 1 -> evaluate(entry);
+                            default -> Cott.evaluate(entry);
+                        };
                         justEvaluated = true;
                     }
                 }
@@ -736,6 +743,191 @@ public final class CalculatorApp {
 
             private static String neg(String term) {
                 return "gmul(gp(1, 0, 1, 0), " + term + ")";
+            }
+
+            private char peek() {
+                return s.charAt(p);
+            }
+
+            private char next() {
+                return s.charAt(p++);
+            }
+        }
+    }
+
+    /**
+     * The COTT-OP engine: the operational core, where identities belong to operations and each
+     * is a family that keeps its winding number. Numerals are OPAQUE atoms -- the twelve rules
+     * need them distinguishable, not computable -- so {@code 2/2} gives {@code 1^2} while
+     * {@code 2×3} has no defined answer and comes back unreduced. That is the theory's own rule
+     * rather than a shortcoming: a term with no definite answer is not rewritten.
+     */
+    private static final class CottOp {
+        private static sibarum.maude.MaudeSession session;
+
+        private static synchronized sibarum.maude.MaudeSession maude() throws java.io.IOException {
+            if (session == null) {
+                sibarum.maude.MaudeSession m = sibarum.maude.MaudeSession.start();
+                try (java.io.InputStream in = sibarum.maude.MaudeSession.class
+                        .getResourceAsStream("/cott-op.maude")) {
+                    m.load(new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+                }
+                session = m;
+            }
+            return session;
+        }
+
+        static String evaluate(String displayForm) {
+            try {
+                String term = new OpParser(Engine.normalize(displayForm)).parse();
+                return show(maude().reduce("COTT-OP", term).term());
+            } catch (Cott.SyntaxException e) {
+                return e.getMessage();
+            } catch (sibarum.maude.MaudeException e) {
+                return "Error";
+            } catch (Throwable t) {
+                return "COTT unavailable";
+            }
+        }
+
+        // ---------------------------------------------------------------- display
+
+        /** Render a reduced COTT-OP term back into readable notation. */
+        private static String show(String t) {
+            t = t.trim();
+            int paren = t.indexOf('(');
+            if (paren < 0) {
+                return leaf(t);
+            }
+            String head = t.substring(0, paren);
+            List<String> a = Cott.topLevelArgs(t.substring(paren + 1, t.length() - 1));
+            return switch (head) {
+                case "num" -> a.get(0);
+                case "wind" -> "1^" + tight(a.get(0));
+                case "awind" -> "0^" + tight(a.get(0));
+                case "neg" -> "-" + tight(a.get(0));
+                case "inv" -> "1/" + tight(a.get(0));
+                case "pow" -> tight(a.get(0)) + "^" + tight(a.get(1));
+                case "approx" -> "≈" + tight(a.get(0));
+                case "times" -> join(a, "×");
+                case "plus" -> join(a, "+");
+                default -> t;
+            };
+        }
+
+        /** The constants, including the two erasures, which have no value to print. */
+        private static String leaf(String c) {
+            return switch (c) {
+                case "zero" -> "0";
+                case "one" -> "1";
+                case "minusone" -> "-1";
+                case "omega" -> "ω";
+                case "idTimes", "idPlus" -> "_";
+                default -> c;   // x, y, z, or anything unrecognised
+            };
+        }
+
+        private static String join(List<String> args, String op) {
+            return String.join(op, args.stream().map(CottOp::tight).toList());
+        }
+
+        /** Parenthesise a rendered subterm when it could bind loosely than its parent. */
+        private static String tight(String term) {
+            String s = show(term);
+            return s.contains("+") || s.contains("×") ? "(" + s + ")" : s;
+        }
+
+        // ---------------------------------------------------------------- parsing
+
+        /**
+         * Display expression to a COTT-OP term. Everything is a Val, so the exponent is an
+         * ordinary expression rather than a rational -- no separate exponent grammar is needed.
+         */
+        private static final class OpParser {
+            private final String s;
+            private int p;
+
+            OpParser(String s) {
+                this.s = s;
+            }
+
+            String parse() {
+                String e = expr();
+                if (p < s.length()) {
+                    throw new Cott.SyntaxException("Error");
+                }
+                return e;
+            }
+
+            private String expr() {
+                String a = term();
+                while (p < s.length() && (peek() == '+' || peek() == '−')) {
+                    char op = next();
+                    String b = term();
+                    a = op == '+' ? "plus(" + a + ", " + b + ")"
+                                  : "plus(" + a + ", neg(" + b + "))";
+                }
+                return a;
+            }
+
+            private String term() {
+                String a = factor();
+                while (p < s.length() && (peek() == '×' || peek() == '÷')) {
+                    char op = next();
+                    String b = factor();
+                    a = op == '×' ? "times(" + a + ", " + b + ")"
+                                  : "times(" + a + ", inv(" + b + "))";
+                }
+                return a;
+            }
+
+            private String factor() {
+                String a = primary();
+                if (p < s.length() && peek() == '^') {
+                    next();
+                    a = "pow(" + a + ", " + primary() + ")";
+                }
+                return a;
+            }
+
+            private String primary() {
+                if (p >= s.length()) {
+                    throw new Cott.SyntaxException("Error");
+                }
+                char c = peek();
+                if (c == '−') {
+                    next();
+                    return "neg(" + primary() + ")";
+                }
+                if (c == '(') {
+                    next();
+                    String e = expr();
+                    if (p >= s.length() || next() != ')') {
+                        throw new Cott.SyntaxException("Error");
+                    }
+                    return e;
+                }
+                if (c == 'ω') {
+                    next();
+                    return "omega";
+                }
+                if (c == 'x' || c == 'y' || c == 'z') {
+                    next();
+                    return String.valueOf(c);
+                }
+                if (c >= '0' && c <= '9') {
+                    StringBuilder d = new StringBuilder();
+                    while (p < s.length() && peek() >= '0' && peek() <= '9') {
+                        d.append(next());
+                    }
+                    // 0 and 1 are the named boundary values; every other numeral is an atom
+                    return switch (d.toString()) {
+                        case "0" -> "zero";
+                        case "1" -> "one";
+                        default -> "num(" + d + ")";
+                    };
+                }
+                throw new Cott.SyntaxException("'" + c + "' not in COTT-OP");
             }
 
             private char peek() {
