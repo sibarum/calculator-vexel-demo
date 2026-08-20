@@ -51,8 +51,8 @@ public final class CalculatorApp {
         zoomShortcuts(gui);
 
         if (args.length >= 1 && args[0].equals("--capture")) {
-            // Exercise the COTT-OP vertical: 0 over 0 in an additive context leaves the residue 1.
-            for (String k : new String[]{"x", "+", "0", "÷", "0", "="}) {
+            // Exercise the COTT-OP vertical: 1 over 1 in an additive context keeps its winding.
+            for (String k : new String[]{"x", "+", "(", "1", "÷", "1", ")", "="}) {
                 engine.press(k);
             }
             GuiApp.capture(gui, W, H, 0.06f, 0.07f, 0.09f, args.length >= 2 ? args[1] : "calculator.png");
@@ -809,6 +809,7 @@ public final class CalculatorApp {
                 case "inv" -> "1/" + tight(a.get(0));
                 case "pow" -> tight(a.get(0)) + "^" + tight(a.get(1));
                 case "approx" -> "≈" + tight(a.get(0));
+                case "div" -> tight(a.get(0)) + "÷" + tight(a.get(1));
                 case "times" -> join(a, "×");
                 case "plus" -> join(a, "+");
                 default -> t;
@@ -822,7 +823,6 @@ public final class CalculatorApp {
                 case "one" -> "1";
                 case "minusone" -> "-1";
                 case "omega" -> "ω";
-                case "idTimes", "idPlus" -> "_";
                 default -> c;   // x, y, z, or anything unrecognised
             };
         }
@@ -876,7 +876,7 @@ public final class CalculatorApp {
                     char op = next();
                     String b = factor();
                     a = op == '×' ? "times(" + a + ", " + b + ")"
-                                  : "times(" + a + ", inv(" + b + "))";
+                                  : "div(" + a + ", " + b + ")";
                 }
                 return a;
             }
