@@ -50,8 +50,8 @@ public final class CalculatorApp {
         zoomShortcuts(gui);
 
         if (args.length >= 1 && args[0].equals("--capture")) {
-            // Exercise the whole COTT vertical before the shot: 0^(w/2) must render as i.
-            for (String k : new String[]{"0", "^", "(", "ω", "÷", "2", ")", "="}) {
+            // Exercise the whole COTT vertical before the shot: 0^(0/2) must NOT simplify.
+            for (String k : new String[]{"0", "^", "(", "0", "÷", "2", ")", "="}) {
                 engine.press(k);
             }
             GuiApp.capture(gui, W, H, 0.06f, 0.07f, 0.09f, args.length >= 2 ? args[1] : "calculator.png");
@@ -344,21 +344,28 @@ public final class CalculatorApp {
          * and anything else prints as [m]·0^(g+tω). A non-gp result (a formal sum, a stuck
          * power) prints as the honest Maude normal form rather than being faked.
          */
+        private static final String RAT = "(-?\\d+(?:/\\d+)?)";
+
         private static String pretty(String term) {
             java.util.regex.Matcher m = java.util.regex.Pattern
-                    .compile("^gp\\((-?\\d+), (-?\\d+(?:/\\d+)?), (-?\\d+(?:/\\d+)?)\\)$").matcher(term);
+                    .compile("^gp\\((-?\\d+), " + RAT + ", " + RAT + ", " + RAT + "\\)$").matcher(term);
             if (!m.matches()) {
                 return term;
             }
             String mult = m.group(1);
-            String named = name(m.group(2), m.group(3));
-            String body = named != null ? named : "0^(" + exponent(m.group(2), m.group(3)) + ")";
+            String named = name(m.group(2), m.group(3), m.group(4));
+            String body = named != null
+                    ? named
+                    : "0^(" + exponent(m.group(2), m.group(3), m.group(4)) + ")";
             return mult.equals("1") ? body : "[" + mult + "]·" + body;
         }
 
         /** The points that have names; null for everything else. */
-        private static String name(String g, String t) {
-            if (t.equals("0")) {
+        private static String name(String g, String tw, String tor) {
+            if (!tor.equals("0")) {
+                return null;   // a root of the residue zero has no classical name
+            }
+            if (tw.equals("0")) {
                 return switch (g) {
                     case "0" -> "1";
                     case "1" -> "0";
@@ -367,7 +374,7 @@ public final class CalculatorApp {
                 };
             }
             if (g.equals("0")) {
-                return switch (t) {
+                return switch (tw) {
                     case "1" -> "-1";
                     case "1/2" -> "i";
                     default -> null;
@@ -376,13 +383,33 @@ public final class CalculatorApp {
             return null;
         }
 
-        /** The exponent g + tω, with zero parts and unit coefficients dropped. */
-        private static String exponent(String g, String t) {
-            if (t.equals("0")) {
-                return g;
+        /** The exponent g + twω + the torsion, with zero parts and unit coefficients dropped. */
+        private static String exponent(String g, String tw, String tor) {
+            StringBuilder s = new StringBuilder();
+            if (!g.equals("0")) {
+                s.append(g);
             }
-            String tw = t.equals("1") ? "ω" : t + "ω";
-            return g.equals("0") ? tw : g + "+" + tw;
+            if (!tw.equals("0")) {
+                plus(s).append(tw.equals("1") ? "ω" : tw + "ω");
+            }
+            if (!tor.equals("0")) {
+                // torsion 1/d is the d-th root of the residue zero, written 0/d
+                plus(s).append("0/").append(denominator(tor));
+            }
+            return s.isEmpty() ? "0" : s.toString();
+        }
+
+        private static StringBuilder plus(StringBuilder s) {
+            if (!s.isEmpty()) {
+                s.append('+');
+            }
+            return s;
+        }
+
+        /** Torsion p/q prints as its root order; a bare p means order 1. */
+        private static String denominator(String rat) {
+            int slash = rat.indexOf('/');
+            return slash < 0 ? "1" : rat.substring(slash + 1);
         }
 
         private static final class SyntaxException extends RuntimeException {
@@ -419,6 +446,12 @@ public final class CalculatorApp {
                 return num == 0;
             }
 
+            /** Reduce into the half-open interval from 0 to k. */
+            Rat mod(long k) {
+                long f = Math.floorDiv(num, den * k);
+                return new Rat(num - f * den * k, den);
+            }
+
             Rat add(Rat o) {
                 return new Rat(num * o.den + o.num * den, den * o.den);
             }
@@ -445,29 +478,59 @@ public final class CalculatorApp {
             }
         }
 
-        /** An exponent n + mω, both parts exact rationals. */
-        private record ExpVal(Rat n, Rat m) {
+        /**
+         * An exponent with three exact-rational parts: grade n, twist m closing at 2, and
+         * torsion t closing at 1. The torsion holds the fractions of the residue zero -- 0/d
+         * is torsion 1/d, and d copies of it sum back to zero.
+         */
+        private record ExpVal(Rat n, Rat m, Rat t) {
+            ExpVal {
+                m = m.mod(2);
+                t = t.mod(1);
+            }
+
+            static final ExpVal ZERO = new ExpVal(Rat.ZERO, Rat.ZERO, Rat.ZERO);
+
+            boolean isZero() {
+                return n.isZero() && m.isZero() && t.isZero();
+            }
+
+            /** True when this is a plain scalar, so it may be a factor or a divisor. */
+            boolean isScalar() {
+                return m.isZero() && t.isZero();
+            }
+
             ExpVal add(ExpVal o) {
-                return new ExpVal(n.add(o.n), m.add(o.m));
+                return new ExpVal(n.add(o.n), m.add(o.m), t.add(o.t));
             }
 
             ExpVal neg() {
-                return new ExpVal(n.neg(), m.neg());
+                return new ExpVal(n.neg(), m.neg(), t.neg());
             }
 
-            /** Partial: a twist times a twist would be ω squared, the next floor of the tower. */
+            /** Partial: twist times twist would be ω squared, the next floor of the tower. */
             ExpVal mul(ExpVal o) {
-                if (!m.isZero() && !o.m.isZero()) {
-                    throw new SyntaxException("ω² not in COTT");
+                if (isScalar()) {
+                    return new ExpVal(n.mul(o.n), n.mul(o.m), n.mul(o.t));
                 }
-                return new ExpVal(n.mul(o.n), m.isZero() ? n.mul(o.m) : m.mul(o.n));
+                if (o.isScalar()) {
+                    return o.mul(this);
+                }
+                throw new SyntaxException("ω² not in COTT");
             }
 
+            /**
+             * Dividing the residue zero by k does not give zero -- it gives the torsion 1/k,
+             * the k-th root. Anything else divides componentwise.
+             */
             ExpVal div(ExpVal o) {
-                if (!o.m.isZero()) {
+                if (!o.isScalar()) {
                     throw new SyntaxException("÷ω not in COTT");
                 }
-                return new ExpVal(n.div(o.n), m.div(o.n));
+                if (isZero()) {
+                    return new ExpVal(Rat.ZERO, Rat.ZERO, Rat.ONE.div(o.n));
+                }
+                return new ExpVal(n.div(o.n), m.div(o.n), t.div(o.n));
             }
         }
 
@@ -535,10 +598,10 @@ public final class CalculatorApp {
                 } else {
                     e = expFactorSigned();
                 }
-                if (e.m().isZero()) {
+                if (e.isScalar()) {
                     return "gpow(" + a + ", " + e.n() + ")";
                 }
-                return "gr(pt(" + a + ") ^ xp(" + e.n() + ", " + e.m() + "))";
+                return "gr(pt(" + a + ") ^ xp(" + e.n() + ", " + e.m() + ", " + e.t() + "))";
             }
 
             private ExpVal expExpr() {
@@ -578,10 +641,10 @@ public final class CalculatorApp {
                 }
                 if (c == 'ω') {
                     next();
-                    return new ExpVal(Rat.ZERO, Rat.ONE);
+                    return new ExpVal(Rat.ZERO, Rat.ONE, Rat.ZERO);
                 }
                 if (c >= '0' && c <= '9') {
-                    return new ExpVal(new Rat(Long.parseLong(integer()), 1), Rat.ZERO);
+                    return new ExpVal(new Rat(Long.parseLong(integer()), 1), Rat.ZERO, Rat.ZERO);
                 }
                 throw new SyntaxException("'" + c + "' not in an exponent");
             }
@@ -611,17 +674,17 @@ public final class CalculatorApp {
                 }
                 if (c == 'ω') {
                     next();
-                    return "gp(1, -1, 0)";
+                    return "gp(1, -1, 0, 0)";
                 }
                 if (c == 'i') {   // i = 0^(ω/2), the half twist
                     next();
-                    return "gp(1, 0, 1/2)";
+                    return "gp(1, 0, 1/2, 0)";
                 }
                 if (c >= '0' && c <= '9') {
                     String n = integer();
                     // The literal 0 is COTT's circle point 0 (grade 1), not the integer zero —
                     // there is no multiplicity 0. Other integers are multiplicities at grade 0.
-                    return Long.parseLong(n) == 0 ? "gp(1, 1, 0)" : "gp(" + n + ", 0, 0)";
+                    return Long.parseLong(n) == 0 ? "gp(1, 1, 0, 0)" : "gp(" + n + ", 0, 0, 0)";
                 }
                 throw new SyntaxException("'" + c + "' not in COTT");
             }
@@ -643,7 +706,7 @@ public final class CalculatorApp {
             }
 
             private static String neg(String term) {
-                return "gmul(gp(1, 0, 1), " + term + ")";
+                return "gmul(gp(1, 0, 1, 0), " + term + ")";
             }
 
             private char peek() {
