@@ -3,9 +3,12 @@ package dev.vexelray.demo.calculator;
 import dev.vexelray.canvas.Color;
 import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.Node;
+import dev.vexelray.gui.core.TextClipboard;
 import dev.vexelray.gui.core.app.GuiApp;
 import dev.vexelray.gui.core.layout.Length;
+import dev.vexelray.gui.core.layout.LayoutEnums;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
+import dev.vexelray.gui.core.text.Document;
 import dev.vexelray.gui.widget.TextField;
 import dev.vexelray.text.TextLayout;
 import java.util.List;
@@ -16,6 +19,8 @@ import sibarum.tactroller.api.Modifier;
 import sibarum.tactroller.api.NativeWindow;
 import sibarum.tactroller.api.Tactroller;
 import sibarum.tactroller.atchung.TactrollerInputBridge;
+import sibarum.tactroller.clipboard.Clipboard;
+import sibarum.tactroller.clipboard.ClipboardException;
 
 /**
  * A deceptively simple calculator on vexelray-gui: a display label over a flex grid of buttons.
@@ -51,7 +56,7 @@ public final class CalculatorApp {
         zoomShortcuts(gui);
 
         if (args.length >= 1 && args[0].equals("--capture")) {
-            // Exercise the COTT-OP vertical: 1 over 1 in an additive context keeps its winding.
+            // Exercise the residue vertical: 1 over 1 in an additive context keeps its winding.
             for (String k : new String[]{"x", "+", "(", "1", "÷", "1", ")", "="}) {
                 engine.press(k);
             }
@@ -62,10 +67,19 @@ public final class CalculatorApp {
 
         int maxFrames = args.length > 0 ? Integer.parseInt(args[0]) : 0;
         try (Tactroller input = openInput();
+             Clipboard clipboard = openClipboard(gui);
              GuiApp app = new GuiApp("Calculator", W, H)) {
             attachInput(input, app);
+            // The history needs the app to open its window onto, so it is built here rather than in
+            // buildUi -- and stays null under --capture, which never reaches this far.
+            History history = new History(engine, app);
+            engine.history(history);
+            zoomShortcuts(history.windowGui());
             TactrollerInputBridge bridge = input == null ? null : new TactrollerInputBridge(input, gui.bus());
-            app.run(gui, maxFrames, () -> pump(bridge));
+            app.run(gui, maxFrames, () -> {
+                pump(bridge);
+                history.drain();
+            });
         }
         gui.close();
         System.out.println("clean shutdown");
@@ -102,6 +116,41 @@ public final class CalculatorApp {
         }
     }
 
+    /**
+     * OS clipboard for the display field's cut/copy/paste. Without this, {@link Gui} keeps its
+     * default in-memory clipboard, so a copy never leaves the process — you can paste a result back
+     * into the calculator but not into anything else.
+     */
+    private static Clipboard openClipboard(Gui gui) {
+        try {
+            Clipboard clip = Clipboard.open();
+            gui.clipboard(new TextClipboard() {
+                @Override
+                public String get() {
+                    try {
+                        return clip.getText().orElse("");
+                    } catch (ClipboardException e) {
+                        return "";
+                    }
+                }
+
+                @Override
+                public void set(String text) {
+                    try {
+                        clip.setText(text);
+                    } catch (ClipboardException e) {
+                        // best effort — a transient clipboard failure just drops the copy
+                    }
+                }
+            });
+            System.out.println("clipboard: " + clip.backendName());
+            return clip;
+        } catch (ClipboardException e) {
+            System.out.println("clipboard unavailable (" + e.getMessage() + "); cut/copy/paste use in-memory buffer");
+            return null;
+        }
+    }
+
     private static void pump(TactrollerInputBridge bridge) {
         if (bridge == null) {
             return;
@@ -129,21 +178,23 @@ public final class CalculatorApp {
         gui.focus(display.node());
         display.onSubmit(s -> engine.press("="));
         // Typing w yields omega. Substituting in onChange re-enters once and then terminates,
-        // since the replacement contains no w. text() puts the caret at the end, which is where
-        // it already is while typing left to right.
+        // since the replacement contains no w. text() parks the caret at the end, so put it back —
+        // w and ω are one char each, so every offset survives the substitution unchanged.
         display.onChange(s -> {
             if (s.indexOf('w') >= 0) {
+                int at = display.caret();
                 display.text(s.replace('w', 'ω'));
+                display.caret(at);
             }
         });
 
         // The keypad: rows of flex-grown buttons, no hard-coded rects anywhere. Beyond digits: the
         // constants e/i/π, the wheel's ω (= 1/0), plotting variables x/y/z, ^ for n^x, and log(x, n)
         // for log base n (via the log/comma/paren keys).
-        // "alg" cycles the engine: COTT-OP (the operational core, the default) then SymEngine
-        // then the legacy graded carrier. The first two run through maude-wrapper.
+        // There is one engine, so there is no engine key: COTT-ONE answers every expression the
+        // keypad can build. The freed slot went back to the row.
         String[][] rows = {
-                {"C", "DEL", "(", ")", "alg", "÷"},
+                {"C", "DEL", "(", ")", "÷"},
                 {"7", "8", "9", "^", "×"},
                 {"4", "5", "6", "log", "−"},
                 {"1", "2", "3", ",", "+"},
@@ -156,7 +207,7 @@ public final class CalculatorApp {
                     .alignItems(AlignItems.STRETCH);
             for (String label : row) {
                 boolean accent = label.equals("=");
-                boolean op = java.util.Set.of("÷", "×", "−", "+", "^", "log", ",", "(", ")", "C", "DEL", "alg")
+                boolean op = java.util.Set.of("÷", "×", "−", "+", "^", "log", ",", "(", ")", "C", "DEL")
                         .contains(label);
                 Node b = key(gui, label,
                         accent ? Color.WHITE : (op ? DIM : INK),
@@ -172,11 +223,213 @@ public final class CalculatorApp {
             pad.append(r);
         }
 
+        // A rejection is reported here rather than in the entry, so the expression survives it and
+        // can be fixed and re-evaluated without retyping. A notification does not belong in the
+        // field you type into -- that was the whole trouble with the old engine announcement.
+        Node statusText = gui.text("")
+                .width(Length.FILL).height(Length.rem(1.25f))
+                .textSize(Length.rem(0.875f)).textColor(BTN_BLUE_HOVER)
+                .align(TextLayout.HAlign.LEFT, TextLayout.VAlign.MIDDLE)
+                .scroll(false, false);
+        engine.statusLabel(statusText);
+
         Node root = gui.column().width(Length.FILL).height(Length.FILL)
                 .padding(Length.dp(16)).gap(Length.rem(0.75f))
-                .children(display.node(), pad);
+                .children(display.node(), statusText, pad);
         gui.root().background(BG).children(root);
         return engine;
+    }
+
+    /**
+     * The evaluation history as its own OS window on the shared frame loop, opened on the first
+     * evaluation and never before -- there is nothing to show until then. Same shape as the text
+     * editor's folder window: a second {@link Gui}, opened through {@link GuiApp#requestPopup},
+     * with its own input backend attached to its own window handle and bridged onto its own bus.
+     *
+     * <p>Every entry records the input and the output. Clicking one puts the <em>input</em> back,
+     * not the output -- a residue like {@code 1^t} re-reads as an ordinary power and so projects
+     * rather than round-tripping, and an unreduced form may not re-parse at all.
+     *
+     * <p>All methods run on the main thread, driven from {@link History}'s drain.
+     */
+    private static final class HistoryWindow {
+        /** One evaluation. */
+        record Entry(String input, String output) { }
+
+        private static final int LIMIT = 100;
+
+        private final java.util.function.Consumer<Entry> restore;
+        private final Gui gui = new Gui();
+        private final Node list;
+        private final java.util.ArrayDeque<Node> rows = new java.util.ArrayDeque<>();
+        private Tactroller input;
+        private TactrollerInputBridge bridge;
+        private boolean shown;
+
+        HistoryWindow(java.util.function.Consumer<Entry> restore) {
+            this.restore = restore;
+            Node heading = gui.text("History")
+                    .width(Length.FILL).height(Length.rem(1.5f))
+                    .textSize(Length.rem(0.875f)).textColor(DIM)
+                    .align(TextLayout.HAlign.LEFT, TextLayout.VAlign.MIDDLE);
+            // Newest at the bottom, and the list stays pinned there as it grows -- a calculator
+            // tape. scrollLock detaches if you scroll up to read, and re-attaches at the edge.
+            this.list = gui.column().width(Length.FILL).height(Length.grow(1))
+                    .gap(Length.rem(0.375f))
+                    .scroll(false, true)
+                    .scrollLock(LayoutEnums.ScrollLock.BOTTOM);
+            Node column = gui.column().width(Length.FILL).height(Length.FILL)
+                    .padding(Length.dp(12)).gap(Length.dp(8))
+                    .children(heading, list);
+            gui.root().background(BG).children(column);
+            // Zoom is per-window: the history scales independently of the keypad.
+            zoomShortcuts(gui);
+        }
+
+        /** This window's Gui, so the app can bind shortcuts here too. */
+        Gui gui() {
+            return gui;
+        }
+
+        /** Append {@code e}, opening the window on the next frame if this is the first evaluation. */
+        void add(GuiApp app, Entry e) {
+            list.append(row(e));   // row() records the node in `rows` as it builds it
+            while (rows.size() > LIMIT) {
+                rows.removeFirst().remove();
+            }
+            if (!shown) {
+                shown = true;
+                app.requestPopup("History", 320, 480, gui, this::attachInput, this::onClosed);
+            }
+        }
+
+        /**
+         * One clickable entry: the engine, then the input, then the result, each on its own full-width
+         * line. Every height is {@link Length#AUTO} so the card grows to hold whatever it contains --
+         * a fixed height cannot work, since the result is rendered larger than the input, both scale
+         * with zoom, and an expression is as long as it is.
+         *
+         * <p><b>Three stacked lines rather than a text column beside an engine tag.</b> A label always
+         * wraps ({@code wrapsText} is unconditional for a non-editable node), but a label that is a
+         * flex child of a <em>row</em> does not contribute its wrapped height to that row's auto
+         * cross-axis -- the row measures one line and the rest spills past its border. Keeping every
+         * label a child of a column, at the full content width, is what makes the wrap measurable.
+         *
+         * <p>Note also the explicit {@code scroll(false, false)}: overflow scrolling is on by default,
+         * so a squeezed container grows its own scrollbar instead of reporting the overflow.
+         */
+        private Node row(Entry e) {
+            Node expr = line(e.input(), 0.8125f, DIM, TextLayout.HAlign.LEFT);
+            Node out = line(e.output(), 1f, INK, TextLayout.HAlign.LEFT);
+            Node r = gui.column().width(Length.FILL).height(Length.AUTO)
+                    .padding(Length.rem(0.625f), Length.rem(0.75f))
+                    .gap(Length.rem(0.1875f))
+                    .background(PANEL).corner(Length.rem(0.5f)).border(Length.rem(0.1f), LINE)
+                    .lit(true).elevation(Length.rem(0.25f))
+                    .scroll(false, false)
+                    .children(expr, out);
+            gui.onState(r, state -> r.background(switch (state) {
+                case NORMAL -> PANEL;
+                case HOVER -> PANEL_HOVER;
+                case PRESSED -> PANEL_PRESSED;
+            }));
+            gui.onClick(r, () -> restore.accept(e));
+            rows.addLast(r);
+            return r;
+        }
+
+        /** One full-width line of an entry, sized to its own wrapped text. */
+        private Node line(String text, float rem, Color colour, TextLayout.HAlign align) {
+            return gui.text(text)
+                    .width(Length.FILL).height(Length.AUTO)
+                    .textSize(Length.rem(rem)).textColor(colour)
+                    .align(align, TextLayout.VAlign.MIDDLE)
+                    .scroll(false, false);
+        }
+
+        /** Attach a second input backend to the popup's own window handle, feeding this Gui's bus. */
+        private void attachInput(long hwnd) {
+            try {
+                input = Tactroller.open();
+                input.attach(NativeWindow.ofHwnd(hwnd));
+                input.setCoordinateSpace(CoordinateSpace.CLIENT);
+                bridge = new TactrollerInputBridge(input, gui.bus());
+            } catch (BackendException e) {
+                System.out.println("history window input unavailable (" + e.getMessage() + ")");
+                closeInput();
+            }
+        }
+
+        private void onClosed() {
+            closeInput();
+            shown = false;
+        }
+
+        private void closeInput() {
+            if (input != null) {
+                try {
+                    input.close();
+                } catch (Exception e) {
+                    // best effort — the backend is going away regardless
+                }
+                input = null;
+                bridge = null;
+            }
+        }
+
+        /** Poll the popup's input, if the window is up — called once per frame with the main pump. */
+        void pump() {
+            if (bridge != null) {
+                try {
+                    bridge.pump();
+                } catch (BackendException e) {
+                    // Transient poll failure — drop this frame's input rather than tear down the loop.
+                }
+            }
+        }
+    }
+
+    /**
+     * The history's request queue. Evaluations arrive from keypad handlers on worker threads, and
+     * history clicks arrive from the popup's own handlers -- but node creation and
+     * {@link GuiApp#requestPopup} belong to the GUI thread, so both only enqueue and
+     * {@link #drain()} services them from the frame loop.
+     */
+    private static final class History {
+        private final Engine engine;
+        private final GuiApp app;
+        private final HistoryWindow window;
+        private final java.util.concurrent.ConcurrentLinkedQueue<Runnable> requests =
+                new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+        History(Engine engine, GuiApp app) {
+            this.engine = engine;
+            this.app = app;
+            this.window = new HistoryWindow(this::restore);
+        }
+
+        Gui windowGui() {
+            return window.gui();
+        }
+
+        /** Worker thread: an expression was evaluated. */
+        void record(String input, String output) {
+            requests.add(() -> window.add(app, new HistoryWindow.Entry(input, output)));
+        }
+
+        /** Popup handler thread: an entry was clicked. */
+        private void restore(HistoryWindow.Entry e) {
+            requests.add(() -> engine.restore(e.input()));
+        }
+
+        /** GUI thread, once per frame. */
+        void drain() {
+            window.pump();
+            Runnable r = requests.poll();
+            if (r != null) {
+                r.run();
+            }
+        }
     }
 
     /** One keypad button: lit, elevated, restyled per interaction state. */
@@ -202,72 +455,122 @@ public final class CalculatorApp {
     }
 
     /**
-     * The symbolic expression engine, backed by SymEngine through symengine-panama. The entry is an
-     * expression string in display form (π, ω, ×, ^, ...); "=" translates it to SymEngine syntax,
-     * parses (which auto-simplifies), and prettifies the canonical result back.
-     *
-     * <p>Wheel algebra falls out of SymEngine's extended arithmetic: 1/0 is complex infinity
-     * ({@code zoo}, shown as ω) and 0/0 is undefined ({@code nan}, shown as ⊥), with the wheel
-     * identities ω+a=ω, 0·ω=⊥, 1/ω=0 holding under simplification.
+     * The keypad and entry controller. It owns the display field, the caret-aware key handling and
+     * the status line; {@link Cott} owns the mathematics.
      *
      * <p>Handlers arrive on worker threads, so all state transitions are synchronized; the only
      * output is the display handle, which is thread-safe by framework contract.
      */
     private static final class Engine {
+        /**
+         * An evaluation: either a value to put in the display, or a message to report. Keeping them
+         * apart is what lets the entry survive a rejection -- a message in the field you type into
+         * has to be deleted by hand, and cannot be evaluated again.
+         */
+        record Eval(String text, boolean ok) {
+            static Eval ok(String text) {
+                return new Eval(text, true);
+            }
+
+            static Eval err(String message) {
+                return new Eval(message, false);
+            }
+        }
+
         /** Entry characters that end an operand — a following operand token implies multiplication. */
         private static final String OPERAND_TAIL = "0123456789.)eiπωxyz";
 
-        /** The engines, in the order the "alg" key cycles them. */
-        private static final String[] MODES = {"COTT-OP", "sym", "graded"};
-
         private final TextField display;
         private boolean justEvaluated;
-        /** Index into {@link #MODES}. COTT-OP -- the operational core -- is the default. */
-        private int mode;
+        /** The line that reports a rejection. */
+        private volatile Node statusLabel;
+        /** Where evaluations are recorded, once there is a window loop to open onto. */
+        private volatile History history;
 
         Engine(TextField display) {
             this.display = display;
         }
 
+        void statusLabel(Node status) {
+            this.statusLabel = status;
+        }
+
+        /** Report a rejection, or clear the report. Never touches the entry. */
+        private void status(String message) {
+            Node s = statusLabel;
+            if (s != null) {
+                s.text(message);
+            }
+        }
+
+        void history(History history) {
+            this.history = history;
+        }
+
+        /** Put the entry back as it was, from a history click. */
+        synchronized void restore(String entry) {
+            display.text(entry);
+            justEvaluated = false;
+        }
+
+        /**
+         * A key press edits the field where the caret is, so the keypad and the keyboard are the
+         * same editor: click into the middle of an expression and "9" lands there, not at the end.
+         * Only the whole-entry keys (C, =, and DEL after a result) replace the content.
+         */
         synchronized void press(String label) {
-            // The field is the source of truth -- it may have been typed into directly since the
-            // last keypad press, so read it rather than tracking a shadow copy.
-            String entry = display.text();
+            // The field is the source of truth -- it may have been typed or clicked into since the
+            // last keypad press, so read the document rather than tracking a shadow copy. One
+            // snapshot for the whole press: text and caret have to come from the same version.
+            Document doc = display.document().value();
             switch (label) {
-                case "C" -> { entry = ""; justEvaluated = false; }
-                case "alg" -> {
-                    mode = (mode + 1) % MODES.length;
-                    justEvaluated = false;
-                    display.text("alg: " + MODES[mode]);
-                    return;
-                }
+                case "C" -> { display.text(""); justEvaluated = false; }
                 case "DEL" -> {
-                    if (justEvaluated) { entry = ""; justEvaluated = false; }
-                    else if (!entry.isEmpty()) { entry = entry.substring(0, entry.length() - 1); }
+                    if (justEvaluated) { display.text(""); justEvaluated = false; }
+                    else { display.deleteBack(); }   // backspaces at the caret, or eats the selection
                 }
                 case "=" -> {
-                    if (!entry.isEmpty()) {
-                        entry = switch (mode) {
-                            case 0 -> CottOp.evaluate(entry);
-                            case 1 -> evaluate(entry);
-                            default -> Cott.evaluate(entry);
-                        };
-                        justEvaluated = true;
+                    if (!doc.text().isEmpty()) {
+                        String entry = doc.text();
+                        Eval result = Cott.evaluate(entry);
+                        if (result.ok()) {
+                            status("");
+                            display.text(result.text());
+                            justEvaluated = true;
+                            History h = history;
+                            if (h != null) {
+                                h.record(entry, result.text());
+                            }
+                        } else {
+                            // The entry stays put, so the expression can be fixed and "=" pressed
+                            // again without retyping it.
+                            status(result.text());
+                        }
                     }
                 }
-                case "+", "−", "×", "÷", "^", ",", ")" -> { entry += label; justEvaluated = false; }
-                default -> { // an operand token: digit, ., (, log(, e, i, π, ω, x, y, z
-                    String token = label.equals("log") ? "log(" : label;
-                    if (justEvaluated) { entry = ""; }
-                    if (!entry.isEmpty() && OPERAND_TAIL.indexOf(entry.charAt(entry.length() - 1)) >= 0
-                            && !isDigitLike(token) ) {
-                        entry += "×";   // implicit multiplication: 2π, xy, 3(x+1), ω(...)
-                    }
-                    entry += token;
-                    justEvaluated = false;
-                }
+                case "+", "−", "×", "÷", "^", ",", ")" -> { display.insert(label); justEvaluated = false; }
+                default -> insertOperand(label, doc);
             }
-            display.text(entry);
+        }
+
+        /**
+         * An operand token -- digit, ., (, log(, e, i, π, ω, x, y, z -- inserted at the caret, with
+         * an implicit × when it lands directly after something that ends an operand.
+         */
+        private void insertOperand(String label, Document doc) {
+            String token = label.equals("log") ? "log(" : label;
+            if (justEvaluated) {
+                display.text("");
+                doc = display.document().value();
+            }
+            // The character to the left of where the insert lands, which is selectionStart rather
+            // than the caret: inserting over a selection replaces it.
+            int at = doc.selectionStart();
+            if (at > 0 && OPERAND_TAIL.indexOf(doc.text().charAt(at - 1)) >= 0 && !isDigitLike(token)) {
+                token = "×" + token;   // implicit multiplication: 2π, xy, 3(x+1), ω(...)
+            }
+            display.insert(token);
+            justEvaluated = false;
         }
 
         /**
@@ -275,7 +578,39 @@ public final class CalculatorApp {
          * display accepts *, / and - for them, and w for omega.
          */
         static String normalize(String s) {
-            return s.replace('*', '×').replace('/', '÷').replace('-', '−').replace('w', 'ω');
+            // Whitespace is dropped, not tolerated token by token: the parser has no notion of it,
+            // so "1 + 1" used to be a syntax error, and a formal sum comes back joined with
+            // spaces -- which made the calculator unable to re-read its own output.
+            return adjacency(s.replaceAll("\\s+", "")
+                    .replace('*', '×').replace('/', '÷').replace('-', '−').replace('w', 'ω'));
+        }
+
+        /** Operand tokens begin with these, so one following an operand means multiplication. */
+        private static final String OPERAND_HEAD = "0123456789.(eiπωxyzl";
+
+        /**
+         * Make juxtaposition multiply: 2ω, 3(x+1), xy. The keypad has always inserted this × as you
+         * press (see {@code insertOperand}), but a typed expression never got it -- so 2ω was a
+         * syntax error, and SymEngine read xy as one symbol named "xy" rather than a product. Doing
+         * it in normalize rather than in the parser keeps typed input and the keypad agreeing,
+         * which is the invariant that matters.
+         */
+        private static String adjacency(String s) {
+            StringBuilder out = new StringBuilder(s.length() + 8);
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                if (i > 0 && OPERAND_TAIL.indexOf(s.charAt(i - 1)) >= 0 && OPERAND_HEAD.indexOf(c) >= 0
+                        // ... except mid-numeral, where the digits belong to one operand: 12, 1.5
+                        && !(numeral(s.charAt(i - 1)) && numeral(c))) {
+                    out.append('×');
+                }
+                out.append(c);
+            }
+            return out.toString();
+        }
+
+        private static boolean numeral(char c) {
+            return (c >= '0' && c <= '9') || c == '.';
         }
 
         /** Digits and the dot continue a number rather than starting a new operand. */
@@ -284,29 +619,6 @@ public final class CalculatorApp {
             return (c >= '0' && c <= '9') || c == '.';
         }
 
-        private static String evaluate(String displayForm) {
-            try {
-                return prettify(sibarum.symengine.Expr.parse(toSymEngine(normalize(displayForm))).str());
-            } catch (sibarum.symengine.SymEngineException e) {
-                return "Error";
-            } catch (Throwable t) {   // native library missing/unloadable
-                return "CAS unavailable";
-            }
-        }
-
-        private static String toSymEngine(String s) {
-            return s.replace("×", "*").replace("÷", "/").replace("−", "-").replace("^", "**")
-                    .replace("π", "pi").replace("ω", "zoo")
-                    .replaceAll("\\be\\b", "E").replaceAll("\\bi\\b", "I");
-        }
-
-        private static String prettify(String s) {
-            // The wheel bottom prints as its definition 0/0 (the font has no ⊥ glyph); it re-parses to nan.
-            return s.replace("**", "^")
-                    .replaceAll("\\bzoo\\b", "ω").replaceAll("\\bnan\\b", "0/0")
-                    .replaceAll("\\bpi\\b", "π")
-                    .replaceAll("\\bE\\b", "e").replaceAll("\\bI\\b", "i");
-        }
     }
 
     /**
@@ -317,6 +629,20 @@ public final class CalculatorApp {
      * − is multiplication by −1 (a grade shift of 2). The classical constants and variables
      * (e, i, π, x, y, z, log) have no COTT meaning and report as such.
      */
+    /**
+     * The engine. One theory, no modes: COTT-ONE, reduced by the bundled Maude interpreter.
+     *
+     * <p>It replaces the three that came before it — the operational core, the graded carrier and
+     * the SymEngine wheel — each of which held a piece the others lacked, so an expression needed
+     * whichever one happened to hold the piece it wanted. The merged theory keeps the <em>finer</em>
+     * reading wherever two of them disagreed: {@code 1÷1} is {@code 1^1}, not 1, and {@code 0×ω} is
+     * {@code 0÷0}, not 1. {@code ≈} projects to the coarse answer when that is what you want.
+     *
+     * <p>A numeral is a point — {@code pt(k, xp(g,t,r))} is k copies of 0^(g + tω + r) — so
+     * {@code 2×3} is 6, {@code 2÷0} is 2ω and {@code 1+1} is 2, none of which the operational core
+     * could say. π and e are declared primitives with no exponential form and do not reduce; i does,
+     * and comes out as {@code 0^(ω/2)}.
+     */
     private static final class Cott {
         private static sibarum.maude.MaudeSession session;
 
@@ -324,7 +650,7 @@ public final class CalculatorApp {
             if (session == null) {
                 sibarum.maude.MaudeSession m = sibarum.maude.MaudeSession.start();
                 try (java.io.InputStream in = sibarum.maude.MaudeSession.class
-                        .getResourceAsStream("/cott.maude")) {
+                        .getResourceAsStream("/cott-one.maude")) {
                     m.load(new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
                 }
                 session = m;
@@ -332,68 +658,96 @@ public final class CalculatorApp {
             return session;
         }
 
-        static String evaluate(String displayForm) {
+        static Engine.Eval evaluate(String displayForm) {
             try {
                 String term = new Parser(Engine.normalize(displayForm)).parse();
-                String result = maude().reduce("COTT-GRADED", term).term();
-                return pretty(result);
+                return Engine.Eval.ok(show(maude().reduce("COTT-ONE", term).term()));
             } catch (SyntaxException e) {
-                return e.getMessage();
+                return Engine.Eval.err(e.getMessage());
             } catch (sibarum.maude.MaudeException e) {
-                return "Error";   // maude rejected the term
+                return Engine.Eval.err("Error");   // maude rejected the term
             } catch (Throwable t) {   // maude missing or unloadable
-                return "COTT unavailable";
+                return Engine.Eval.err("COTT unavailable");
             }
+        }
+
+        // ---------------------------------------------------------------- display
+
+        /** A rational as Maude prints it. */
+        private static final String RAT = "(-?\\d+(?:/\\d+)?)";
+        private static final java.util.regex.Pattern XP = java.util.regex.Pattern
+                .compile("^xp\\(" + RAT + ", " + RAT + ", " + RAT + "\\)$");
+
+        /** Render a reduced COTT-ONE term back into readable notation. */
+        private static String show(String t) {
+            t = t.trim();
+            int paren = t.indexOf('(');
+            if (paren < 0) {
+                return leaf(t);
+            }
+            String head = t.substring(0, paren);
+            List<String> a = topLevelArgs(t.substring(paren + 1, t.length() - 1));
+            return switch (head) {
+                case "pt" -> point(a.get(0), a.get(1));
+                // lg and logb return an EXPONENT, so it renders as one: log of -1 to base 0 is ω.
+                case "xp" -> exponentOf(t);
+                case "wind" -> "1^" + arg(a.get(0), ATOM);
+                case "awind" -> "0^" + arg(a.get(0), ATOM);
+                case "neg" -> "-" + arg(a.get(0), ATOM);
+                case "inv" -> "1÷" + arg(a.get(0), ATOM);
+                case "pow" -> arg(a.get(0), ATOM) + "^" + arg(a.get(1), ATOM);
+                case "approx" -> "≈" + arg(a.get(0), ATOM);
+                case "div" -> arg(a.get(0), POW) + "÷" + arg(a.get(1), POW);
+                case "lg" -> "log(" + show(a.get(0)) + ", 0)";
+                case "logb" -> "log(" + show(a.get(1)) + ", " + show(a.get(0)) + ")";
+                case "times" -> join(a, "×", POW);
+                case "plus" -> join(a, "+", MUL);
+                default -> t;
+            };
         }
 
         /**
-         * gp(m, g, t) -> a readable point. Grades and twists are rationals. The five named
-         * points come out by name -- 0^0 = 1, 0^1 = 0, 0^-1 = ω, 0^ω = -1, 0^(ω/2) = i --
-         * and anything else prints as [m]·0^(g+tω). A non-gp result (a formal sum, a stuck
-         * power) prints as the honest Maude normal form rather than being faked.
+         * {@code pt(k, xp(g,t,r))} — k copies of 0^(g + tω + r). A zero exponent makes it the plain
+         * number k; a multiplicity of one makes it the bare point, named if it has a name.
          */
-        private static final String RAT = "(-?\\d+(?:/\\d+)?)";
-
-        private static String pretty(String term) {
-            // A formal sum has no definite answer, so it comes back unreduced. Render it as a sum
-            // of its prettified parts rather than dumping the raw Maude term.
-            if (term.startsWith("gadd(") && term.endsWith(")")) {
-                List<String> parts = topLevelArgs(term.substring(5, term.length() - 1));
-                if (parts.size() > 1) {
-                    return String.join(" + ", parts.stream().map(Cott::pretty).toList());
-                }
-            }
-            java.util.regex.Matcher m = java.util.regex.Pattern
-                    .compile("^gp\\((-?\\d+), " + RAT + ", " + RAT + ", " + RAT + "\\)$").matcher(term);
+        private static String point(String mult, String exp) {
+            java.util.regex.Matcher m = XP.matcher(exp.trim());
             if (!m.matches()) {
-                return term;
+                return "pt(" + mult + ", " + show(exp) + ")";   // shouldn't happen; don't fake it
             }
-            String mult = m.group(1);
-            String named = name(m.group(2), m.group(3), m.group(4));
-            String body = named != null
-                    ? named
-                    : "0^(" + exponent(m.group(2), m.group(3), m.group(4)) + ")";
-            return mult.equals("1") ? body : "[" + mult + "]·" + body;
+            String g = m.group(1);
+            String tw = m.group(2);
+            String tor = m.group(3);
+            if (g.equals("0") && tw.equals("0") && tor.equals("0")) {
+                return mult;   // k copies of 1 IS the number k
+            }
+            String named = name(g, tw, tor);
+            String body = named != null ? named : "0^(" + exponent(g, tw, tor) + ")";
+            return switch (mult) {
+                case "1" -> body;
+                case "-1" -> "-" + body;
+                default -> mult + "×" + body;   // 2×ω rather than [2]·ω, so it re-parses
+            };
         }
 
-        /** Split an argument list on its top-level commas, ignoring commas inside nested parens. */
-        private static List<String> topLevelArgs(String s) {
-            List<String> parts = new java.util.ArrayList<>();
-            int depth = 0;
-            int start = 0;
-            for (int i = 0; i < s.length(); i++) {
-                char c = s.charAt(i);
-                if (c == '(') {
-                    depth++;
-                } else if (c == ')') {
-                    depth--;
-                } else if (c == ',' && depth == 0) {
-                    parts.add(s.substring(start, i).trim());
-                    start = i + 1;
-                }
-            }
-            parts.add(s.substring(start).trim());
-            return parts;
+        /** An {@code xp} term standing on its own — a logarithm's result, which IS an exponent. */
+        private static String exponentOf(String t) {
+            java.util.regex.Matcher m = XP.matcher(t.trim());
+            return m.matches() ? exponent(m.group(1), m.group(2), m.group(3)) : t;
+        }
+
+        /** The constants. π and e print as themselves; they have no exponential form. */
+        private static String leaf(String c) {
+            return switch (c) {
+                case "zero" -> "0";
+                case "one" -> "1";
+                case "minusone" -> "-1";
+                case "omega" -> "ω";
+                case "iu" -> "i";
+                case "pin" -> "π";
+                case "ee" -> "e";
+                default -> c;   // x, y, z, n, or anything unrecognised
+            };
         }
 
         /** The points that have names; null for everything else. */
@@ -430,7 +784,7 @@ public final class CalculatorApp {
             }
             if (!tor.equals("0")) {
                 // torsion 1/d is the d-th root of the residue zero, written 0/d
-                plus(s).append("0/").append(denominator(tor));
+                plus(s).append("0÷").append(denominator(tor));
             }
             return s.isEmpty() ? "0" : s.toString();
         }
@@ -448,129 +802,77 @@ public final class CalculatorApp {
             return slash < 0 ? "1" : rat.substring(slash + 1);
         }
 
+        /** Split an argument list on its top-level commas, ignoring commas inside nested parens. */
+        static List<String> topLevelArgs(String s) {
+            List<String> parts = new java.util.ArrayList<>();
+            int depth = 0;
+            int start = 0;
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                if (c == '(') {
+                    depth++;
+                } else if (c == ')') {
+                    depth--;
+                } else if (c == ',' && depth == 0) {
+                    parts.add(s.substring(start, i).trim());
+                    start = i + 1;
+                }
+            }
+            parts.add(s.substring(start).trim());
+            return parts;
+        }
+
+        // How tightly a rendered form binds, mirroring the parser: ^ takes primary() operands on
+        // both sides, × and ÷ take factor(), + takes term(). Decided from the term's HEAD, never by
+        // scanning the rendered string — that is what used to turn ω^(1÷2) into ω^1÷2.
+        private static final int ADD = 1;
+        private static final int MUL = 2;
+        private static final int POW = 3;
+        private static final int ATOM = 4;
+
+        private static int precedence(String t) {
+            int paren = t.indexOf('(');
+            if (paren < 0) {
+                return ATOM;
+            }
+            return switch (t.substring(0, paren)) {
+                case "plus" -> ADD;
+                case "times", "div" -> MUL;
+                // a pt renders as a bare number, a name, or k×body — the last of those is a product
+                case "pt" -> {
+                    String s = show(t);
+                    yield s.indexOf('×') >= 0 ? MUL : (s.indexOf('^') >= 0 ? POW : ATOM);
+                }
+                case "xp" -> show(t).indexOf('+') >= 0 ? ADD : ATOM;
+                default -> POW;   // pow, wind, awind, neg, inv, approx, lg, logb
+            };
+        }
+
+        /** Render {@code term} for a position that needs at least {@code min} binding tightness. */
+        private static String arg(String term, int min) {
+            String s = show(term);
+            return precedence(term) < min ? "(" + s + ")" : s;
+        }
+
+        private static String join(List<String> args, String op, int min) {
+            return String.join(op, args.stream().map(v -> arg(v, min)).toList());
+        }
+
         private static final class SyntaxException extends RuntimeException {
             SyntaxException(String message) {
                 super(message);
             }
         }
 
-        /** An exact rational, kept in lowest terms with a positive denominator. */
-        private record Rat(long num, long den) {
-            static final Rat ZERO = new Rat(0, 1);
-            static final Rat ONE = new Rat(1, 1);
-
-            Rat {
-                if (den == 0) {
-                    throw new SyntaxException("Error");
-                }
-                long g = gcd(Math.abs(num), Math.abs(den));
-                if (g != 0) {
-                    num /= g;
-                    den /= g;
-                }
-                if (den < 0) {
-                    num = -num;
-                    den = -den;
-                }
-            }
-
-            private static long gcd(long a, long b) {
-                return b == 0 ? a : gcd(b, a % b);
-            }
-
-            boolean isZero() {
-                return num == 0;
-            }
-
-            /** Reduce into the half-open interval from 0 to k. */
-            Rat mod(long k) {
-                long f = Math.floorDiv(num, den * k);
-                return new Rat(num - f * den * k, den);
-            }
-
-            Rat add(Rat o) {
-                return new Rat(num * o.den + o.num * den, den * o.den);
-            }
-
-            Rat neg() {
-                return new Rat(-num, den);
-            }
-
-            Rat mul(Rat o) {
-                return new Rat(num * o.num, den * o.den);
-            }
-
-            Rat div(Rat o) {
-                if (o.isZero()) {
-                    throw new SyntaxException("Error");
-                }
-                return new Rat(num * o.den, den * o.num);
-            }
-
-            /** Maude's Rat literal form. */
-            @Override
-            public String toString() {
-                return den == 1 ? String.valueOf(num) : num + "/" + den;
-            }
-        }
+        // ---------------------------------------------------------------- parsing
 
         /**
-         * An exponent with three exact-rational parts: grade n, twist m closing at 2, and
-         * torsion t closing at 1. The torsion holds the fractions of the residue zero -- 0/d
-         * is torsion 1/d, and d copies of it sum back to zero.
+         * Display expression to a COTT-ONE term. Precedence: ^ over × ÷ over + −.
+         *
+         * <p>0, 1, ω, -1 and i are emitted as the NAMED constants rather than as {@code pt} forms,
+         * because every residue rule matches on those names literally — {@code times(A, wind(one))}
+         * cannot fire on {@code wind(pt(1, xp(0,0,0)))}. Any other numeral becomes a multiplicity.
          */
-        private record ExpVal(Rat n, Rat m, Rat t) {
-            ExpVal {
-                m = m.mod(2);
-                t = t.mod(1);
-            }
-
-            static final ExpVal ZERO = new ExpVal(Rat.ZERO, Rat.ZERO, Rat.ZERO);
-
-            boolean isZero() {
-                return n.isZero() && m.isZero() && t.isZero();
-            }
-
-            /** True when this is a plain scalar, so it may be a factor or a divisor. */
-            boolean isScalar() {
-                return m.isZero() && t.isZero();
-            }
-
-            ExpVal add(ExpVal o) {
-                return new ExpVal(n.add(o.n), m.add(o.m), t.add(o.t));
-            }
-
-            ExpVal neg() {
-                return new ExpVal(n.neg(), m.neg(), t.neg());
-            }
-
-            /** Partial: twist times twist would be ω squared, the next floor of the tower. */
-            ExpVal mul(ExpVal o) {
-                if (isScalar()) {
-                    return new ExpVal(n.mul(o.n), n.mul(o.m), n.mul(o.t));
-                }
-                if (o.isScalar()) {
-                    return o.mul(this);
-                }
-                throw new SyntaxException("ω² not in COTT");
-            }
-
-            /**
-             * Dividing the residue zero by k does not give zero -- it gives the torsion 1/k,
-             * the k-th root. Anything else divides componentwise.
-             */
-            ExpVal div(ExpVal o) {
-                if (!o.isScalar()) {
-                    throw new SyntaxException("÷ω not in COTT");
-                }
-                if (isZero()) {
-                    return new ExpVal(Rat.ZERO, Rat.ZERO, Rat.ONE.div(o.n));
-                }
-                return new ExpVal(n.div(o.n), m.div(o.n), t.div(o.n));
-            }
-        }
-
-        /** Display expression -> COTT-GRADED term. Precedence: ^ over × ÷ over + −. */
         private static final class Parser {
             private final String s;
             private int p;
@@ -583,278 +885,6 @@ public final class CalculatorApp {
                 String e = expr();
                 if (p < s.length()) {
                     throw new SyntaxException("Error");
-                }
-                return e;
-            }
-
-            private String expr() {
-                String a = term();
-                while (p < s.length() && (peek() == '+' || peek() == '−')) {
-                    char op = next();
-                    String b = term();
-                    a = "gadd(" + a + ", " + (op == '+' ? b : neg(b)) + ")";
-                }
-                return a;
-            }
-
-            private String term() {
-                String a = factor();
-                while (p < s.length() && (peek() == '×' || peek() == '÷')) {
-                    char op = next();
-                    String b = factor();
-                    a = "gmul(" + a + ", " + (op == '×' ? b : "gpow(" + b + ", -1)") + ")";
-                }
-                return a;
-            }
-
-            private String factor() {
-                String a = primary();
-                if (p < s.length() && peek() == '^') {
-                    next();
-                    a = power(a);
-                }
-                return a;
-            }
-
-            /**
-             * An exponent is n + mω with n and m rational. Parenthesised exponents take a full
-             * expression, so {@code 0^(ω÷2)} is the half twist; a bare exponent is a single
-             * signed factor, so {@code 0^ω÷2} stays (0^ω)÷2 as precedence demands.
-             *
-             * <p>A twist-free exponent goes through {@code gpow}, which keeps the multiplicity.
-             * Anything with an ω component routes through COTT's own power law, which is defined
-             * on points rather than multiplicity-carrying terms.
-             */
-            private String power(String a) {
-                ExpVal e;
-                if (p < s.length() && peek() == '(') {
-                    next();
-                    e = expExpr();
-                    expect(')');
-                } else {
-                    e = expFactorSigned();
-                }
-                if (e.isScalar()) {
-                    return "gpow(" + a + ", " + e.n() + ")";
-                }
-                return "gr(pt(" + a + ") ^ xp(" + e.n() + ", " + e.m() + ", " + e.t() + "))";
-            }
-
-            private ExpVal expExpr() {
-                ExpVal a = expTerm();
-                while (p < s.length() && (peek() == '+' || peek() == '−')) {
-                    char op = next();
-                    ExpVal b = expTerm();
-                    a = op == '+' ? a.add(b) : a.add(b.neg());
-                }
-                return a;
-            }
-
-            private ExpVal expTerm() {
-                ExpVal a = expFactorSigned();
-                while (p < s.length() && (peek() == '×' || peek() == '÷')) {
-                    char op = next();
-                    ExpVal b = expFactorSigned();
-                    a = op == '×' ? a.mul(b) : a.div(b);
-                }
-                return a;
-            }
-
-            private ExpVal expFactorSigned() {
-                if (p < s.length() && peek() == '−') {
-                    next();
-                    return expFactorSigned().neg();
-                }
-                if (p >= s.length()) {
-                    throw new SyntaxException("Error");
-                }
-                char c = peek();
-                if (c == '(') {
-                    next();
-                    ExpVal e = expExpr();
-                    expect(')');
-                    return e;
-                }
-                if (c == 'ω') {
-                    next();
-                    return new ExpVal(Rat.ZERO, Rat.ONE, Rat.ZERO);
-                }
-                if (c >= '0' && c <= '9') {
-                    return new ExpVal(new Rat(Long.parseLong(integer()), 1), Rat.ZERO, Rat.ZERO);
-                }
-                throw new SyntaxException("'" + c + "' not in an exponent");
-            }
-
-            private void expect(char c) {
-                if (p >= s.length() || next() != c) {
-                    throw new SyntaxException("Error");
-                }
-            }
-
-            private String primary() {
-                if (p >= s.length()) {
-                    throw new SyntaxException("Error");
-                }
-                char c = peek();
-                if (c == '−') {   // unary minus: multiply by -1
-                    next();
-                    return neg(primary());
-                }
-                if (c == '(') {
-                    next();
-                    String e = expr();
-                    if (p >= s.length() || next() != ')') {
-                        throw new SyntaxException("Error");
-                    }
-                    return e;
-                }
-                if (c == 'ω') {
-                    next();
-                    return "gp(1, -1, 0, 0)";
-                }
-                if (c == 'i') {   // i = 0^(ω/2), the half twist
-                    next();
-                    return "gp(1, 0, 1/2, 0)";
-                }
-                if (c >= '0' && c <= '9') {
-                    String n = integer();
-                    // The literal 0 is COTT's circle point 0 (grade 1), not the integer zero —
-                    // there is no multiplicity 0. Other integers are multiplicities at grade 0.
-                    return Long.parseLong(n) == 0 ? "gp(1, 1, 0, 0)" : "gp(" + n + ", 0, 0, 0)";
-                }
-                throw new SyntaxException("'" + c + "' not in COTT");
-            }
-
-            /** An integer literal, optional leading − (for exponents and literals). */
-            private String integer() {
-                StringBuilder n = new StringBuilder();
-                if (p < s.length() && peek() == '−') {
-                    next();
-                    n.append('-');
-                }
-                if (p >= s.length() || peek() < '0' || peek() > '9') {
-                    throw new SyntaxException("Error");
-                }
-                while (p < s.length() && peek() >= '0' && peek() <= '9') {
-                    n.append(next());
-                }
-                return n.toString();
-            }
-
-            private static String neg(String term) {
-                return "gmul(gp(1, 0, 1, 0), " + term + ")";
-            }
-
-            private char peek() {
-                return s.charAt(p);
-            }
-
-            private char next() {
-                return s.charAt(p++);
-            }
-        }
-    }
-
-    /**
-     * The COTT-OP engine: the operational core, where identities belong to operations and each
-     * is a family that keeps its winding number. Numerals are OPAQUE atoms -- the twelve rules
-     * need them distinguishable, not computable -- so {@code 2/2} gives {@code 1^2} while
-     * {@code 2×3} has no defined answer and comes back unreduced. That is the theory's own rule
-     * rather than a shortcoming: a term with no definite answer is not rewritten.
-     */
-    private static final class CottOp {
-        private static sibarum.maude.MaudeSession session;
-
-        private static synchronized sibarum.maude.MaudeSession maude() throws java.io.IOException {
-            if (session == null) {
-                sibarum.maude.MaudeSession m = sibarum.maude.MaudeSession.start();
-                try (java.io.InputStream in = sibarum.maude.MaudeSession.class
-                        .getResourceAsStream("/cott-op.maude")) {
-                    m.load(new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
-                }
-                session = m;
-            }
-            return session;
-        }
-
-        static String evaluate(String displayForm) {
-            try {
-                String term = new OpParser(Engine.normalize(displayForm)).parse();
-                return show(maude().reduce("COTT-OP", term).term());
-            } catch (Cott.SyntaxException e) {
-                return e.getMessage();
-            } catch (sibarum.maude.MaudeException e) {
-                return "Error";
-            } catch (Throwable t) {
-                return "COTT unavailable";
-            }
-        }
-
-        // ---------------------------------------------------------------- display
-
-        /** Render a reduced COTT-OP term back into readable notation. */
-        private static String show(String t) {
-            t = t.trim();
-            int paren = t.indexOf('(');
-            if (paren < 0) {
-                return leaf(t);
-            }
-            String head = t.substring(0, paren);
-            List<String> a = Cott.topLevelArgs(t.substring(paren + 1, t.length() - 1));
-            return switch (head) {
-                case "num" -> a.get(0);
-                case "wind" -> "1^" + tight(a.get(0));
-                case "awind" -> "0^" + tight(a.get(0));
-                case "neg" -> "-" + tight(a.get(0));
-                case "inv" -> "1/" + tight(a.get(0));
-                case "pow" -> tight(a.get(0)) + "^" + tight(a.get(1));
-                case "approx" -> "≈" + tight(a.get(0));
-                case "div" -> tight(a.get(0)) + "÷" + tight(a.get(1));
-                case "times" -> join(a, "×");
-                case "plus" -> join(a, "+");
-                default -> t;
-            };
-        }
-
-        /** The constants, including the two erasures, which have no value to print. */
-        private static String leaf(String c) {
-            return switch (c) {
-                case "zero" -> "0";
-                case "one" -> "1";
-                case "minusone" -> "-1";
-                case "omega" -> "ω";
-                default -> c;   // x, y, z, or anything unrecognised
-            };
-        }
-
-        private static String join(List<String> args, String op) {
-            return String.join(op, args.stream().map(CottOp::tight).toList());
-        }
-
-        /** Parenthesise a rendered subterm when it could bind loosely than its parent. */
-        private static String tight(String term) {
-            String s = show(term);
-            return s.contains("+") || s.contains("×") ? "(" + s + ")" : s;
-        }
-
-        // ---------------------------------------------------------------- parsing
-
-        /**
-         * Display expression to a COTT-OP term. Everything is a Val, so the exponent is an
-         * ordinary expression rather than a rational -- no separate exponent grammar is needed.
-         */
-        private static final class OpParser {
-            private final String s;
-            private int p;
-
-            OpParser(String s) {
-                this.s = s;
-            }
-
-            String parse() {
-                String e = expr();
-                if (p < s.length()) {
-                    throw new Cott.SyntaxException("Error");
                 }
                 return e;
             }
@@ -892,7 +922,7 @@ public final class CalculatorApp {
 
             private String primary() {
                 if (p >= s.length()) {
-                    throw new Cott.SyntaxException("Error");
+                    throw new SyntaxException("Error");
                 }
                 char c = peek();
                 if (c == '−') {
@@ -903,31 +933,90 @@ public final class CalculatorApp {
                     next();
                     String e = expr();
                     if (p >= s.length() || next() != ')') {
-                        throw new Cott.SyntaxException("Error");
+                        throw new SyntaxException("Error");
                     }
                     return e;
                 }
-                if (c == 'ω') {
+                if (c == 'l') {
+                    return logCall();
+                }
+                String named = switch (c) {
+                    case 'ω' -> "omega";
+                    case 'i' -> "iu";
+                    case 'π' -> "pin";
+                    case 'e' -> "ee";
+                    case 'x' -> "x";
+                    case 'y' -> "y";
+                    case 'z' -> "z";
+                    default -> null;
+                };
+                if (named != null) {
                     next();
-                    return "omega";
+                    return named;
                 }
-                if (c == 'x' || c == 'y' || c == 'z') {
-                    next();
-                    return String.valueOf(c);
+                if (numeral(c)) {
+                    return number();
                 }
-                if (c >= '0' && c <= '9') {
-                    StringBuilder d = new StringBuilder();
-                    while (p < s.length() && peek() >= '0' && peek() <= '9') {
-                        d.append(next());
-                    }
-                    // 0 and 1 are the named boundary values; every other numeral is an atom
-                    return switch (d.toString()) {
-                        case "0" -> "zero";
-                        case "1" -> "one";
-                        default -> "num(" + d + ")";
-                    };
+                throw new SyntaxException("'" + c + "' not in COTT");
+            }
+
+            /** {@code log(x, b)} — the log of x to base b, which is COTT-ONE's logb. */
+            private String logCall() {
+                expect("log");
+                if (p >= s.length() || next() != '(') {
+                    throw new SyntaxException("Error");
                 }
-                throw new Cott.SyntaxException("'" + c + "' not in COTT-OP");
+                String of = expr();
+                if (p >= s.length() || next() != ',') {
+                    throw new SyntaxException("log needs a base");
+                }
+                String base = expr();
+                if (p >= s.length() || next() != ')') {
+                    throw new SyntaxException("Error");
+                }
+                return "logb(" + base + ", " + of + ")";
+            }
+
+            private void expect(String word) {
+                if (!s.startsWith(word, p)) {
+                    throw new SyntaxException("Error");
+                }
+                p += word.length();
+            }
+
+            /**
+             * A numeral, decimals included, as an exact multiplicity — 2.5 is 5/2, not a float.
+             * 0 and 1 come back as the named constants; everything else is k copies of the unit.
+             */
+            private String number() {
+                StringBuilder d = new StringBuilder();
+                while (p < s.length() && numeral(peek())) {
+                    d.append(next());
+                }
+                String text = d.toString();
+                if (text.equals("0")) {
+                    return "zero";
+                }
+                if (text.equals("1")) {
+                    return "one";
+                }
+                int dot = text.indexOf('.');
+                if (dot < 0) {
+                    return "pt(" + text + ", xp(0, 0, 0))";
+                }
+                String digits = text.replace(".", "");
+                if (digits.isEmpty() || text.indexOf('.', dot + 1) >= 0) {
+                    throw new SyntaxException("Error");
+                }
+                long scale = 1;
+                for (int k = text.length() - dot - 1; k > 0; k--) {
+                    scale *= 10;
+                }
+                return "pt(" + Long.parseLong(digits) + "/" + scale + ", xp(0, 0, 0))";
+            }
+
+            private static boolean numeral(char c) {
+                return (c >= '0' && c <= '9') || c == '.';
             }
 
             private char peek() {
@@ -938,8 +1027,5 @@ public final class CalculatorApp {
                 return s.charAt(p++);
             }
         }
-    }
-
-    private CalculatorApp() {
     }
 }
