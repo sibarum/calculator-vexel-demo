@@ -4,12 +4,16 @@ import dev.vexelray.canvas.Color;
 import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.TextClipboard;
+import dev.vexelray.gui.core.WindowControls;
 import dev.vexelray.gui.core.app.GuiApp;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.layout.LayoutEnums;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
 import dev.vexelray.gui.core.text.Document;
 import dev.vexelray.gui.widget.TextField;
+import dev.vexelray.gui.widget.TitleBar;
+import dev.vexelray.os.Decorations;
+import dev.vexelray.os.WindowConfig;
 import dev.vexelray.text.TextLayout;
 import java.util.List;
 import sibarum.tactroller.api.BackendException;
@@ -32,9 +36,15 @@ import sibarum.tactroller.clipboard.ClipboardException;
  */
 public final class CalculatorApp {
 
-    /** Window and capture size, in the engine's logical coordinates. */
+    /**
+     * Window and capture size, in the engine's logical coordinates. The GUI draws the frame now, so the
+     * client area is the whole window and the height carries {@link #BAR_H} of the application's own title
+     * bar on top of the 600 the keypad had beneath an OS one -- same keypad, same outer rect.
+     */
     private static final int W = 420;
-    private static final int H = 600;
+    /** The title bar's own height, in dp -- {@code TitleBar}'s, which is the Windows caption metric. */
+    private static final int BAR_H = 32;
+    private static final int H = 600 + BAR_H;
 
     private static final Color BG = Color.rgb(0x11141b);
     private static final Color PANEL = Color.rgb(0x1b2130);
@@ -51,8 +61,11 @@ public final class CalculatorApp {
         args = java.util.Arrays.stream(args).filter(s -> !s.isBlank()).toArray(String[]::new);
 
         Gui gui = new Gui();
-        gui.minSize(Length.em(21), Length.em(30));
-        Engine engine = buildUi(gui);
+        // Two em more than the keypad needs on its own: the title bar sits inside the canvas now, so the
+        // smallest layout has to hold it as well as the display and the keys.
+        gui.minSize(Length.em(21), Length.em(32));
+        Ui ui = buildUi(gui);
+        Engine engine = ui.engine();
         zoomShortcuts(gui);
 
         if (args.length >= 1 && args[0].equals("--capture")) {
@@ -68,8 +81,11 @@ public final class CalculatorApp {
         int maxFrames = args.length > 0 ? Integer.parseInt(args[0]) : 0;
         try (Tactroller input = openInput();
              Clipboard clipboard = openClipboard(gui);
-             GuiApp app = new GuiApp("Calculator", W, H)) {
+             GuiApp app = new GuiApp(mainWindow())) {
             attachInput(input, app);
+            // The window exists at last, so the chrome can be pointed at it. Until now the bar has been a
+            // working bar against WindowControls.NONE -- which is also what --capture renders.
+            ui.titleBar().controls(app.controls());
             // The history needs the app to open its window onto, so it is built here rather than in
             // buildUi -- and stays null under --capture, which never reaches this far.
             History history = new History(engine, app);
@@ -83,6 +99,16 @@ public final class CalculatorApp {
         }
         gui.close();
         System.out.println("clean shutdown");
+    }
+
+    /**
+     * The main window: the calculator's size, and the frame handed to the GUI. {@link Decorations#CLIENT}
+     * extends the client area over the whole window, so the {@code TitleBar} at the top of the tree draws
+     * where the system caption was -- while dragging, snapping, Win+arrow, double-click-to-maximize, the
+     * system menu and the maximize clamp all stay the window manager's. The GUI only supplies geometry.
+     */
+    private static WindowConfig mainWindow() {
+        return WindowConfig.of("Calculator", W, H).decorations(Decorations.CLIENT);
     }
 
     private static void zoomShortcuts(Gui gui) {
@@ -162,7 +188,11 @@ public final class CalculatorApp {
         }
     }
 
-    private static Engine buildUi(Gui gui) {
+    /** What main() needs back from the tree: the calculator, and the chrome awaiting its window. */
+    private record Ui(Engine engine, TitleBar titleBar) {
+    }
+
+    private static Ui buildUi(Gui gui) {
         // The display is an editable field, not a label: type the expression directly, or build it
         // from the keypad, or mix the two. Enter evaluates, exactly like the "=" key.
         TextField display = new TextField(gui, "");
@@ -236,8 +266,12 @@ public final class CalculatorApp {
         Node root = gui.column().width(Length.FILL).height(Length.FILL)
                 .padding(Length.dp(16)).gap(Length.rem(0.75f))
                 .children(display.node(), statusText, pad);
-        gui.root().background(BG).children(root);
-        return engine;
+        // The window's own title bar: ordinary widgets, plus the two declarations that tell the window
+        // manager which pixels are caption (DRAG on the strip, INTERACTIVE on each button). Bound to the
+        // real window in main(); here it commands WindowControls.NONE, which is what --capture draws.
+        TitleBar titleBar = new TitleBar(gui, WindowControls.NONE, "Calculator");
+        gui.root().background(BG).children(titleBar.node(), root);
+        return new Ui(engine, titleBar);
     }
 
     /**
@@ -261,6 +295,7 @@ public final class CalculatorApp {
         private final java.util.function.Consumer<Entry> restore;
         private final Gui gui = new Gui();
         private final Node list;
+        private final TitleBar titleBar;
         private final java.util.ArrayDeque<Node> rows = new java.util.ArrayDeque<>();
         private Tactroller input;
         private TactrollerInputBridge bridge;
@@ -281,7 +316,11 @@ public final class CalculatorApp {
             Node column = gui.column().width(Length.FILL).height(Length.FILL)
                     .padding(Length.dp(12)).gap(Length.dp(8))
                     .children(heading, list);
-            gui.root().background(BG).children(column);
+            // The popup draws its own frame too, so the two windows match. Its bar is bound in onCreated:
+            // a popup's window does not exist until the main thread services the request, and it is that
+            // window the buttons command -- not the main one app.controls() would hand over.
+            this.titleBar = new TitleBar(gui, WindowControls.NONE, "History");
+            gui.root().background(BG).children(titleBar.node(), column);
             // Zoom is per-window: the history scales independently of the keypad.
             zoomShortcuts(gui);
         }
@@ -299,7 +338,8 @@ public final class CalculatorApp {
             }
             if (!shown) {
                 shown = true;
-                app.requestPopup("History", 320, 480, gui, this::attachInput, this::onClosed);
+                app.requestPopup(WindowConfig.of("History", 320, 480 + BAR_H).decorations(Decorations.CLIENT),
+                        gui, this::onCreated, this::onClosed);
             }
         }
 
@@ -347,6 +387,15 @@ public final class CalculatorApp {
                     .scroll(false, false);
         }
 
+        /**
+         * The popup exists: attach its input and point its chrome at it. Runs on the main thread, before
+         * the window is first presented, so the bar is never drawn commanding nothing.
+         */
+        private void onCreated(dev.vexelray.os.NativeWindow window) {
+            attachInput(window.osHandle());
+            titleBar.controls(new PopupControls(window));
+        }
+
         /** Attach a second input backend to the popup's own window handle, feeding this Gui's bus. */
         private void attachInput(long hwnd) {
             try {
@@ -362,6 +411,9 @@ public final class CalculatorApp {
 
         private void onClosed() {
             closeInput();
+            // The window this bar commanded is gone; the tree outlives it and is shown again on the next
+            // evaluation, so the buttons go back to commanding nothing until onCreated rebinds them.
+            titleBar.controls(WindowControls.NONE);
             shown = false;
         }
 
@@ -386,6 +438,42 @@ public final class CalculatorApp {
                     // Transient poll failure — drop this frame's input rather than tear down the loop.
                 }
             }
+        }
+    }
+
+    /**
+     * {@link WindowControls} over a popup's own window, for the title bar it draws. The main window's
+     * come from {@code GuiApp.controls()}; a popup's the application holds itself, since the window it
+     * commands is the one handed to {@code onCreated}.
+     *
+     * <p>Close is a <em>request</em>, exactly as the system close button would have been: the frame loop
+     * observes it, tears the popup down in its own order and runs {@code onClosed}. Destroying the window
+     * here would pull resources out from under a frame in flight.
+     */
+    private record PopupControls(dev.vexelray.os.NativeWindow window) implements WindowControls {
+
+        
+        public void minimize() {
+            window.minimize();
+        }
+
+        
+        public void toggleMaximize() {
+            if (window.isMaximized()) {
+                window.restore();
+            } else {
+                window.maximize();
+            }
+        }
+
+        
+        public boolean maximized() {
+            return window.isMaximized();
+        }
+
+        
+        public void close() {
+            window.requestClose();
         }
     }
 

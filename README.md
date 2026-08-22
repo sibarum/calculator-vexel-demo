@@ -27,4 +27,9 @@ Headless capture to PNG (no GPU window / input backend needed):
 mvn compile exec:exec "-Dapp.args=--capture"
 ```
 
+The window frame is the calculator's own: `Decorations.CLIENT` extends the client area over the whole
+window and a `TitleBar` -- ordinary widgets, drawn in the same palette as the keypad -- stands where the
+system caption was, on both the main window and the history window. Dragging, snapping, Win+arrow,
+double-click-to-maximize and the system menu are still the window manager's.
+
 Ctrl+= / Ctrl+- / Ctrl+0 zoom the whole UI — every length is relative.
