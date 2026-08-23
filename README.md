@@ -4,16 +4,22 @@ A deceptively simple calculator built on [vexelray-gui](../vexelray-gui): a disp
 grid of lit, elevated keys, rendered as one batched SDF draw. Click handlers run on worker threads
 and mutate the display through its thread-safe `Node` handle.
 
-It is symbolic, backed by SymEngine through [symengine-panama](../symengine-panama), with a wheel
-algebra: `1/0 = ω` (complex infinity) and `0/0` is the wheel bottom, with `ω+a=ω`, `0·ω=0/0`,
-`1/ω=0`. The keypad has the constants `e`, `i`, `π`, the wheel's `ω`, plotting variables `x y z`,
-`^` for powers, and `log(x, n)` for log base n. Arithmetic is exact (`1/3 + 1/6` → `1/2`), and
-adjacency multiplies (`2π`, `3(x+1)`).
+The mathematics is [cott-engine](../cott-engine) — COTT, where an identity belongs to an *operation*
+rather than a value, so the same subterm gives two answers in two contexts: `x×(0÷0)` is `x` (the
+operand erases) while `x+0÷0` is `1+x` (it materialises as a residue). There is one engine and no
+engine key: it answers every expression the keypad can build. `1÷0` is `ω`, `2÷0` is `2ω`, `ω^ω` is
+`-1`, and `i` is derived rather than adjoined. Arithmetic is exact (`1÷3` stays `1÷3`), and adjacency
+multiplies (`2π`, `3(x+1)`).
+
+The keypad has the constants `e`, `i`, `π`, the wheel's `ω`, plotting variables `x y z`, `^` for
+powers, and `log(x, n)` for log base n. A rejected expression is *reported* on the status line and
+never written into the field, so it can be fixed and re-evaluated without retyping.
 
 ## Prerequisites
 
 The sibling stack installed to the local Maven repo, in order: `supirvast`, `vexelray`,
-`tactroller` (+ `atchung`), `vexelray-gui`. Java 25, and a Vulkan-capable GPU to run windowed.
+`tactroller` (+ `atchung`), `vexelray-gui`, `cott-engine`. Java 25, and a Vulkan-capable GPU to run
+windowed.
 
 ## Run
 
