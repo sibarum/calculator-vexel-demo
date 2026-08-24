@@ -9,7 +9,7 @@ import sibarum.cott.Term;
 
 /**
  * The bridge between the two mathematics the calculator now holds: a COTT {@link Term}, read as a function of
- * one variable on the <b>real line</b>, so that {@code vexelray-gui-plot} can enclose it.
+ * one or two variables on the <b>real line</b>, so that {@code vexelray-gui-plot} can enclose it.
  *
  * <p>It is a translation and not a projection, and the difference is the whole of this class. COTT is a wheel:
  * {@code ω} is a point, {@code i} is a point, {@code 0÷0} is a residue that remembers which operand it came
@@ -40,11 +40,18 @@ import sibarum.cott.Term;
  * still a division and plots as the constant 1 it is everywhere except the origin — which is exactly where the
  * enclosure algebra paints a pole, without being told to.
  *
- * @param variable the single variable the expression is a function of, or null when it was refused
- * @param expr     the expression, ready to enclose, or null when it was refused
- * @param refusal  why there is nothing to plot, or null when there is
+ * <h2>One variable or two, and the difference is only in the binding</h2>
+ * A term with one free variable is a curve and a term with two is a surface, but the translation below does not
+ * branch on which: it maps every name in {@link #variables} to an {@link Expr.Param} and leaves the arity to
+ * whoever draws it. That is the plot module's own arrangement showing through — a parameter answers whatever
+ * region binds its name, so a curve is a surface whose cell happens to have one axis, and neither this class nor
+ * the arithmetic below it has a two-variable case to keep in agreement with the one-variable one.
+ *
+ * @param variables the free variables the expression is a function of, in order, or empty when it was refused
+ * @param expr      the expression, ready to enclose, or null when it was refused
+ * @param refusal   why there is nothing to plot, or null when there is
  */
-record Plottable(String variable, Expr expr, String refusal) {
+record Plottable(List<String> variables, Expr expr, String refusal) {
 
     /**
      * The one place the translation is not exact. A rational exponent that does not terminate in decimal —
@@ -63,6 +70,21 @@ record Plottable(String variable, Expr expr, String refusal) {
         return expr != null;
     }
 
+    /** Whether this is a surface rather than a curve — the only question a renderer has to ask about arity. */
+    boolean isSurface() {
+        return variables.size() == 2;
+    }
+
+    /** The axis running left to right: the first variable, whatever it is called. */
+    String across() {
+        return variables.get(0);
+    }
+
+    /** The axis running into the picture. Only a surface has one. */
+    String into() {
+        return variables.get(1);
+    }
+
     /**
      * Every variable in {@code term}, in order — the question "how many free variables is this?" answered
      * before anything is translated, because the answer decides whether a plot is even meaningful.
@@ -77,12 +99,15 @@ record Plottable(String variable, Expr expr, String refusal) {
         return List.copyOf(found);
     }
 
-    /** Read {@code term} as a real function of {@code variable}, or say why it cannot be read as one. */
-    static Plottable read(Term term, String variable) {
+    /** Read {@code term} as a real function of {@code variables}, or say why it cannot be read as one. */
+    static Plottable read(Term term, List<String> variables) {
+        if (variables.isEmpty() || variables.size() > 2) {
+            throw new IllegalArgumentException("a plot is of one variable or two, not " + variables.size());
+        }
         try {
-            return new Plottable(variable, translate(term, variable), null);
+            return new Plottable(List.copyOf(variables), translate(term, variables), null);
         } catch (Unreadable refused) {
-            return new Plottable(null, null, refused.getMessage());
+            return new Plottable(List.of(), null, refused.getMessage());
         }
     }
 
@@ -109,16 +134,16 @@ record Plottable(String variable, Expr expr, String refusal) {
         }
     }
 
-    private static Expr translate(Term term, String variable) {
+    private static Expr translate(Term term, List<String> variables) {
         return switch (term) {
             case Term.Pt p -> point(p);
-            case Term.Atom a -> atom(a, variable);
-            case Term.Plus p -> fold(p.args(), variable, Expr.Add::new);
-            case Term.Times t -> fold(t.args(), variable, Expr.Mul::new);
-            case Term.Neg n -> new Expr.Sub(zero(), translate(n.of(), variable));
-            case Term.Inv i -> new Expr.Div(one(), translate(i.of(), variable));
-            case Term.Div d -> new Expr.Div(translate(d.of(), variable), translate(d.by(), variable));
-            case Term.Pow p -> power(p, variable);
+            case Term.Atom a -> atom(a, variables);
+            case Term.Plus p -> fold(p.args(), variables, Expr.Add::new);
+            case Term.Times t -> fold(t.args(), variables, Expr.Mul::new);
+            case Term.Neg n -> new Expr.Sub(zero(), translate(n.of(), variables));
+            case Term.Inv i -> new Expr.Div(one(), translate(i.of(), variables));
+            case Term.Div d -> new Expr.Div(translate(d.of(), variables), translate(d.by(), variables));
+            case Term.Pow p -> power(p, variables);
             // The residue families, and the projection that blurs them. Each one is a form that remembers an
             // operand, which is precisely what a point on a line cannot do.
             case Term.Wind w -> throw new Unreadable("1^" + w.of() + " is a residue, not a point on a line");
@@ -154,17 +179,19 @@ record Plottable(String variable, Expr expr, String refusal) {
         return negated ? new Expr.Sub(zero(), magnitude) : magnitude;
     }
 
-    private static Expr atom(Term.Atom a, String variable) {
+    private static Expr atom(Term.Atom a, List<String> variables) {
         if (a.name().equals("π")) {
             return new Expr.Const(Math.PI);
         }
         if (a.name().equals("e")) {
             return new Expr.Const(Math.E);
         }
-        if (a.name().equals(variable)) {
-            return new Expr.Param(variable);
+        if (variables.contains(a.name())) {
+            // The name travels into the expression rather than being flattened to "the variable": a cell binds
+            // by name, and a surface whose two axes had the same name would be a curve drawn along a diagonal.
+            return new Expr.Param(a.name());
         }
-        throw new Unreadable(a.name() + " is a second variable; the plotter takes one");
+        throw new Unreadable(a.name() + " is a third variable; the plotter takes one or two");
     }
 
     /**
@@ -179,27 +206,27 @@ record Plottable(String variable, Expr expr, String refusal) {
      *       sound and would fill the window with solid colour; saying so is more use than drawing it.
      * </ul>
      */
-    private static Expr power(Term.Pow p, String variable) {
+    private static Expr power(Term.Pow p, List<String> variables) {
         List<String> inExponent = variablesIn(p.exponent());
         if (inExponent.isEmpty()) {
-            return new Expr.Power(translate(p.base(), variable), constantExponent(p.exponent(), variable));
+            return new Expr.Power(translate(p.base(), variables), constantExponent(p.exponent(), variables));
         }
         if (p.base() instanceof Term.Atom a && a.name().equals("e")) {
-            return new Expr.Exp(translate(p.exponent(), variable));
+            return new Expr.Exp(translate(p.exponent(), variables));
         }
         if (variablesIn(p.base()).isEmpty()) {
-            double base = value(translate(p.base(), variable));
+            double base = value(translate(p.base(), variables));
             if (!(base > 0)) {
                 throw new Unreadable("a base of " + base + " raised to a varying power has no real curve");
             }
-            return new Expr.Exp(new Expr.Mul(new Expr.Const(Math.log(base)), translate(p.exponent(), variable)));
+            return new Expr.Exp(new Expr.Mul(new Expr.Const(Math.log(base)), translate(p.exponent(), variables)));
         }
         throw new Unreadable("a power whose base and exponent both vary has no bound to draw");
     }
 
     /** The exponent slot, which {@link Expr.Power} needs as one number rather than as an expression. */
-    private static Expr.Const constantExponent(Term exponent, String variable) {
-        Expr translated = translate(exponent, variable);
+    private static Expr.Const constantExponent(Term exponent, List<String> variables) {
+        Expr translated = translate(exponent, variables);
         if (translated instanceof Expr.Const c) {
             return c;
         }
@@ -226,10 +253,11 @@ record Plottable(String variable, Expr expr, String refusal) {
         return read.middle;
     }
 
-    private static Expr fold(List<Term.Val> args, String variable, java.util.function.BinaryOperator<Expr> join) {
+    private static Expr fold(List<Term.Val> args, List<String> variables,
+                             java.util.function.BinaryOperator<Expr> join) {
         Expr folded = null;
         for (Term.Val arg : args) {
-            Expr next = translate(arg, variable);
+            Expr next = translate(arg, variables);
             folded = folded == null ? next : join.apply(folded, next);
         }
         if (folded == null) {

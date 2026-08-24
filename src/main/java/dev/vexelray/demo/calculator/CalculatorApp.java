@@ -84,7 +84,14 @@ public final class CalculatorApp {
         zoomShortcuts(gui);
 
         if (args.length >= 1 && args[0].startsWith("--capture-plot")) {
-            capturePlot(args[0].contains("=") ? args[0].substring(args[0].indexOf('=') + 1) : "1÷(x^2−1)");
+            capturePlot(entryOf(args[0], "1÷(x^2−1)"), "plot.png", "plot-zoomed.png");
+            return;
+        }
+
+        if (args.length >= 1 && args[0].startsWith("--capture-surface")) {
+            // A saddle: the one picture that shows at a glance whether the projection and the painting order
+            // are both right, since it rises on one axis exactly as it falls on the other.
+            capturePlot(entryOf(args[0], "x^2−y^2"), "surface.png", "surface-turned.png");
             return;
         }
 
@@ -127,9 +134,10 @@ public final class CalculatorApp {
             // creation and released with the window. The history predates this seam and still attaches its
             // own; the plot is a named window and lets the framework do it.
             app.input(CalculatorApp::attachWindowInput);
-            PlotWindow plot = new PlotWindow(memory);
-            engine.plotter(app, plot);
-            zoomShortcuts(plot.gui());
+            // Each preview is built the first time its slot is used, and gets the same UI zoom shortcuts every
+            // other window here has -- which is the only thing the calculator has to say about a window it did
+            // not know it was going to open.
+            engine.plotter(new Previews(app, memory, CalculatorApp::zoomShortcuts));
             TactrollerInputBridge bridge = input == null ? null : new TactrollerInputBridge(input, gui.bus());
             try {
                 app.run(gui, maxFrames, () -> {
@@ -173,42 +181,55 @@ public final class CalculatorApp {
      * the technique in one picture: two poles, found by the arithmetic rather than by a solver, drawn as
      * painted columns instead of as lines through infinity.
      */
-    private static void capturePlot(String entry) throws Exception {
+    private static void capturePlot(String entry, String first, String second) throws Exception {
         Term term = Parser.parse(Notation.normalize(entry));
         List<String> variables = Plottable.variablesIn(term);
-        if (variables.size() != 1) {
+        if (variables.isEmpty() || variables.size() > 2) {
             System.out.println("nothing to plot: " + variables.size() + " variables in " + entry);
             return;
         }
-        Plottable plottable = Plottable.read(term, variables.get(0));
+        Plottable plottable = Plottable.read(term, variables);
         if (!plottable.ok()) {
             System.out.println("nothing to plot: " + plottable.refusal());
             return;
         }
         // A real window memory, over the real settings: it is only ever read here, since a capture opens no
         // window to place and nothing on this path calls watch, poll or save.
-        PlotWindow plot = new PlotWindow(new WindowMemory(Settings.open(APP_NAME)));
-        plot.headless(entry, plottable);
-        GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, "plot.png");
+        PlotWindow plot = new PlotWindow("capture", new WindowMemory(Settings.open(APP_NAME)));
+        plot.headless(entry, term, plottable);
+        GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, first);
         plot.settle();
-        GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, "plot.png");
+        GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, first);
         // Two paints' worth: the layout watch draws the plot the moment the first frame gives the canvas a
         // size, and the handshake above draws it again to be certain before the photograph. The second is
         // entirely cache hits, which is why this line reads half-and-half.
         System.out.println("  framed     " + plot.cacheReport());
         // Then the half that would otherwise never be exercised without a pointer, and the numbers that say
-        // whether the cache is doing what this whole design is for: a zoom lands on a scale nothing is cached
-        // at and pays for every column; the pan after it moves within that scale and should pay for almost
-        // none; and going home returns to a scale already visited and should pay for nothing at all.
+        // whether the cache is doing what this whole design is for. On a curve: a zoom lands on a scale nothing
+        // is cached at and pays for every column; the pan after it moves within that scale and should pay for
+        // almost none; and going home returns to a scale already visited and should pay for nothing at all. On
+        // a surface the middle step turns the picture instead of panning it, which is the stronger claim of the
+        // two -- turning re-projects and re-sorts and must evaluate nothing whatsoever.
         plot.zoomTo(4);
         System.out.println("  zoomed in  " + plot.cacheReport());
         plot.panBy(0.4);
-        System.out.println("  panned     " + plot.cacheReport());
-        GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, "plot-zoomed.png");
+        System.out.println("  moved      " + plot.cacheReport());
+        GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, second);
         plot.goHome();
         System.out.println("  back home  " + plot.cacheReport());
+        // And the half that needs a pointer. A capture has no input backend and so no pointer, but the hover
+        // path can still be walked from its own end: point at the first marker, and photograph what it says.
+        if (plot.hoverMark()) {
+            GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, "plot-landmark.png");
+            System.out.println("  landmark   named");
+        }
         plot.gui().close();
         System.out.println("captured " + entry);
+    }
+
+    /** The expression a {@code --capture-*} flag names, or the default that flag stands for. */
+    private static String entryOf(String arg, String fallback) {
+        return arg.contains("=") ? arg.substring(arg.indexOf('=') + 1) : fallback;
     }
 
     private static void zoomShortcuts(Gui gui) {
@@ -669,9 +690,8 @@ public final class CalculatorApp {
         private volatile Node statusLabel;
         /** Where evaluations are recorded, once there is a window loop to open onto. */
         private volatile History history;
-        /** The plot, and the app it opens its window on. Both null until main() has a window loop. */
-        private volatile PlotWindow plot;
-        private volatile GuiApp app;
+        /** Where a plotted expression opens a window. Null until main() has a window loop to open onto. */
+        private volatile Previews previews;
 
         Engine(TextField display) {
             this.display = display;
@@ -693,10 +713,9 @@ public final class CalculatorApp {
             this.history = history;
         }
 
-        /** Where a one-variable expression goes. Null under {@code --capture}, which has no window loop. */
-        void plotter(GuiApp app, PlotWindow plot) {
-            this.app = app;
-            this.plot = plot;
+        /** Where a plottable expression goes. Null under {@code --capture}, which has no window loop. */
+        void plotter(Previews previews) {
+            this.previews = previews;
         }
 
         /**
@@ -708,30 +727,33 @@ public final class CalculatorApp {
          * <ul>
          *   <li><b>None</b> — a number was evaluated. There is nothing to plot and nothing to say about it,
          *       so nothing is said: an arithmetic result must not come with a notice attached.
-         *   <li><b>One</b> — the plot opens, against that variable whatever it is called. x is the usual one
-         *       and nothing here depends on it being x.
-         *   <li><b>More than one</b> — a surface, not a curve. Reported on the status line rather than half
-         *       drawn by pinning the others to zero, which would be a picture of a different expression.
+         *   <li><b>One</b> — a curve, against that variable whatever it is called. x is the usual one and
+         *       nothing here depends on it being x.
+         *   <li><b>Two</b> — a surface, in three dimensions, over the two of them in the order they are named.
+         *   <li><b>Three or more</b> — reported on the status line rather than half drawn by pinning the rest
+         *       to zero, which would be a picture of a different expression. The count is where the line
+         *       falls, and it falls there because there is no third dimension left to put a third variable on.
          * </ul>
+         *
+         * <p>Either way it opens a <b>preview of its own</b> — see {@link Previews}.
          */
         private void offerPlot(String entry, Term term) {
-            PlotWindow window = plot;
-            GuiApp host = app;
-            if (window == null || host == null) {
+            Previews windows = previews;
+            if (windows == null) {
                 return;
             }
             List<String> variables = Plottable.variablesIn(term);
             if (variables.isEmpty()) {
                 return;
             }
-            if (variables.size() > 1) {
+            if (variables.size() > 2) {
                 status(variables.size() + " variables (" + String.join(", ", variables)
-                        + ") -- the plotter takes one");
+                        + ") -- the plotter takes one or two");
                 return;
             }
-            Plottable plottable = Plottable.read(term, variables.get(0));
+            Plottable plottable = Plottable.read(term, variables);
             if (plottable.ok()) {
-                window.show(host, entry, plottable);
+                windows.show(entry, term, plottable);
             } else {
                 status(plottable.refusal());
             }

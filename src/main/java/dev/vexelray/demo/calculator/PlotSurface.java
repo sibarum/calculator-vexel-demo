@@ -11,9 +11,13 @@ import dev.vexelray.gui.plot.Expr;
 import dev.vexelray.gui.plot.Frame;
 import dev.vexelray.gui.plot.Framing;
 import dev.vexelray.gui.plot.Interval;
+import dev.vexelray.gui.plot.Landmark;
+import dev.vexelray.gui.plot.Landmarks;
 import dev.vexelray.gui.plot.Span;
+import dev.vexelray.text.TextLayout;
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Consumer;
+import sibarum.cott.Term;
 
 /**
  * The plot itself: the canvas the curve is drawn on, the cache behind it, and the gestures that move the
@@ -87,14 +92,46 @@ final class PlotSurface {
     private static final float LABEL_W = 44;
     private static final float LABEL_H = 14;
 
+    // --- landmarks --------------------------------------------------------------------------------------
+
+    /** A landmark's dot, in dp. A box with a corner radius of half its size is a circle. */
+    private static final float MARK_DP = 9;
+
+    /** How close two markers may sit before the second is left out. See {@link #drawMarks}. */
+    private static final float COLLAPSE_DP = MARK_DP;
+
+    /** How near the pointer has to come, in dp, for a landmark to name itself. */
+    private static final float HOVER_DP = 14;
+
+    /**
+     * How much wider than the visible window landmarks are found over. Panning within what has already been
+     * searched costs nothing, which is the same bargain the column cache strikes and for the same reason: a
+     * search is a whole window's worth of work and a drag is forty pixels of it.
+     */
+    private static final double SEARCH_MARGIN = 1.0;
+
+    /** A pole's marker sits on the x-axis, or this far down the canvas when the axis is off screen. */
+    private static final double POLE_MARK_FRACTION = 0.5;
+
+    /** The tooltip's geometry, in dp. Its width is estimated from the text, since nothing here can measure it. */
+    private static final float TIP_LINE_H = 15;
+    private static final float TIP_PAD = 7;
+    private static final float TIP_CHAR_W = 6.2f;
+    private static final float TIP_MIN_W = 96;
+    private static final float TIP_MAX_W = 340;
+
     private final Gui gui;
     private final Node canvas;
     private final Node gridLayer;
     private final Node curveLayer;
+    private final Node markLayer;
     private final Node labelLayer;
+    private final Node tip;
     private final List<Node> gridPool = new ArrayList<>();
     private final List<Node> curvePool = new ArrayList<>();
+    private final List<Node> markPool = new ArrayList<>();
     private final List<Node> labelPool = new ArrayList<>();
+    private final List<Node> tipLines = new ArrayList<>();
 
     /** Told the frame's extent after every render, for the window's readout. */
     private final Consumer<String> readout;
@@ -123,6 +160,20 @@ final class PlotSurface {
 
     private Expr expr;
     private String variable = "x";
+    /** The term as it was typed. Only {@link Influence} reads it, and only to name what carries a value. */
+    private Term typed;
+    /** What the last search found, and the x window it was searched over. */
+    private List<Landmark> landmarks = List.of();
+    private double searchedLo;
+    private double searchedHi;
+    /** Where the drawn markers ended up, in dp within the canvas — the hover test's only input. */
+    private final List<Placed> placed = new ArrayList<>();
+    /** What the last search declined to draw, carried between paints so a pan does not lose the notice. */
+    private String notice = "";
+    /** The landmark the tooltip is currently about, so a pointer moving within one does not rebuild it. */
+    private volatile Landmark tipFor;
+    /** What it says, kept so a reposition does not recompute the influence reading. */
+    private volatile List<String> tipText = List.of();
     /** The window the framing pass chose: what "reset" goes back to, and what the zoom notches scale. */
     private Frame home = Frame.about(Framing.DEFAULT_HALF_WIDTH, Framing.DEFAULT_HALF_HEIGHT);
     private int zoom;
@@ -149,8 +200,10 @@ final class PlotSurface {
         // which leaves the canvas itself the target of every press and wheel.
         this.gridLayer = layer();
         this.curveLayer = layer();
+        this.markLayer = layer();
         this.labelLayer = layer();
-        canvas.children(gridLayer, curveLayer, labelLayer);
+        this.tip = tooltip();
+        canvas.children(gridLayer, curveLayer, markLayer, labelLayer, tip);
         gui.onDrag(canvas, this::drag);
         reset();   // a frame with no extent is not constructible, so there is one from the start
         // A paint needs a canvas that has a size, and a canvas has no size until the tree has been laid out --
@@ -170,20 +223,24 @@ final class PlotSurface {
      * Plot {@code plottable}, framed automatically. The framing pass runs here rather than on the GUI thread —
      * it evaluates a few hundred columns, and a window opening is not a reason to drop a frame.
      */
-    void show(Plottable plottable) {
-        gui.async(() -> showNow(plottable));
+    void show(Plottable plottable, Term typed) {
+        gui.async(() -> showNow(plottable, typed));
     }
 
     /** {@link #show} without the worker: the framing pass runs on the caller. */
-    void showNow(Plottable plottable) {
+    void showNow(Plottable plottable, Term typed) {
         Frame framed = Framing.automatic(plottable.expr());
         synchronized (cache) {
             cache.clear();                   // a new expression: every cached column was about another curve
         }
         synchronized (this) {
             this.expr = plottable.expr();
-            this.variable = plottable.variable();
+            this.variable = plottable.across();
+            this.typed = typed;
             this.home = framed;
+            this.landmarks = List.of();
+            this.searchedLo = 0;
+            this.searchedHi = 0;             // an empty search window: the next paint will look again
             reset();
         }
         invalidate();
@@ -427,6 +484,13 @@ final class PlotSurface {
                 return;                              // overtaken mid-evaluation: whoever overtook us will draw
             }
         }
+        // Before the batch, because it evaluates: the search runs on this worker, and only when the window has
+        // moved off what was last searched. A pan within the searched margin is free.
+        String notice = searchAround(e, f);
+        List<Landmark> marks;
+        synchronized (this) {
+            marks = landmarks;
+        }
         synchronized (painting) {
             if (revision.get() != mine) {
                 return;
@@ -436,9 +500,11 @@ final class PlotSurface {
             gui.batch(() -> {
                 drawColumns(spans, size[1]);
                 drawGrid(f, size);
+                drawMarks(marks, f, size);
+                hideTip();                    // the picture moved out from under the pointer
             });
         }
-        readout.accept(bounds(f));
+        readout.accept(notice.isEmpty() ? bounds(f) : bounds(f) + "    " + notice);
     }
 
     /**
@@ -578,6 +644,317 @@ final class PlotSurface {
         // for one, and a readout that renders as a box is worse than a readout that reads like a range.
         return variable() + ": [" + format(f.xLo(), xStep) + ", " + format(f.xHi(), xStep) + "]"
                 + "    y: [" + format(f.yLo(), yStep) + ", " + format(f.yHi(), yStep) + "]";
+    }
+
+    // --- landmarks ------------------------------------------------------------------------------------
+
+    /**
+     * Find the landmarks around {@code f}, if the window has left what was last searched. Returns the notice
+     * naming whatever the finder declined to draw.
+     *
+     * <p>The search is done over a window {@link #SEARCH_MARGIN} wider than the visible one on each side, which
+     * is the same bargain the column cache strikes: a search costs a whole window's worth of arithmetic and a
+     * drag is forty pixels of it, so paying for the neighbourhood once buys every pan inside it. A zoom is the
+     * other case — the same margin at a tighter scale resolves features the wider search stepped over — so a
+     * searched window that has become much larger than the visible one is re-run even though it still contains
+     * it.
+     */
+    private String searchAround(Expr e, Frame f) {
+        double lo;
+        double hi;
+
+        synchronized (this) {
+            boolean covered = f.xLo() >= searchedLo && f.xHi() <= searchedHi;
+            boolean stale = searchedHi - searchedLo > f.width() * (1 + 2 * SEARCH_MARGIN) * 2;
+            if (covered && !stale) {
+                return notice;
+            }
+            double margin = f.width() * SEARCH_MARGIN;
+            lo = f.xLo() - margin;
+            hi = f.xHi() + margin;
+
+        }
+        Landmarks.Survey survey;
+        try {
+            survey = Landmarks.survey(e, variable(), lo, hi);
+        } catch (RuntimeException fault) {
+            // A search is an extra, not the picture. Whatever it could not do, the curve underneath is still
+            // right, so the markers are dropped rather than the paint.
+            synchronized (this) {
+                landmarks = List.of();
+                searchedLo = lo;
+                searchedHi = hi;
+                notice = "";
+            }
+            return "";
+        }
+        synchronized (this) {
+            landmarks = survey.found();
+            searchedLo = lo;
+            searchedHi = hi;
+            notice = survey.notice();
+            return notice;
+        }
+    }
+
+    /**
+     * The markers: one small circle per landmark, unlabelled.
+     *
+     * <p>Unlabelled is the decision. A picture with a number beside every feature stops being a picture of a
+     * curve and becomes a table drawn over one, and the numbers are a pointer-move away — see {@link #hover}.
+     *
+     * <p>Where two landmarks land on the same spot — {@code x²} has a root and a minimum at the origin — only
+     * the first by {@link #PRECEDENCE} is drawn, because a dot can only be one colour. Both are still
+     * <em>remembered</em>, so the tooltip names them both: the collapse is about what can be drawn, not about
+     * what is true.
+     */
+    private void drawMarks(List<Landmark> marks, Frame f, float[] size) {
+        List<Placed> put = new ArrayList<>(marks.size());
+        int drawn = 0;
+        for (Landmark mark : marks.stream().sorted(PRECEDENCE).toList()) {
+            if (mark.x() < f.xLo() || mark.x() > f.xHi()) {
+                continue;
+            }
+            double fraction = mark.kind().hasHeight() ? f.fractionOf(mark.y()) : poleFraction(f);
+            if (fraction < 0 || fraction > 1) {
+                continue;                                   // above the ceiling or below the floor of the window
+            }
+            float px = (float) ((mark.x() - f.xLo()) / f.width() * size[0]);
+            float py = (float) (fraction * size[1]);
+            boolean covered = false;
+            for (Placed already : put) {
+                covered |= Math.hypot(already.x() - px, already.y() - py) < COLLAPSE_DP;
+            }
+            put.add(new Placed(px, py, mark));
+            if (covered) {
+                continue;
+            }
+            pooled(markPool, markLayer, drawn++)
+                    .visible(true)
+                    .background(colourOf(mark.kind()))
+                    // The border is a halo rather than an outline: a dot the same brightness as the curve it
+                    // sits on needs a dark ring to be a dot at all.
+                    .border(Length.dp(1.5f), Palette.MARK_HALO)
+                    .corner(Length.dp(MARK_DP / 2))
+                    .size(Length.dp(MARK_DP), Length.dp(MARK_DP))
+                    .floatAt(Length.dp(px - MARK_DP / 2), Length.dp(py - MARK_DP / 2));
+        }
+        hideFrom(markPool, drawn);
+        synchronized (placed) {
+            placed.clear();
+            placed.addAll(put);
+        }
+    }
+
+    /** A pole has no height, so its marker stands on the x-axis, or mid-window when the axis is off screen. */
+    private static double poleFraction(Frame f) {
+        return f.yLo() <= 0 && f.yHi() >= 0 ? f.fractionOf(0) : POLE_MARK_FRACTION;
+    }
+
+    /**
+     * Which of two landmarks gets the dot when they collide. A discontinuity outranks everything (it is the one
+     * that changes what the curve <em>is</em> there), then a turning point, then a crossing, then a change of
+     * bend — roughly, the order in which a reader would want to be told.
+     */
+    private static final List<Landmark.Kind> RANK = List.of(
+            Landmark.Kind.POLE, Landmark.Kind.MINIMUM, Landmark.Kind.MAXIMUM,
+            Landmark.Kind.ROOT, Landmark.Kind.Y_INTERCEPT, Landmark.Kind.INFLECTION);
+
+    private static final Comparator<Landmark> PRECEDENCE =
+            Comparator.<Landmark>comparingInt(l -> RANK.indexOf(l.kind())).thenComparingDouble(Landmark::x);
+
+    private static Color colourOf(Landmark.Kind kind) {
+        return switch (kind) {
+            case ROOT, Y_INTERCEPT -> Palette.MARK_CROSSING;
+            case MINIMUM, MAXIMUM -> Palette.MARK_TURNING;
+            case INFLECTION -> Palette.MARK_BEND;
+            case POLE -> Palette.MARK_POLE;
+        };
+    }
+
+    // --- the tooltip ----------------------------------------------------------------------------------
+
+    /**
+     * The pointer moved: name whatever is under it, or put the tooltip away. Reports whether it landed on a
+     * landmark, so the window can leave the pointer alone when it did not.
+     *
+     * <p>Arrives from the device event rather than through a node handler, for the same reason the wheel does:
+     * the markers are drawn into a pointer-transparent layer so that presses and drags reach the canvas
+     * underneath, which means nothing in the tree is going to be told it was hovered.
+     */
+    boolean hover(int x, int y) {
+        Rect rect = canvas.layout().rect();
+        float dpi = Math.max(0.01f, gui.dpi().value());
+        if (rect.w() <= 0 || rect.h() <= 0 || !rect.contains(x, y)) {
+            hideTip();
+            return false;
+        }
+        float lx = (x - rect.x()) / dpi;
+        float ly = (y - rect.y()) / dpi;
+        List<Placed> near = new ArrayList<>();
+        synchronized (placed) {
+            for (Placed candidate : placed) {
+                if (Math.hypot(candidate.x() - lx, candidate.y() - ly) <= HOVER_DP) {
+                    near.add(candidate);
+                }
+            }
+        }
+        if (near.isEmpty()) {
+            hideTip();
+            return false;
+        }
+        near.sort(Comparator.comparingDouble(p -> Math.hypot(p.x() - lx, p.y() - ly)));
+        showTip(near, lx, ly, rect.w() / dpi, rect.h() / dpi);
+        return true;
+    }
+
+    /** Fill the tooltip in and put it beside the pointer, flipped back inside the canvas when it would overrun. */
+    private void showTip(List<Placed> near, float atX, float atY, float widthDp, float heightDp) {
+        Landmark nearest = near.get(0).landmark();
+        if (tipFor != nearest) {
+            // Only when the landmark changes: the influence reading evaluates the expression a few times, and
+            // a pointer wandering the fourteen pixels around one dot has not asked a new question.
+            tipText = describe(near);
+            tipFor = nearest;
+        }
+        List<String> text = tipText;
+        if (text.isEmpty()) {
+            hideTip();
+            return;
+        }
+        int widest = 0;
+        for (String line : text) {
+            widest = Math.max(widest, line.length());
+        }
+        // Nothing here can measure a string, so the box is sized from the character count and a generous
+        // per-character width. Erring wide costs a little empty space; erring narrow would cut a number in
+        // half, which is the one thing a tooltip must not do.
+        float w = Math.max(TIP_MIN_W, Math.min(TIP_MAX_W, widest * TIP_CHAR_W + 2 * TIP_PAD));
+        float h = text.size() * TIP_LINE_H + 2 * TIP_PAD;
+        float wanted = atX + HOVER_DP + w > widthDp ? atX - HOVER_DP - w : atX + HOVER_DP;
+        float above = atY + HOVER_DP + h > heightDp ? atY - HOVER_DP - h : atY + HOVER_DP;
+        float px = Math.max(0, Math.min(wanted, widthDp - w));
+        float py = Math.max(0, Math.min(above, heightDp - h));
+        gui.batch(() -> {
+            for (int i = 0; i < tipLines.size(); i++) {
+                String line = i < text.size() ? text.get(i) : "";
+                tipLines.get(i).text(line).visible(!line.isEmpty());
+            }
+            tip.size(Length.dp(w), Length.dp(h))
+                    .floatAt(Length.dp(px), Length.dp(py))
+                    .visible(true);
+        });
+    }
+
+    /**
+     * Point at the first marker on screen and open its tooltip. The headless capture's stand-in for a pointer,
+     * and the only way the hover path can be photographed — a capture has no input backend, so there is nobody
+     * to move a mouse. It goes through {@link #hover} rather than around it, so what it exercises is the same
+     * code a real pointer runs, right down to the device-pixel conversion.
+     */
+    boolean hoverFirstMark() {
+        Rect rect = canvas.layout().rect();
+        float dpi = Math.max(0.01f, gui.dpi().value());
+        Placed first;
+        synchronized (placed) {
+            if (placed.isEmpty()) {
+                return false;
+            }
+            first = placed.get(0);
+        }
+        return hover(Math.round(rect.x() + first.x() * dpi), Math.round(rect.y() + first.y() * dpi));
+    }
+
+    private void hideTip() {
+        if (tipFor == null) {
+            return;
+        }
+        tipFor = null;
+        tip.visible(false);
+    }
+
+    /**
+     * What the tooltip says: what it is, where it is, and what is carrying the value there.
+     *
+     * <p>All the landmarks under the pointer are named, not only the nearest — the dot may be standing in for
+     * several, and "root, inflection" is the whole of what is interesting about the origin of a cubic.
+     */
+    private List<String> describe(List<Placed> near) {
+        List<String> kinds = new ArrayList<>();
+        for (Placed p : near) {
+            String label = p.landmark().kind().label();
+            if (!kinds.contains(label)) {
+                kinds.add(label);
+            }
+        }
+        Landmark nearest = near.get(0).landmark();
+        List<String> lines = new ArrayList<>(3);
+        lines.add(String.join(", ", kinds));
+        lines.add(nearest.kind().hasHeight()
+                ? variable() + " = " + compact(nearest.x()) + "    y = " + compact(nearest.y())
+                : variable() + " = " + compact(nearest.x()) + "    y is unbounded here");
+        Term term;
+        String axis;
+        synchronized (this) {
+            term = typed;
+            axis = variable;
+        }
+        if (term != null) {
+            Influence influence = Influence.at(term, List.of(axis), nearest.x());
+            if (influence != null) {
+                lines.add(influence.line());
+            }
+        }
+        return List.copyOf(lines);
+    }
+
+    /**
+     * A number as a reader wants it: four significant decimals at most, and no trailing zeros. A landmark is
+     * pinned far below this, so what is shown is a rounding of an exact answer rather than the limit of one.
+     */
+    private static String compact(double v) {
+        if (v == 0) {
+            return "0";
+        }
+        double magnitude = Math.abs(v);
+        if (magnitude >= 1e6 || magnitude < 1e-4) {
+            return String.format("%.3e", v);
+        }
+        String s = String.format("%.4f", v);
+        if (s.contains(".")) {
+            s = s.replaceAll("0+$", "").replaceAll("\\.$", "");
+        }
+        return s.equals("-0") ? "0" : s;
+    }
+
+    /** The tooltip's tree, built once: a panel and three lines, hidden until something is hovered. */
+    private Node tooltip() {
+        Node panel = gui.column()
+                .background(Palette.TIP_BG)
+                .border(Length.rem(0.1f), Palette.LINE)
+                .corner(Length.rem(0.4f))
+                .padding(Length.dp(TIP_PAD))
+                .size(Length.dp(TIP_MIN_W), Length.dp(3 * TIP_LINE_H + 2 * TIP_PAD))
+                .floatAt(Length.ZERO, Length.ZERO)
+                .visible(false)
+                .hitInert(true)
+                .scroll(false, false);
+        for (int i = 0; i < 3; i++) {
+            Node line = gui.text("")
+                    .width(Length.FILL).height(Length.dp(TIP_LINE_H))
+                    .textSize(Length.rem(i == 0 ? 0.8125f : 0.75f))
+                    .textColor(i == 0 ? Palette.INK : Palette.DIM)
+                    .align(TextLayout.HAlign.LEFT, TextLayout.VAlign.MIDDLE)
+                    .hitInert(true)
+                    .scroll(false, false);
+            panel.append(line);
+            tipLines.add(line);
+        }
+        return panel;
+    }
+
+    /** A marker as it was drawn: where it went, in dp within the canvas, and what it stands for. */
+    private record Placed(float x, float y, Landmark landmark) {
     }
 
     // --- the node pools -------------------------------------------------------------------------------
