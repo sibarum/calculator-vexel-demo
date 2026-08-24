@@ -307,7 +307,10 @@ final class SurfacePlot {
                 dragY = e.y();
                 return;
             }
-            double dYaw = -(e.x() - dragX) / Math.max(1f, e.nodeW()) * DRAG_YAW;
+            // Rightward drag turns the yaw up, which is also what the right arrow key does. The two used to
+            // disagree -- the drag negated and the key did not -- so pushing the picture one way with the mouse
+            // and the other way with the keyboard were the same gesture with opposite results.
+            double dYaw = (e.x() - dragX) / Math.max(1f, e.nodeW()) * DRAG_YAW;
             double dPitch = (e.y() - dragY) / Math.max(1f, e.nodeH()) * DRAG_PITCH;
             camera = camera.turned(dYaw, dPitch);
             dragX = e.x();
