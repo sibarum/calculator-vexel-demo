@@ -59,6 +59,17 @@ public final class CalculatorApp {
     private static final int PLOT_W = 720;
     private static final int PLOT_H = 560 + BAR_H;
 
+    /**
+     * The multiplication key's label, and the sign it inserts. Taken from the engine rather than written
+     * here, because the keypad and the printer disagreeing about it is exactly the failure
+     * {@link Notation} exists to prevent — a display the calculator cannot read back.
+     */
+    private static final String TIMES = String.valueOf(Notation.TIMES);
+
+    /** The keys that go into the field verbatim. Everything else is an operand — see {@code insertOperand}. */
+    private static final java.util.Set<String> OPERATORS =
+            java.util.Set.of("+", "−", TIMES, "÷", "^", ",", ")");
+
     // The colours live in Palette now: the plot window wears them too, and a plot drawn in its own scheme
     // would read as a different program that happened to open. These are this file's names for them.
     private static final Color BG = Palette.BG;
@@ -380,7 +391,7 @@ public final class CalculatorApp {
         // keypad can build. The freed slot went back to the row.
         String[][] rows = {
                 {"C", "DEL", "(", ")", "÷"},
-                {"7", "8", "9", "^", "×"},
+                {"7", "8", "9", "^", TIMES},
                 {"4", "5", "6", "log", "−"},
                 {"1", "2", "3", ",", "+"},
                 {"0", ".", "x", "y", "z"},
@@ -392,7 +403,7 @@ public final class CalculatorApp {
                     .alignItems(AlignItems.STRETCH);
             for (String label : row) {
                 boolean accent = label.equals("=");
-                boolean op = java.util.Set.of("÷", "×", "−", "+", "^", "log", ",", "(", ")", "C", "DEL")
+                boolean op = java.util.Set.of("÷", TIMES, "−", "+", "^", "log", ",", "(", ")", "C", "DEL")
                         .contains(label);
                 Node b = key(gui, label,
                         accent ? Color.WHITE : (op ? DIM : INK),
@@ -808,14 +819,24 @@ public final class CalculatorApp {
                         }
                     }
                 }
-                case "+", "−", "×", "÷", "^", ",", ")" -> { display.insert(label); justEvaluated = false; }
-                default -> insertOperand(label, doc);
+                // An operator goes in verbatim; anything else is an operand and may need a sign in front
+                // of it. This is a set rather than a list of case labels because one of the operators is
+                // the engine's TIMES, which is a value and not a compile-time constant -- and having the
+                // glyph in exactly one place is the whole reason it is a value.
+                default -> {
+                    if (OPERATORS.contains(label)) {
+                        display.insert(label);
+                        justEvaluated = false;
+                    } else {
+                        insertOperand(label, doc);
+                    }
+                }
             }
         }
 
         /**
          * An operand token -- digit, ., (, log(, e, i, π, ω, x, y, z -- inserted at the caret, with
-         * an implicit × when it lands directly after something that ends an operand.
+         * an implicit multiplication sign when it lands directly after something that ends an operand.
          */
         private void insertOperand(String label, Document doc) {
             String token = label.equals("log") ? "log(" : label;
@@ -826,11 +847,11 @@ public final class CalculatorApp {
             // The character to the left of where the insert lands, which is selectionStart rather
             // than the caret: inserting over a selection replaces it.
             int at = doc.selectionStart();
-            // The same two character sets the engine uses to put this × back when a TYPED expression
+            // The same two character sets the engine uses to put this sign back when a TYPED expression
             // is read, and to leave it out when a result is printed. One definition, in Notation, is
             // what keeps the keypad, the keyboard and the display agreeing.
             if (at > 0 && Notation.endsOperand(doc.text().charAt(at - 1)) && !Notation.digitLike(token)) {
-                token = "×" + token;   // implicit multiplication: 2π, xy, 3(x+1), ω(...)
+                token = TIMES + token;   // implicit multiplication: 2π, xy, 3(x+1), ω(...)
             }
             display.insert(token);
             justEvaluated = false;

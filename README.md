@@ -5,7 +5,7 @@ grid of lit, elevated keys, rendered as one batched SDF draw. Click handlers run
 and mutate the display through its thread-safe `Node` handle.
 
 The mathematics is [cott-engine](../cott-engine) — COTT, where an identity belongs to an *operation*
-rather than a value, so the same subterm gives two answers in two contexts: `x×(0÷0)` is `x` (the
+rather than a value, so the same subterm gives two answers in two contexts: `x·(0÷0)` is `x` (the
 operand erases) while `x+0÷0` is `1+x` (it materialises as a residue). There is one engine and no
 engine key: it answers every expression the keypad can build. `1÷0` is `ω`, `2÷0` is `2ω`, `ω^ω` is
 `-1`, and `i` is derived rather than adjoined. Arithmetic is exact (`1÷3` stays `1÷3`), and adjacency
