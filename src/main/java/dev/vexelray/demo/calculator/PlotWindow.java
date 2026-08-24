@@ -114,15 +114,13 @@ final class PlotWindow {
         surface.show(plottable);
         AppWindow open = window;
         if (open == null) {
-            open = app.window("plot", () -> WindowSpec
+            // The bar wires itself to whatever window this opens, and unwires when it closes -- the two lines
+            // every window in this application used to write out by hand, and the hand-rolled WindowControls
+            // that went with them.
+            open = app.window("plot", () -> titleBar.commands(WindowSpec
                     .of(memory.config("plot", "Plot", W, H + BAR_H).decorations(Decorations.CLIENT), gui)
-                    .onCreated(this::created)
-                    // The window this bar commanded is gone; the tree outlives it and is shown again on the
-                    // next plot, so the buttons go back to commanding nothing until onCreated rebinds them.
-                    .onClosed(() -> {
-                        titleBar.controls(WindowControls.NONE);
-                        memory.forget("plot");
-                    }));
+                    .onCreated(this::placed)
+                    .onClosed(() -> memory.forget("plot"))));
             window = open;
         }
         // show() only posts the request; the window is created at the top of the next frame, and laid out in
@@ -172,7 +170,8 @@ final class PlotWindow {
     }
 
     /**
-     * The OS window exists: point the chrome at it, and put it back where it was.
+     * The OS window exists: put it back where it was. The chrome is not this method's business any more — the
+     * bar binds itself through {@link TitleBar#commands}.
      *
      * <p>The {@link WindowSpec} above was built the first time the name {@code plot} was claimed, so the
      * {@link WindowConfig} in it is a snapshot of the placement at that moment. The bounds worth restoring are
@@ -180,8 +179,7 @@ final class PlotWindow {
      * somewhere, close it, evaluate something else. Correcting here, before the first frame, is why that is not
      * a visible jump.
      */
-    private void created(dev.vexelray.os.NativeWindow window) {
-        titleBar.controls(new NativeWindowControls(window));
+    private void placed(dev.vexelray.os.NativeWindow window) {
         if (memory.maximized("plot")) {
             window.maximize();
         } else {
@@ -216,39 +214,4 @@ final class PlotWindow {
         return b;
     }
 
-    /**
-     * {@link WindowControls} over the window this one was opened as. The main window's come from
-     * {@code GuiApp.controls()}; every other window's the application holds itself, since the window its
-     * caption buttons command is the one handed to {@code onCreated}.
-     *
-     * <p>Close is a <em>request</em>, exactly as the system close button would have been: the frame loop
-     * observes it, tears the window down in its own order and runs {@code onClosed}. Destroying the window
-     * here would pull resources out from under a frame in flight.
-     */
-    private record NativeWindowControls(dev.vexelray.os.NativeWindow window) implements WindowControls {
-
-        @Override
-        public void minimize() {
-            window.minimize();
-        }
-
-        @Override
-        public void toggleMaximize() {
-            if (window.isMaximized()) {
-                window.restore();
-            } else {
-                window.maximize();
-            }
-        }
-
-        @Override
-        public boolean maximized() {
-            return window.isMaximized();
-        }
-
-        @Override
-        public void close() {
-            window.requestClose();
-        }
-    }
 }

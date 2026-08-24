@@ -531,7 +531,7 @@ public final class CalculatorApp {
          */
         private void onCreated(dev.vexelray.os.NativeWindow window) {
             attachInput(window.osHandle());
-            titleBar.controls(new PopupControls(window));
+            titleBar.controls(WindowControls.of(window));
             // The config this window was created from is the one built the first time it opened; the bounds
             // worth restoring may be from later in the same session -- move the history, close it, evaluate
             // again. Correcting here, before the first frame, is what makes that not a visible jump.
@@ -586,42 +586,6 @@ public final class CalculatorApp {
                     // Transient poll failure — drop this frame's input rather than tear down the loop.
                 }
             }
-        }
-    }
-
-    /**
-     * {@link WindowControls} over a popup's own window, for the title bar it draws. The main window's
-     * come from {@code GuiApp.controls()}; a popup's the application holds itself, since the window it
-     * commands is the one handed to {@code onCreated}.
-     *
-     * <p>Close is a <em>request</em>, exactly as the system close button would have been: the frame loop
-     * observes it, tears the popup down in its own order and runs {@code onClosed}. Destroying the window
-     * here would pull resources out from under a frame in flight.
-     */
-    private record PopupControls(dev.vexelray.os.NativeWindow window) implements WindowControls {
-
-        
-        public void minimize() {
-            window.minimize();
-        }
-
-        
-        public void toggleMaximize() {
-            if (window.isMaximized()) {
-                window.restore();
-            } else {
-                window.maximize();
-            }
-        }
-
-        
-        public boolean maximized() {
-            return window.isMaximized();
-        }
-
-        
-        public void close() {
-            window.requestClose();
         }
     }
 

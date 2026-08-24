@@ -117,14 +117,6 @@ final class PlotSurface {
     private final LongAdder hits = new LongAdder();
     private final LongAdder misses = new LongAdder();
 
-    /** Holds the layout subscription open for as long as the surface exists. */
-    @SuppressWarnings("unused")
-    private final sibarum.atchung.Subscription geometry;
-
-    /** The canvas size the picture currently on screen was drawn for. Written by a painter, read by the GUI. */
-    private volatile float paintedW;
-    private volatile float paintedH;
-
     private final Object painting = new Object();
 
     // --- the plot state, guarded by this -------------------------------------------------------------
@@ -161,26 +153,11 @@ final class PlotSurface {
         canvas.children(gridLayer, curveLayer, labelLayer);
         gui.onDrag(canvas, this::drag);
         reset();   // a frame with no extent is not constructible, so there is one from the start
-        // A paint needs a canvas that has a size, and a canvas has no size until the tree has been laid out
-        // once -- which does not happen until the window exists and draws its first frame. So the surface
-        // watches the layout rather than being told when to draw: whenever the canvas ends up a different
-        // size from the one the picture on screen was drawn for, it repaints. That covers the first
-        // appearance, every window resize, and every change of UI zoom, with no caller having to guess the
-        // moment. The state is coalesced and commits only on change, so this costs a size comparison per
-        // changed layout and nothing at all per frame.
-        this.geometry = gui.layout().onCommit(snapshot -> repaintIfResized());
-    }
-
-    /** The canvas ended up a different size from the one the picture was drawn for: draw it again. */
-    private void repaintIfResized() {
-        float[] size = size();
-        if (size[0] < 2 || size[1] < 2) {
-            return;                      // still no canvas to draw on
-        }
-        if (Math.abs(size[0] - paintedW) < 0.5f && Math.abs(size[1] - paintedH) < 0.5f) {
-            return;                      // this is the picture already up -- and this is what stops a loop,
-        }                                // since painting is itself a layout change
-        invalidate();
+        // A paint needs a canvas that has a size, and a canvas has no size until the tree has been laid out --
+        // which does not happen until the window exists and draws its first frame. So the surface is told when
+        // its box arrives rather than guessing: the first call is the plot's cue to draw at all, and every
+        // later one is a window resize or a change of UI zoom. Nothing else has to know when a plot may paint.
+        gui.onResize(canvas, box -> invalidate());
     }
 
     Node node() {
@@ -460,11 +437,6 @@ final class PlotSurface {
                 drawColumns(spans, size[1]);
                 drawGrid(f, size);
             });
-            // Recorded only once a picture is actually up. A paint that declined -- no expression yet, no
-            // canvas yet, overtaken -- must leave this alone, or the layout watch would conclude the size it
-            // never drew at is the size on screen and never ask again.
-            paintedW = size[0];
-            paintedH = size[1];
         }
         readout.accept(bounds(f));
     }
