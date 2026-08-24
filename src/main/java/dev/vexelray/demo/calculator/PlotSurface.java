@@ -117,6 +117,14 @@ final class PlotSurface {
     private final LongAdder hits = new LongAdder();
     private final LongAdder misses = new LongAdder();
 
+    /** Holds the layout subscription open for as long as the surface exists. */
+    @SuppressWarnings("unused")
+    private final sibarum.atchung.Subscription geometry;
+
+    /** The canvas size the picture currently on screen was drawn for. Written by a painter, read by the GUI. */
+    private volatile float paintedW;
+    private volatile float paintedH;
+
     private final Object painting = new Object();
 
     // --- the plot state, guarded by this -------------------------------------------------------------
@@ -153,6 +161,26 @@ final class PlotSurface {
         canvas.children(gridLayer, curveLayer, labelLayer);
         gui.onDrag(canvas, this::drag);
         reset();   // a frame with no extent is not constructible, so there is one from the start
+        // A paint needs a canvas that has a size, and a canvas has no size until the tree has been laid out
+        // once -- which does not happen until the window exists and draws its first frame. So the surface
+        // watches the layout rather than being told when to draw: whenever the canvas ends up a different
+        // size from the one the picture on screen was drawn for, it repaints. That covers the first
+        // appearance, every window resize, and every change of UI zoom, with no caller having to guess the
+        // moment. The state is coalesced and commits only on change, so this costs a size comparison per
+        // changed layout and nothing at all per frame.
+        this.geometry = gui.layout().onCommit(snapshot -> repaintIfResized());
+    }
+
+    /** The canvas ended up a different size from the one the picture was drawn for: draw it again. */
+    private void repaintIfResized() {
+        float[] size = size();
+        if (size[0] < 2 || size[1] < 2) {
+            return;                      // still no canvas to draw on
+        }
+        if (Math.abs(size[0] - paintedW) < 0.5f && Math.abs(size[1] - paintedH) < 0.5f) {
+            return;                      // this is the picture already up -- and this is what stops a loop,
+        }                                // since painting is itself a layout change
+        invalidate();
     }
 
     Node node() {
@@ -188,6 +216,12 @@ final class PlotSurface {
      * Paint on the calling thread and return once the picture is up — the headless capture's handshake, and
      * nothing a running window needs. The canvas has to have been laid out at least once first, which is why
      * a capture frames twice: once to give the canvas a size, once to photograph what was drawn into it.
+     *
+     * <p>It paints unconditionally, and the tempting optimisation is wrong: "the revision on screen is the
+     * current revision" does <em>not</em> mean the picture is current, because the transforms do not touch the
+     * revision — {@link #invalidate} does, and a caller that transforms and then settles has never called it.
+     * Short-circuiting on that made {@code --capture-plot} report {@code 0/0} for its zoom and pan, which is
+     * what a phase that never drew anything looks like.
      */
     void settle() {
         paint(revision.incrementAndGet());
@@ -426,6 +460,11 @@ final class PlotSurface {
                 drawColumns(spans, size[1]);
                 drawGrid(f, size);
             });
+            // Recorded only once a picture is actually up. A paint that declined -- no expression yet, no
+            // canvas yet, overtaken -- must leave this alone, or the layout watch would conclude the size it
+            // never drew at is the size on screen and never ask again.
+            paintedW = size[0];
+            paintedH = size[1];
         }
         readout.accept(bounds(f));
     }

@@ -192,6 +192,9 @@ public final class CalculatorApp {
         GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, "plot.png");
         plot.settle();
         GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, "plot.png");
+        // Two paints' worth: the layout watch draws the plot the moment the first frame gives the canvas a
+        // size, and the handshake above draws it again to be certain before the photograph. The second is
+        // entirely cache hits, which is why this line reads half-and-half.
         System.out.println("  framed     " + plot.cacheReport());
         // Then the half that would otherwise never be exercised without a pointer, and the numbers that say
         // whether the cache is doing what this whole design is for: a zoom lands on a scale nothing is cached

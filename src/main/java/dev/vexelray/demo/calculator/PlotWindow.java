@@ -125,11 +125,11 @@ final class PlotWindow {
                     }));
             window = open;
         }
+        // show() only posts the request; the window is created at the top of the next frame, and laid out in
+        // the one after that. So there is nothing useful to ask the surface to draw here -- it watches the
+        // layout and paints itself the moment its canvas has a size. An invalidate at this point was the bug
+        // that made the first plot of a session open blank until something else provoked a repaint.
         open.show();
-        // The surface cannot lay itself out until the window has drawn a frame, so the first paint it
-        // schedules finds a canvas of no size and declines. Asking again once the window is up is the whole
-        // of the handshake -- and it is idempotent, since a repaint of an unchanged plot is a cache hit.
-        surface.invalidate();
     }
 
     /**
