@@ -5,6 +5,7 @@ import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.WindowControls;
 import dev.vexelray.gui.core.app.AppWindow;
 import dev.vexelray.gui.core.app.GuiApp;
+import dev.vexelray.gui.core.app.WindowMemory;
 import dev.vexelray.gui.core.app.WindowSpec;
 import dev.vexelray.gui.core.input.InputTopics;
 import dev.vexelray.gui.core.layout.Length;
@@ -42,6 +43,7 @@ final class PlotWindow {
     /** {@code TitleBar}'s own height in dp, as the main window has it. */
     private static final int BAR_H = 32;
 
+    private final WindowMemory memory;
     private final Gui gui = new Gui();
     private final TitleBar titleBar;
     private final PlotSurface surface;
@@ -49,7 +51,8 @@ final class PlotWindow {
     private final Node status;
     private volatile AppWindow window;
 
-    PlotWindow() {
+    PlotWindow(WindowMemory memory) {
+        this.memory = memory;
         this.heading = gui.text("")
                 .width(Length.FILL).height(Length.rem(1.5f))
                 .textSize(Length.rem(1f)).textColor(Palette.INK)
@@ -112,11 +115,14 @@ final class PlotWindow {
         AppWindow open = window;
         if (open == null) {
             open = app.window("plot", () -> WindowSpec
-                    .of(WindowConfig.of("Plot", W, H + BAR_H).decorations(Decorations.CLIENT), gui)
-                    .onCreated(created -> titleBar.controls(new NativeWindowControls(created)))
+                    .of(memory.config("plot", "Plot", W, H + BAR_H).decorations(Decorations.CLIENT), gui)
+                    .onCreated(this::created)
                     // The window this bar commanded is gone; the tree outlives it and is shown again on the
                     // next plot, so the buttons go back to commanding nothing until onCreated rebinds them.
-                    .onClosed(() -> titleBar.controls(WindowControls.NONE)));
+                    .onClosed(() -> {
+                        titleBar.controls(WindowControls.NONE);
+                        memory.forget("plot");
+                    }));
             window = open;
         }
         open.show();
@@ -163,6 +169,25 @@ final class PlotWindow {
     /** What the cache saved across everything asked of it so far. */
     String cacheReport() {
         return surface.cacheReport();
+    }
+
+    /**
+     * The OS window exists: point the chrome at it, and put it back where it was.
+     *
+     * <p>The {@link WindowSpec} above was built the first time the name {@code plot} was claimed, so the
+     * {@link WindowConfig} in it is a snapshot of the placement at that moment. The bounds worth restoring are
+     * the ones the window was last left at, which may be from later in the same session — drag the plot
+     * somewhere, close it, evaluate something else. Correcting here, before the first frame, is why that is not
+     * a visible jump.
+     */
+    private void created(dev.vexelray.os.NativeWindow window) {
+        titleBar.controls(new NativeWindowControls(window));
+        if (memory.maximized("plot")) {
+            window.maximize();
+        } else {
+            memory.restoreBounds("plot", window, W, H + BAR_H);
+        }
+        memory.watch("plot", window, gui);
     }
 
     private void home() {

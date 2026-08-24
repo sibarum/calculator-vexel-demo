@@ -6,6 +6,8 @@ import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.TextClipboard;
 import dev.vexelray.gui.core.WindowControls;
 import dev.vexelray.gui.core.app.GuiApp;
+import dev.vexelray.gui.core.app.Settings;
+import dev.vexelray.gui.core.app.WindowMemory;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.layout.LayoutEnums;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
@@ -97,44 +99,69 @@ public final class CalculatorApp {
         }
 
         int maxFrames = args.length > 0 ? Integer.parseInt(args[0]) : 0;
+        // Placement is read before the window exists, so the calculator is created where it was left rather
+        // than moved there after appearing -- and clamped on the way, because the desk may have changed shape
+        // since. Every window here goes through the same three lines: config it, restore its state, watch it.
+        WindowMemory memory = new WindowMemory(Settings.open(APP_NAME));
         try (Tactroller input = openInput();
              Clipboard clipboard = openClipboard(gui);
-             GuiApp app = new GuiApp(mainWindow())) {
+             GuiApp app = new GuiApp(memory.config("main", "Calculator", W, H)
+                     .decorations(Decorations.CLIENT))) {
             attachInput(input, app);
             // The window exists at last, so the chrome can be pointed at it. Until now the bar has been a
             // working bar against WindowControls.NONE -- which is also what --capture renders.
             ui.titleBar().controls(app.controls());
+            if (memory.maximized("main")) {
+                app.window().maximize();
+            }
+            // Watched with its tree, so the UI zoom is remembered too: Ctrl+= is the same kind of decision as
+            // dragging the window bigger, and losing it on quit is the same loss. zoomShortcuts has already
+            // set the range the restored factor is clamped into.
+            memory.watch("main", app.window(), gui);
             // The history needs the app to open its window onto, so it is built here rather than in
             // buildUi -- and stays null under --capture, which never reaches this far.
-            History history = new History(engine, app);
+            History history = new History(engine, app, memory);
             engine.history(history);
             zoomShortcuts(history.windowGui());
             // Every window the framework opens from here on gets an input backend of its own, attached at
             // creation and released with the window. The history predates this seam and still attaches its
             // own; the plot is a named window and lets the framework do it.
             app.input(CalculatorApp::attachWindowInput);
-            PlotWindow plot = new PlotWindow();
+            PlotWindow plot = new PlotWindow(memory);
             engine.plotter(app, plot);
             zoomShortcuts(plot.gui());
             TactrollerInputBridge bridge = input == null ? null : new TactrollerInputBridge(input, gui.bus());
-            app.run(gui, maxFrames, () -> {
-                pump(bridge);
-                history.drain();
-            });
+            try {
+                app.run(gui, maxFrames, () -> {
+                    pump(bridge);
+                    history.drain();
+                    memory.poll();
+                });
+            } finally {
+                // The debounce has no next frame to fire on once the loop is over, so the last move of the
+                // session is written here or not at all.
+                memory.save();
+            }
         }
         gui.close();
         System.out.println("clean shutdown");
     }
 
     /**
-     * The main window: the calculator's size, and the frame handed to the GUI. {@link Decorations#CLIENT}
-     * extends the client area over the whole window, so the {@code TitleBar} at the top of the tree draws
-     * where the system caption was -- while dragging, snapping, Win+arrow, double-click-to-maximize, the
-     * system menu and the maximize clamp all stay the window manager's. The GUI only supplies geometry.
+     * The frame handed to the GUI is now {@link WindowMemory}'s, but {@link Decorations#CLIENT} is still this
+     * application's: it extends the client area over the whole window, so the {@code TitleBar} at the top of
+     * the tree draws where the system caption was -- while dragging, snapping, Win+arrow,
+     * double-click-to-maximize, the system menu and the maximize clamp all stay the window manager's. The GUI
+     * only supplies geometry.
+     *
+     * <p><b>What is remembered, and what deliberately is not.</b> Each of the three windows remembers where it
+     * was, how big, whether it was maximized, and what it was zoomed to. None of them remembers whether it was
+     * <em>open</em>, which the framework offers and the text editor uses. That is not an oversight: a history
+     * window reopened at launch would list nothing, because the tape is this session's, and a plot window
+     * reopened at launch would have no expression to draw. Restoring a window to show emptiness is worse than
+     * not restoring it -- there is nothing there to be where you left it.
      */
-    private static WindowConfig mainWindow() {
-        return WindowConfig.of("Calculator", W, H).decorations(Decorations.CLIENT);
-    }
+    private static final String APP_NAME = "calculator";
 
     /**
      * Headless proof that the plot draws: frame the tree once so the canvas has a size, paint into it, then
@@ -158,7 +185,9 @@ public final class CalculatorApp {
             System.out.println("nothing to plot: " + plottable.refusal());
             return;
         }
-        PlotWindow plot = new PlotWindow();
+        // A real window memory, over the real settings: it is only ever read here, since a capture opens no
+        // window to place and nothing on this path calls watch, poll or save.
+        PlotWindow plot = new PlotWindow(new WindowMemory(Settings.open(APP_NAME)));
         plot.headless(entry, plottable);
         GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, "plot.png");
         plot.settle();
@@ -393,8 +422,11 @@ public final class CalculatorApp {
         record Entry(String input, String output) { }
 
         private static final int LIMIT = 100;
+        private static final int W = 320;
+        private static final int H = 480 + BAR_H;
 
         private final java.util.function.Consumer<Entry> restore;
+        private final WindowMemory memory;
         private final Gui gui = new Gui();
         private final Node list;
         private final TitleBar titleBar;
@@ -403,8 +435,9 @@ public final class CalculatorApp {
         private TactrollerInputBridge bridge;
         private boolean shown;
 
-        HistoryWindow(java.util.function.Consumer<Entry> restore) {
+        HistoryWindow(java.util.function.Consumer<Entry> restore, WindowMemory memory) {
             this.restore = restore;
+            this.memory = memory;
             Node heading = gui.text("History")
                     .width(Length.FILL).height(Length.rem(1.5f))
                     .textSize(Length.rem(0.875f)).textColor(DIM)
@@ -440,7 +473,7 @@ public final class CalculatorApp {
             }
             if (!shown) {
                 shown = true;
-                app.requestPopup(WindowConfig.of("History", 320, 480 + BAR_H).decorations(Decorations.CLIENT),
+                app.requestPopup(memory.config("history", "History", W, H).decorations(Decorations.CLIENT),
                         gui, this::onCreated, this::onClosed);
             }
         }
@@ -496,6 +529,15 @@ public final class CalculatorApp {
         private void onCreated(dev.vexelray.os.NativeWindow window) {
             attachInput(window.osHandle());
             titleBar.controls(new PopupControls(window));
+            // The config this window was created from is the one built the first time it opened; the bounds
+            // worth restoring may be from later in the same session -- move the history, close it, evaluate
+            // again. Correcting here, before the first frame, is what makes that not a visible jump.
+            if (memory.maximized("history")) {
+                window.maximize();
+            } else {
+                memory.restoreBounds("history", window, W, H);
+            }
+            memory.watch("history", window, gui);
         }
 
         /** Attach a second input backend to the popup's own window handle, feeding this Gui's bus. */
@@ -516,6 +558,7 @@ public final class CalculatorApp {
             // The window this bar commanded is gone; the tree outlives it and is shown again on the next
             // evaluation, so the buttons go back to commanding nothing until onCreated rebinds them.
             titleBar.controls(WindowControls.NONE);
+            memory.forget("history");   // its last recorded bounds are the ones to keep
             shown = false;
         }
 
@@ -592,10 +635,10 @@ public final class CalculatorApp {
         private final java.util.concurrent.ConcurrentLinkedQueue<Runnable> requests =
                 new java.util.concurrent.ConcurrentLinkedQueue<>();
 
-        History(Engine engine, GuiApp app) {
+        History(Engine engine, GuiApp app, WindowMemory memory) {
             this.engine = engine;
             this.app = app;
-            this.window = new HistoryWindow(this::restore);
+            this.window = new HistoryWindow(this::restore, memory);
         }
 
         Gui windowGui() {

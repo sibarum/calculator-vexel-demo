@@ -84,3 +84,17 @@ double-click-to-maximize and the system menu are still the window manager's.
 
 Ctrl+= / Ctrl+- / Ctrl+0 zoom the whole UI — every length is relative. In the plot window that is
 separate from the plot's own zoom: Ctrl+= scales the interface, bare `+` scales the *plane*.
+
+## Where you left it
+
+All three windows come back where they were: position, size, maximized state, and the UI zoom, in
+`~/.calculator/settings.properties` through the framework's `WindowMemory`. Placement is restored at
+*creation* rather than after, so a window appears where it belongs instead of jumping there on its
+first frame, and it is clamped to a monitor that still exists on the way — shrunk if the saved
+rectangle no longer fits, then nudged until it is fully on screen. Zoom is restored before the first
+frame too, since every `em` resolves against it.
+
+**What is deliberately not remembered is whether the history and plot windows were open.** The
+framework offers it and the text editor uses it, but a calculator has nothing to reopen them onto:
+the tape is this session's, and the plot has no expression until you evaluate one. Restoring a window
+to show emptiness is worse than not restoring it — there is nothing there to be where you left it.
