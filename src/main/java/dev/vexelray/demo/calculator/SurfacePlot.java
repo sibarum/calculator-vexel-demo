@@ -301,6 +301,13 @@ final class SurfacePlot {
 
     /** A drag turns the picture: across the canvas is yaw, up and down it is pitch. */
     private void drag(DragEvent e) {
+        // Letting go is not a movement. The turning has already happened, one MOVE at a time; treating the
+        // release as one more of them makes the release carry whatever distance the moves did not, which is
+        // nothing at all when they arrive continuously and the entire gesture when something upstream stopped
+        // delivering them. A gesture that ends with a lurch is worse than one that ends a few pixels short.
+        if (e.phase() == DragEvent.Phase.END) {
+            return;
+        }
         synchronized (this) {
             if (e.phase() == DragEvent.Phase.START) {
                 dragX = e.x();

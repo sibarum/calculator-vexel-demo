@@ -342,6 +342,12 @@ final class PlotSurface {
      * pointer's own resolution, so nothing about the drag feels stepped.
      */
     private void drag(DragEvent e) {
+        // Letting go is not a pan: see the same guard on the surface's drag. The panning has already happened
+        // one MOVE at a time, and letting the release carry a delta of its own means it carries whatever the
+        // moves did not -- nothing when they are continuous, and the whole excursion when they are not.
+        if (e.phase() == DragEvent.Phase.END) {
+            return;
+        }
         synchronized (this) {
             if (e.phase() == DragEvent.Phase.START) {
                 dragX = e.x();
