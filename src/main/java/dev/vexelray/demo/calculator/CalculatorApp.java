@@ -125,7 +125,7 @@ public final class CalculatorApp {
              Clipboard clipboard = openClipboard(gui);
              GuiApp app = new GuiApp(memory.config("main", "Calculator", W, H)
                      .decorations(Decorations.CLIENT))) {
-            attachInput(input, app);
+            attachInput(input, app, gui);
             // The window exists at last, so the chrome can be pointed at it. Until now the bar has been a
             // working bar against WindowControls.NONE -- which is also what --capture renders.
             ui.titleBar().controls(app.controls());
@@ -262,16 +262,49 @@ public final class CalculatorApp {
     }
 
     /** CLIENT space, density left at 1.0 — the engine's canvas is logical; see vexelray-gui-demo's attachInput. */
-    private static void attachInput(Tactroller input, GuiApp app) {
+    private static void attachInput(Tactroller input, GuiApp app, Gui gui) {
         if (input == null) {
             return;
         }
         try {
             input.attach(NativeWindow.ofHwnd(app.windowHandle()));
             input.setCoordinateSpace(CoordinateSpace.CLIENT);
+            holdPointerFor(gui, input);
         } catch (BackendException e) {
             System.out.println("input attach failed (" + e.getMessage() + "); pointer input disabled");
         }
+    }
+
+    /**
+     * Carry out what {@code gui} asks of the pointer. The framework declares that a gesture wants the pointer
+     * held and cannot reach an OS to arrange it; this is the application edge that can, and it is the same
+     * shape as mapping a {@code CursorShape} onto a window's cursor.
+     *
+     * <p>{@link sibarum.tactroller.api.PointerLockMode#RECENTER} rather than {@code RAW}: it warps the cursor
+     * back to the window's middle on every drain using ordinary cursor calls, so it needs no raw-input pump,
+     * and its one drawback — the motion passes through the OS acceleration curve — is not a drawback for a
+     * gesture that is <em>meant</em> to feel like the pointer, only unbounded. RAW is the right choice for a
+     * camera in a game and the wrong one for a plot, where a drag should move the picture exactly as far as
+     * the same drag would have moved the pointer.
+     *
+     * <p>A backend without pointer lock simply does not lock, and the drag still works — it can just run out of
+     * desk at the window's edge, which is where it was before any of this.
+     */
+    private static void holdPointerFor(Gui gui, Tactroller input) {
+        if (!input.supportsPointerLock()) {
+            return;
+        }
+        gui.onPointerLock(hold -> {
+            try {
+                if (hold) {
+                    input.lockPointer(sibarum.tactroller.api.PointerLockMode.RECENTER);
+                } else {
+                    input.unlockPointer();
+                }
+            } catch (BackendException e) {
+                // The gesture is not worth failing over: without the lock it is an ordinary bounded drag.
+            }
+        });
     }
 
     /**
@@ -286,6 +319,7 @@ public final class CalculatorApp {
             Tactroller opened = Tactroller.open();
             opened.attach(NativeWindow.ofHwnd(window.osHandle()));
             opened.setCoordinateSpace(CoordinateSpace.CLIENT);
+            holdPointerFor(windowGui, opened);
             TactrollerInputBridge bridge = new TactrollerInputBridge(opened, windowGui.bus());
             return new dev.vexelray.gui.core.app.WindowInput() {
                 @Override

@@ -180,9 +180,6 @@ final class PlotSurface {
     private double xLo;
     private double yLo;
     private double yHi;
-    /** The pointer's last position during a drag, in client pixels. */
-    private float dragX;
-    private float dragY;
 
     PlotSurface(Gui gui, Consumer<String> readout) {
         this.gui = gui;
@@ -205,6 +202,9 @@ final class PlotSurface {
         this.tip = tooltip();
         canvas.children(gridLayer, curveLayer, markLayer, labelLayer, tip);
         gui.onDrag(canvas, this::drag);
+        // A pan is a displacement too, so the same bargain: the pointer stops at no edge and comes back where
+        // it was let go. Panning a long way used to mean letting go and re-grabbing.
+        gui.dragLocksPointer(canvas, true);
         reset();   // a frame with no extent is not constructible, so there is one from the start
         // A paint needs a canvas that has a size, and a canvas has no size until the tree has been laid out --
         // which does not happen until the window exists and draws its first frame. So the surface is told when
@@ -345,13 +345,11 @@ final class PlotSurface {
         // Letting go is not a pan: see the same guard on the surface's drag. The panning has already happened
         // one MOVE at a time, and letting the release carry a delta of its own means it carries whatever the
         // moves did not -- nothing when they are continuous, and the whole excursion when they are not.
-        if (e.phase() == DragEvent.Phase.END) {
+        if (e.phase() != DragEvent.Phase.MOVE) {
             return;
         }
         synchronized (this) {
-            if (e.phase() == DragEvent.Phase.START) {
-                dragX = e.x();
-                dragY = e.y();
+            if (e.dx() == 0 && e.dy() == 0) {
                 return;
             }
             int columns = columns(size());
@@ -360,12 +358,12 @@ final class PlotSurface {
             // pixel is worth need nothing but those two.
             double perPixelX = f.width() / Math.max(1f, e.nodeW());
             double perPixelY = f.height() / Math.max(1f, e.nodeH());
-            xLo -= (e.x() - dragX) * perPixelX;
-            double dy = (e.y() - dragY) * perPixelY;      // screen y grows downward, plot y upward
+            // The event's own motion rather than a difference of positions: a pan is a displacement, the
+            // canvas holds the pointer for the gesture, and a held pointer has no position worth differencing.
+            xLo -= e.dx() * perPixelX;
+            double dy = e.dy() * perPixelY;               // screen y grows downward, plot y upward
             yLo += dy;
             yHi += dy;
-            dragX = e.x();
-            dragY = e.y();
             snapToColumns(columns);
         }
         invalidate();

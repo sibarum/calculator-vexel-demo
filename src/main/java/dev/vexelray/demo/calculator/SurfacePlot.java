@@ -151,8 +151,6 @@ final class SurfacePlot {
     private double zLo;
     private double zHi;
     private Camera camera = Camera.DEFAULT;
-    private float dragX;
-    private float dragY;
 
     SurfacePlot(Gui gui, Consumer<String> readout) {
         this.gui = gui;
@@ -166,6 +164,9 @@ final class SurfacePlot {
         this.legendLayer = layer();
         canvas.children(cellLayer, legendLayer);
         gui.onDrag(canvas, this::drag);
+        // Turning has no natural end, so the window's edge should not be one. Holding the pointer for the
+        // gesture is what lets a drag roll the surface over as many times as it likes on a finite desk.
+        gui.dragLocksPointer(canvas, true);
         reset();
         gui.onResize(canvas, box -> invalidate());
     }
@@ -305,23 +306,22 @@ final class SurfacePlot {
         // release as one more of them makes the release carry whatever distance the moves did not, which is
         // nothing at all when they arrive continuously and the entire gesture when something upstream stopped
         // delivering them. A gesture that ends with a lurch is worse than one that ends a few pixels short.
-        if (e.phase() == DragEvent.Phase.END) {
+        if (e.phase() != DragEvent.Phase.MOVE) {
             return;
         }
         synchronized (this) {
-            if (e.phase() == DragEvent.Phase.START) {
-                dragX = e.x();
-                dragY = e.y();
+            // The event's own motion, not the difference of two positions. Turning is a displacement and never
+            // asks where the pointer is, which is what lets the canvas hold the pointer for the gesture -- and
+            // a held pointer is warped back to one spot every frame, so its position stops moving while the
+            // motion goes on being real. Differencing positions would read a locked drag as no drag at all.
+            //
+            // Rightward turns the yaw up, which is also what the right arrow key does.
+            double dYaw = e.dx() / Math.max(1f, e.nodeW()) * DRAG_YAW;
+            double dPitch = e.dy() / Math.max(1f, e.nodeH()) * DRAG_PITCH;
+            if (dYaw == 0 && dPitch == 0) {
                 return;
             }
-            // Rightward drag turns the yaw up, which is also what the right arrow key does. The two used to
-            // disagree -- the drag negated and the key did not -- so pushing the picture one way with the mouse
-            // and the other way with the keyboard were the same gesture with opposite results.
-            double dYaw = (e.x() - dragX) / Math.max(1f, e.nodeW()) * DRAG_YAW;
-            double dPitch = (e.y() - dragY) / Math.max(1f, e.nodeH()) * DRAG_PITCH;
             camera = camera.turned(dYaw, dPitch);
-            dragX = e.x();
-            dragY = e.y();
         }
         invalidate();
     }
