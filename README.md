@@ -15,6 +15,39 @@ The keypad has the constants `e`, `i`, `π`, the wheel's `ω`, plotting variable
 powers, and `log(x, n)` for log base n. A rejected expression is *reported* on the status line and
 never written into the field, so it can be fixed and re-evaluated without retyping.
 
+## Plotting
+
+**Press `=` on an expression with one variable and it is plotted**, in a window of its own, framed
+automatically. How many free variables the expression has is the whole decision: none is arithmetic
+and passes silently, one opens the plot against that variable (usually `x`, and nothing depends on
+its being `x`), and more than one is reported on the status line rather than half-drawn by pinning
+the others to zero.
+
+The plot is [vexelray-gui-plot](../vexelray-gui/vexelray-gui-plot), so **it is reliable rather than
+sampled**: every pixel column is evaluated as a *column of x* by interval arithmetic, and what comes
+back provably contains every value the expression takes there. A pole is not looked for — it is a
+divisor whose range straddles zero, so it falls out of the arithmetic and is painted rather than
+drawn through. `1÷x` gets a red stripe at the origin and two clean branches; `1÷(x²−1)` gets two.
+Nothing here can draw a confident line through a singularity, because nothing here draws lines: a
+classified column is a vertical span, and a vertical span is a box.
+
+Drag to pan, wheel to zoom about the pointer, `+` / `−` / arrow keys / Home, and **Fit** to re-run
+the framing policy over whatever x window you have panned to.
+
+Exploring is cheap because enclosures are cached per *column of x* rather than per picture. Moving in
+y re-classifies and evaluates nothing at all; panning evaluates only the columns that came into view;
+and zooming lands on a discrete set of scales, so going back to one costs nothing. `--capture-plot`
+prints the counts — a pan of 40% of the window answers 418 of 696 columns from cache, and going home
+answers all of them. A redraw is applied as one atomic batch over pooled nodes, so the old picture
+stays up whole until the new one replaces it.
+
+Two things the keypad cannot ask for: there is **no trigonometry** in COTT's vocabulary (the plot
+module has `sin`/`cos`/`tan`, but no key reaches them), and **`log` is refused**. COTT's `log(x, b)`
+is the base-0 exponent reading, not the logarithm of a real number — on ordinary numbers it does not
+reduce at all — so plotting it as a natural log would draw a curve the calculator itself disagrees
+with. That is a notation question rather than a plotting one, and it is refused by name on the status
+line until it is settled.
+
 ## Prerequisites
 
 The sibling stack installed to the local Maven repo, in order: `supirvast`, `vexelray`,
@@ -33,9 +66,21 @@ Headless capture to PNG (no GPU window / input backend needed):
 mvn compile exec:exec "-Dapp.args=--capture"
 ```
 
+The plot draws headlessly too — no window, no pointer, and it reports what the cache saved at each
+step. Writes `plot.png` and `plot-zoomed.png`:
+
+```bash
+mvn compile exec:exec "-Dapp.args=--capture-plot"
+```
+
+Append `=EXPRESSION` to plot something else (the default is `1÷(x²−1)`). Use ASCII `-` and `/`, since
+the argument goes through the console's codepage on the way in and `Notation.normalize` maps them
+anyway.
+
 The window frame is the calculator's own: `Decorations.CLIENT` extends the client area over the whole
 window and a `TitleBar` -- ordinary widgets, drawn in the same palette as the keypad -- stands where the
-system caption was, on both the main window and the history window. Dragging, snapping, Win+arrow,
+system caption was, on the main window, the history and the plot alike. Dragging, snapping, Win+arrow,
 double-click-to-maximize and the system menu are still the window manager's.
 
-Ctrl+= / Ctrl+- / Ctrl+0 zoom the whole UI — every length is relative.
+Ctrl+= / Ctrl+- / Ctrl+0 zoom the whole UI — every length is relative. In the plot window that is
+separate from the plot's own zoom: Ctrl+= scales the interface, bare `+` scales the *plane*.

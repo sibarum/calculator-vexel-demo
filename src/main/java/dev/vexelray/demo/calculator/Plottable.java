@@ -1,0 +1,275 @@
+package dev.vexelray.demo.calculator;
+
+import dev.vexelray.gui.plot.Expr;
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.util.List;
+import java.util.TreeSet;
+import sibarum.cott.Term;
+
+/**
+ * The bridge between the two mathematics the calculator now holds: a COTT {@link Term}, read as a function of
+ * one variable on the <b>real line</b>, so that {@code vexelray-gui-plot} can enclose it.
+ *
+ * <p>It is a translation and not a projection, and the difference is the whole of this class. COTT is a wheel:
+ * {@code ω} is a point, {@code i} is a point, {@code 0÷0} is a residue that remembers which operand it came
+ * from. The real line has none of those. So every term either has a real reading or it does not, and the ones
+ * that do not are <b>refused by name</b> rather than approximated into something plottable — a plot of
+ * {@code x + ω} that quietly dropped the ω would be a picture of a different expression.
+ *
+ * <h2>What a point is worth on the real line</h2>
+ * Every numeral in COTT is {@code k} copies of {@code 0^(g + tω + r)}, so the reading is a small table:
+ * <ul>
+ *   <li>grade {@code 0} is 1, so {@code Pt(k, xp(0,0,0))} is {@code k} — every ordinary number;
+ *   <li>grade above zero is 0, so {@code 0} itself and every multiple of it read as zero;
+ *   <li>grade below zero is ω — <b>refused</b>, since infinity is not a value the plot can hold;
+ *   <li>a twist of 1 is {@code 0^ω = −1}, so it negates. Any other twist is off the real line ({@code 1/2} is
+ *       {@code i}) and is <b>refused</b>, as is any torsion at all.
+ * </ul>
+ *
+ * <h2>Two deliberate refusals worth stating</h2>
+ * <b>{@code log} is not the logarithm.</b> COTT's {@code log(x, b)} is the base-0 exponent reading — the thing
+ * that makes {@code lg(0^E) = E} — and on ordinary numbers it does not reduce at all ({@code log(8, 2)} comes
+ * back as itself). Mapping it onto the natural logarithm the plot module offers would draw a curve the
+ * calculator does not agree with, so it is refused instead. That refusal is a real gap in what can be plotted,
+ * and it is a notation question rather than a plotting one.
+ *
+ * <p><b>The residue families are refused too.</b> {@code 1^a} and {@code 0^a} are the forms the whole theory
+ * exists to keep, and a residue is not a number on a line. Note that they are almost never reached from here
+ * anyway: the term being translated is the one the user <em>typed</em>, before reduction, so {@code x÷x} is
+ * still a division and plots as the constant 1 it is everywhere except the origin — which is exactly where the
+ * enclosure algebra paints a pole, without being told to.
+ *
+ * @param variable the single variable the expression is a function of, or null when it was refused
+ * @param expr     the expression, ready to enclose, or null when it was refused
+ * @param refusal  why there is nothing to plot, or null when there is
+ */
+record Plottable(String variable, Expr expr, String refusal) {
+
+    /**
+     * The one place the translation is not exact. A rational exponent that does not terminate in decimal —
+     * {@code x^(1/3)} — is rounded to this precision, because {@code Expr.Power} needs a constant exponent and a
+     * {@code BigDecimal} cannot hold a third. It is worth naming and not worth refusing: the perturbation is
+     * around 1e-34, twenty-two orders of magnitude finer than the 1e-12 margin the module's own transcendentals
+     * are widened by, so it cannot be the reason a plot is wrong.
+     */
+    private static final MathContext EXPONENT = MathContext.DECIMAL128;
+
+    /** The constants that are constants: everything else opaque in a term is a variable. */
+    private static final List<String> CONSTANTS = List.of("π", "e");
+
+    /** Whether there is something to plot. */
+    boolean ok() {
+        return expr != null;
+    }
+
+    /**
+     * Every variable in {@code term}, in order — the question "how many free variables is this?" answered
+     * before anything is translated, because the answer decides whether a plot is even meaningful.
+     *
+     * <p>An {@link Term.Atom} is COTT's opaque symbol, and it is opaque for two different reasons: π and e have
+     * no base-0 exponential form, while x, y and z have no value at all. Only the second kind is a variable, so
+     * the constants are named here and everything else that is opaque is free.
+     */
+    static List<String> variablesIn(Term term) {
+        TreeSet<String> found = new TreeSet<>();
+        collect(term, found);
+        return List.copyOf(found);
+    }
+
+    /** Read {@code term} as a real function of {@code variable}, or say why it cannot be read as one. */
+    static Plottable read(Term term, String variable) {
+        try {
+            return new Plottable(variable, translate(term, variable), null);
+        } catch (Unreadable refused) {
+            return new Plottable(null, null, refused.getMessage());
+        }
+    }
+
+    private static void collect(Term term, TreeSet<String> into) {
+        switch (term) {
+            case Term.Atom a -> {
+                if (!CONSTANTS.contains(a.name())) {
+                    into.add(a.name());
+                }
+            }
+            case Term.Pt ignored -> { }
+            case Term.Xp ignored -> { }
+            case Term.Plus p -> p.args().forEach(arg -> collect(arg, into));
+            case Term.Times t -> t.args().forEach(arg -> collect(arg, into));
+            case Term.Neg n -> collect(n.of(), into);
+            case Term.Inv i -> collect(i.of(), into);
+            case Term.Div d -> { collect(d.of(), into); collect(d.by(), into); }
+            case Term.Pow p -> { collect(p.base(), into); collect(p.exponent(), into); }
+            case Term.Wind w -> collect(w.of(), into);
+            case Term.AWind w -> collect(w.of(), into);
+            case Term.Approx a -> collect(a.of(), into);
+            case Term.Lg l -> collect(l.of(), into);
+            case Term.Logb l -> { collect(l.base(), into); collect(l.of(), into); }
+        }
+    }
+
+    private static Expr translate(Term term, String variable) {
+        return switch (term) {
+            case Term.Pt p -> point(p);
+            case Term.Atom a -> atom(a, variable);
+            case Term.Plus p -> fold(p.args(), variable, Expr.Add::new);
+            case Term.Times t -> fold(t.args(), variable, Expr.Mul::new);
+            case Term.Neg n -> new Expr.Sub(zero(), translate(n.of(), variable));
+            case Term.Inv i -> new Expr.Div(one(), translate(i.of(), variable));
+            case Term.Div d -> new Expr.Div(translate(d.of(), variable), translate(d.by(), variable));
+            case Term.Pow p -> power(p, variable);
+            // The residue families, and the projection that blurs them. Each one is a form that remembers an
+            // operand, which is precisely what a point on a line cannot do.
+            case Term.Wind w -> throw new Unreadable("1^" + w.of() + " is a residue, not a point on a line");
+            case Term.AWind w -> throw new Unreadable("0^" + w.of() + " is a residue, not a point on a line");
+            case Term.Approx a -> throw new Unreadable("an approximation has no curve to draw");
+            case Term.Lg l -> throw new Unreadable(LOG_REFUSAL);
+            case Term.Logb l -> throw new Unreadable(LOG_REFUSAL);
+            case Term.Xp x -> throw new Unreadable("an exponent is not a value, so there is nothing to plot");
+        };
+    }
+
+    private static final String LOG_REFUSAL =
+            "log here is COTT's exponent reading, not a real logarithm -- nothing to plot";
+
+    /**
+     * {@code k} copies of {@code 0^(g + tω + r)}, read on the real line. The exact multiplicity is kept exact:
+     * a coefficient of 5/2 becomes a division the interval arithmetic performs with its own outward rounding,
+     * rather than a decimal that has already lost something before the sound arithmetic ever sees it.
+     */
+    private static Expr point(Term.Pt p) {
+        if (!p.exp().torsion().isZero()) {
+            throw new Unreadable("a torsion is a root of the residue zero and is not on the real line");
+        }
+        boolean negated = p.exp().twist().isOne();
+        if (!negated && !p.exp().twist().isZero()) {
+            throw new Unreadable("a twist of " + p.exp().twist() + " turns off the real line");
+        }
+        int grade = p.exp().grade().signum();
+        if (grade < 0) {
+            throw new Unreadable("ω is not a value the real line holds");
+        }
+        Expr magnitude = grade > 0 ? zero() : rational(p.mult().numerator(), p.mult().denominator());
+        return negated ? new Expr.Sub(zero(), magnitude) : magnitude;
+    }
+
+    private static Expr atom(Term.Atom a, String variable) {
+        if (a.name().equals("π")) {
+            return new Expr.Const(Math.PI);
+        }
+        if (a.name().equals("e")) {
+            return new Expr.Const(Math.E);
+        }
+        if (a.name().equals(variable)) {
+            return new Expr.Param(variable);
+        }
+        throw new Unreadable(a.name() + " is a second variable; the plotter takes one");
+    }
+
+    /**
+     * A power. Three readings, and which one applies is decided by where the variable is:
+     * <ul>
+     *   <li>a constant exponent is {@link Expr.Power}, which is what the module is built for — integer powers
+     *       exactly, roots with their domain handled;
+     *   <li>a constant base with a varying exponent is rewritten as {@code exp(x·ln b)}, because
+     *       {@code Expr.Power} has nothing sound to say about an exponent that moves and would paint the whole
+     *       column rather than draw {@code 2^x};
+     *   <li>both varying — {@code x^x} — is refused. The arithmetic would answer Unbounded everywhere, which is
+     *       sound and would fill the window with solid colour; saying so is more use than drawing it.
+     * </ul>
+     */
+    private static Expr power(Term.Pow p, String variable) {
+        List<String> inExponent = variablesIn(p.exponent());
+        if (inExponent.isEmpty()) {
+            return new Expr.Power(translate(p.base(), variable), constantExponent(p.exponent(), variable));
+        }
+        if (p.base() instanceof Term.Atom a && a.name().equals("e")) {
+            return new Expr.Exp(translate(p.exponent(), variable));
+        }
+        if (variablesIn(p.base()).isEmpty()) {
+            double base = value(translate(p.base(), variable));
+            if (!(base > 0)) {
+                throw new Unreadable("a base of " + base + " raised to a varying power has no real curve");
+            }
+            return new Expr.Exp(new Expr.Mul(new Expr.Const(Math.log(base)), translate(p.exponent(), variable)));
+        }
+        throw new Unreadable("a power whose base and exponent both vary has no bound to draw");
+    }
+
+    /** The exponent slot, which {@link Expr.Power} needs as one number rather than as an expression. */
+    private static Expr.Const constantExponent(Term exponent, String variable) {
+        Expr translated = translate(exponent, variable);
+        if (translated instanceof Expr.Const c) {
+            return c;
+        }
+        // A rational the exact route above left as a division, or a negation of one: fold it, accepting the
+        // rounding named on EXPONENT.
+        return new Expr.Const(BigDecimal.valueOf(value(translated)));
+    }
+
+    /** A rational coefficient, kept exact by leaving the division to the sound arithmetic. */
+    private static Expr rational(java.math.BigInteger numerator, java.math.BigInteger denominator) {
+        Expr top = new Expr.Const(new BigDecimal(numerator));
+        return denominator.equals(java.math.BigInteger.ONE)
+                ? top
+                : new Expr.Div(top, new Expr.Const(new BigDecimal(denominator)));
+    }
+
+    /** The value of an expression that has no variable in it — enclosing it over a point column is enough. */
+    private static double value(Expr constant) {
+        Value read = new Value();
+        constant.enclose(dev.vexelray.gui.plot.Interval.at(0)).emitTo(read);
+        if (read.middle == null) {
+            throw new Unreadable("a constant in this expression has no finite value");
+        }
+        return read.middle;
+    }
+
+    private static Expr fold(List<Term.Val> args, String variable, java.util.function.BinaryOperator<Expr> join) {
+        Expr folded = null;
+        for (Term.Val arg : args) {
+            Expr next = translate(arg, variable);
+            folded = folded == null ? next : join.apply(folded, next);
+        }
+        if (folded == null) {
+            throw new Unreadable("an empty sum or product has nothing to plot");
+        }
+        return folded;
+    }
+
+    private static Expr zero() {
+        return new Expr.Const(BigDecimal.ZERO);
+    }
+
+    private static Expr one() {
+        return new Expr.Const(BigDecimal.ONE);
+    }
+
+    /** Reads a constant enclosure back out as a number, through the sink rather than by asking its type. */
+    private static final class Value implements dev.vexelray.gui.plot.Enclosure.Sink {
+        private Double middle;
+
+        @Override
+        public void bounded(BigDecimal lo, BigDecimal hi) {
+            middle = lo.add(hi).divide(BigDecimal.valueOf(2), EXPONENT).doubleValue();
+        }
+
+        @Override
+        public void unbounded() {
+            // stays null: there is no number here
+        }
+
+        @Override
+        public void undefined() {
+            // likewise
+        }
+    }
+
+    /** A term with no real reading, carrying the sentence the status line shows. */
+    private static final class Unreadable extends RuntimeException {
+        Unreadable(String because) {
+            super(because);
+        }
+    }
+}

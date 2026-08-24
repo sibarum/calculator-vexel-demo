@@ -18,7 +18,10 @@ import dev.vexelray.text.TextLayout;
 import java.util.List;
 import sibarum.cott.Cott;
 import sibarum.cott.Notation;
+import sibarum.cott.Parser;
+import sibarum.cott.Render;
 import sibarum.cott.SyntaxException;
+import sibarum.cott.Term;
 import sibarum.tactroller.api.BackendException;
 import sibarum.tactroller.api.CoordinateSpace;
 import sibarum.tactroller.api.Key;
@@ -34,7 +37,8 @@ import sibarum.tactroller.clipboard.ClipboardException;
  * The tree is built once through {@link Gui}/{@link Node} handles; click handlers run on worker
  * threads and mutate the display through its handle.
  *
- * <p>Run: {@code CalculatorApp} (windowed), {@code CalculatorApp --capture [out.png]} (headless).
+ * <p>Run: {@code CalculatorApp} (windowed), {@code CalculatorApp --capture [out.png]} (headless), or
+ * {@code CalculatorApp --capture-plot[=EXPRESSION]} (the plot, headless, with its cache counts).
  * Needs {@code --enable-native-access=ALL-UNNAMED}.
  */
 public final class CalculatorApp {
@@ -49,16 +53,22 @@ public final class CalculatorApp {
     private static final int BAR_H = 32;
     private static final int H = 600 + BAR_H;
 
-    private static final Color BG = Color.rgb(0x11141b);
-    private static final Color PANEL = Color.rgb(0x1b2130);
-    private static final Color PANEL_HOVER = Color.rgb(0x232a3d);
-    private static final Color PANEL_PRESSED = Color.rgb(0x151a26);
-    private static final Color LINE = Color.rgb(0x2b3346);
-    private static final Color BTN_BLUE = Color.rgb(0x2668b3);
-    private static final Color BTN_BLUE_HOVER = Color.rgb(0x2f78c9);
-    private static final Color BTN_BLUE_PRESSED = Color.rgb(0x1d548f);
-    private static final Color INK = Color.rgb(0xeef2f8);
-    private static final Color DIM = Color.rgb(0x93a0b4);
+    /** The plot window's size, and the size --capture-plot photographs it at. */
+    private static final int PLOT_W = 720;
+    private static final int PLOT_H = 560 + BAR_H;
+
+    // The colours live in Palette now: the plot window wears them too, and a plot drawn in its own scheme
+    // would read as a different program that happened to open. These are this file's names for them.
+    private static final Color BG = Palette.BG;
+    private static final Color PANEL = Palette.PANEL;
+    private static final Color PANEL_HOVER = Palette.PANEL_HOVER;
+    private static final Color PANEL_PRESSED = Palette.PANEL_PRESSED;
+    private static final Color LINE = Palette.LINE;
+    private static final Color BTN_BLUE = Palette.BTN_BLUE;
+    private static final Color BTN_BLUE_HOVER = Palette.BTN_BLUE_HOVER;
+    private static final Color BTN_BLUE_PRESSED = Palette.BTN_BLUE_PRESSED;
+    private static final Color INK = Palette.INK;
+    private static final Color DIM = Palette.DIM;
 
     public static void main(String[] args) throws Exception {
         args = java.util.Arrays.stream(args).filter(s -> !s.isBlank()).toArray(String[]::new);
@@ -70,6 +80,11 @@ public final class CalculatorApp {
         Ui ui = buildUi(gui);
         Engine engine = ui.engine();
         zoomShortcuts(gui);
+
+        if (args.length >= 1 && args[0].startsWith("--capture-plot")) {
+            capturePlot(args[0].contains("=") ? args[0].substring(args[0].indexOf('=') + 1) : "1÷(x^2−1)");
+            return;
+        }
 
         if (args.length >= 1 && args[0].equals("--capture")) {
             // Exercise the residue vertical: 1 over 1 in an additive context keeps its winding.
@@ -94,6 +109,13 @@ public final class CalculatorApp {
             History history = new History(engine, app);
             engine.history(history);
             zoomShortcuts(history.windowGui());
+            // Every window the framework opens from here on gets an input backend of its own, attached at
+            // creation and released with the window. The history predates this seam and still attaches its
+            // own; the plot is a named window and lets the framework do it.
+            app.input(CalculatorApp::attachWindowInput);
+            PlotWindow plot = new PlotWindow();
+            engine.plotter(app, plot);
+            zoomShortcuts(plot.gui());
             TactrollerInputBridge bridge = input == null ? null : new TactrollerInputBridge(input, gui.bus());
             app.run(gui, maxFrames, () -> {
                 pump(bridge);
@@ -112,6 +134,49 @@ public final class CalculatorApp {
      */
     private static WindowConfig mainWindow() {
         return WindowConfig.of("Calculator", W, H).decorations(Decorations.CLIENT);
+    }
+
+    /**
+     * Headless proof that the plot draws: frame the tree once so the canvas has a size, paint into it, then
+     * frame again and photograph the result. Two frames rather than one because the surface paints from a
+     * worker off a laid-out canvas -- the same handshake a real window makes, minus the window.
+     *
+     * <p>{@code mvn compile exec:exec "-Dapp.args=--capture-plot"} writes {@code plot.png}; append
+     * {@code =EXPRESSION} to plot something else. The default is {@code 1÷(x²−1)}, which is the whole point of
+     * the technique in one picture: two poles, found by the arithmetic rather than by a solver, drawn as
+     * painted columns instead of as lines through infinity.
+     */
+    private static void capturePlot(String entry) throws Exception {
+        Term term = Parser.parse(Notation.normalize(entry));
+        List<String> variables = Plottable.variablesIn(term);
+        if (variables.size() != 1) {
+            System.out.println("nothing to plot: " + variables.size() + " variables in " + entry);
+            return;
+        }
+        Plottable plottable = Plottable.read(term, variables.get(0));
+        if (!plottable.ok()) {
+            System.out.println("nothing to plot: " + plottable.refusal());
+            return;
+        }
+        PlotWindow plot = new PlotWindow();
+        plot.headless(entry, plottable);
+        GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, "plot.png");
+        plot.settle();
+        GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, "plot.png");
+        System.out.println("  framed     " + plot.cacheReport());
+        // Then the half that would otherwise never be exercised without a pointer, and the numbers that say
+        // whether the cache is doing what this whole design is for: a zoom lands on a scale nothing is cached
+        // at and pays for every column; the pan after it moves within that scale and should pay for almost
+        // none; and going home returns to a scale already visited and should pay for nothing at all.
+        plot.zoomTo(4);
+        System.out.println("  zoomed in  " + plot.cacheReport());
+        plot.panBy(0.4);
+        System.out.println("  panned     " + plot.cacheReport());
+        GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, "plot-zoomed.png");
+        plot.goHome();
+        System.out.println("  back home  " + plot.cacheReport());
+        plot.gui().close();
+        System.out.println("captured " + entry);
     }
 
     private static void zoomShortcuts(Gui gui) {
@@ -142,6 +207,40 @@ public final class CalculatorApp {
             input.setCoordinateSpace(CoordinateSpace.CLIENT);
         } catch (BackendException e) {
             System.out.println("input attach failed (" + e.getMessage() + "); pointer input disabled");
+        }
+    }
+
+    /**
+     * The {@link dev.vexelray.gui.core.app.WindowInput.Factory} the framework opens every non-main window
+     * with: a second backend on that window's handle, bridged onto that window's bus, pumped once a frame and
+     * closed with it. The framework cannot name the bridge itself — that is the layering rule — so it asks
+     * here, once, and no window opened afterwards needs any input bookkeeping of its own.
+     */
+    private static dev.vexelray.gui.core.app.WindowInput attachWindowInput(dev.vexelray.os.NativeWindow window,
+                                                                          Gui windowGui) {
+        try {
+            Tactroller opened = Tactroller.open();
+            opened.attach(NativeWindow.ofHwnd(window.osHandle()));
+            opened.setCoordinateSpace(CoordinateSpace.CLIENT);
+            TactrollerInputBridge bridge = new TactrollerInputBridge(opened, windowGui.bus());
+            return new dev.vexelray.gui.core.app.WindowInput() {
+                @Override
+                public void pump() {
+                    CalculatorApp.pump(bridge);
+                }
+
+                @Override
+                public void close() {
+                    try {
+                        opened.close();
+                    } catch (Exception e) {
+                        // best effort — the backend is going away with its window regardless
+                    }
+                }
+            };
+        } catch (BackendException e) {
+            System.out.println("window input unavailable (" + e.getMessage() + "); that window takes no input");
+            return dev.vexelray.gui.core.app.WindowInput.NONE;
         }
     }
 
@@ -560,6 +659,9 @@ public final class CalculatorApp {
         private volatile Node statusLabel;
         /** Where evaluations are recorded, once there is a window loop to open onto. */
         private volatile History history;
+        /** The plot, and the app it opens its window on. Both null until main() has a window loop. */
+        private volatile PlotWindow plot;
+        private volatile GuiApp app;
 
         Engine(TextField display) {
             this.display = display;
@@ -579,6 +681,50 @@ public final class CalculatorApp {
 
         void history(History history) {
             this.history = history;
+        }
+
+        /** Where a one-variable expression goes. Null under {@code --capture}, which has no window loop. */
+        void plotter(GuiApp app, PlotWindow plot) {
+            this.app = app;
+            this.plot = plot;
+        }
+
+        /**
+         * An evaluated expression, offered to the plotter. <b>How many variables it has is the whole
+         * decision</b>, and it is taken on the term the user typed rather than on the reduced one — COTT
+         * leaves {@code x÷x} standing as a residue whose variable has become part of a form, and the curve
+         * being asked about is the one that was written down.
+         *
+         * <ul>
+         *   <li><b>None</b> — a number was evaluated. There is nothing to plot and nothing to say about it,
+         *       so nothing is said: an arithmetic result must not come with a notice attached.
+         *   <li><b>One</b> — the plot opens, against that variable whatever it is called. x is the usual one
+         *       and nothing here depends on it being x.
+         *   <li><b>More than one</b> — a surface, not a curve. Reported on the status line rather than half
+         *       drawn by pinning the others to zero, which would be a picture of a different expression.
+         * </ul>
+         */
+        private void offerPlot(String entry, Term term) {
+            PlotWindow window = plot;
+            GuiApp host = app;
+            if (window == null || host == null) {
+                return;
+            }
+            List<String> variables = Plottable.variablesIn(term);
+            if (variables.isEmpty()) {
+                return;
+            }
+            if (variables.size() > 1) {
+                status(variables.size() + " variables (" + String.join(", ", variables)
+                        + ") -- the plotter takes one");
+                return;
+            }
+            Plottable plottable = Plottable.read(term, variables.get(0));
+            if (plottable.ok()) {
+                window.show(host, entry, plottable);
+            } else {
+                status(plottable.refusal());
+            }
         }
 
         /** Put the entry back as it was, from a history click. */
@@ -607,7 +753,11 @@ public final class CalculatorApp {
                     if (!doc.text().isEmpty()) {
                         String entry = doc.text();
                         try {
-                            String result = Cott.evaluate(entry);
+                            // Parsed here rather than through Cott.evaluate, which parses too: the term is
+                            // what the plotter reads its variables out of, and re-parsing to get it would
+                            // let the two disagree about what was typed.
+                            Term term = Parser.parse(Notation.normalize(entry));
+                            String result = Render.show(Cott.reduce(term));
                             status("");
                             display.text(result);
                             justEvaluated = true;
@@ -615,6 +765,7 @@ public final class CalculatorApp {
                             if (h != null) {
                                 h.record(entry, result);
                             }
+                            offerPlot(entry, term);
                         } catch (SyntaxException e) {
                             // A rejection is REPORTED, never written into the field: the entry stays
                             // put so the expression can be fixed and "=" pressed again without
