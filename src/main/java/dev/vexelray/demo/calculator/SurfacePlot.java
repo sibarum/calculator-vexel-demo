@@ -113,8 +113,15 @@ final class SurfacePlot {
      * {@link #CELLS} and the picture is drawn at {@code CELLS × SUB}, which buys most of the smoothness for
      * almost none of the cost — the only new evaluation is one height and one gradient per lattice corner,
      * shared between the four cells that meet there.
+     *
+     * <p><b>There is a ceiling, and it is a real one.</b> Every piece is a node and every node is a quad, and a
+     * window's vertex buffer holds about thirty thousand of them. This grid asks for
+     * {@code CELLS² × (SUB² + 1)} — at 40 and 2 that is eight thousand boxes, which leaves room for the rest of
+     * the application; at 3 it is sixteen thousand, which fits but doubles what is rebuilt and uploaded on every
+     * frame of a drag. Three was tried first, and drawn at the buffer's old size of four thousand quads it did
+     * not degrade, it killed the window mid-frame. Two looks very nearly the same.
      */
-    private static final int SUB = 3;
+    private static final int SUB = 2;
 
     /** One notch of zoom, matching the curve plot's: a root of two, so two notches are a doubling. */
     private static final double SCALE_STEP = Math.sqrt(2);
