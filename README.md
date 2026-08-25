@@ -170,6 +170,42 @@ double-click-to-maximize and the system menu are still the window manager's.
 Ctrl+= / Ctrl+- / Ctrl+0 zoom the whole UI — every length is relative. In the plot window that is
 separate from the plot's own zoom: Ctrl+= scales the interface, bare `+` scales the *plane*.
 
+## The other way round: MainFrame opens the calculator
+
+```bash
+mvn compile exec:exec "-Dapp.mainClass=dev.vexelray.demo.calculator.CalculatorDesktop"
+```
+
+That boots [MainFrame](../mainframe) as the main window, with the calculator plugged into it as an
+app. `apps` lists what is on the desk and `launch "calculator"` opens the keypad — which then opens
+its own history and plot windows, so the window list is a tree rather than a list.
+
+```
+~ > apps
+name        launchable  summary
+profiles    false       named sets of environment variables and binary directories
+calculator  true        a keypad, a tape, and a plotter for anything with a variable in it
+
+~ > launch "calculator"
+~ > calc "2^10"
+1024
+~ > calc "1÷(x^2−1)"
+1÷(-1+x^2)
+```
+
+`calc` runs the same three lines of COTT the `=` key does, and answers with a value rather than
+opening anything — so a calculator in a shell is one the rest of the language can work on:
+`calc "2^10" | save ./answer.txt`. A syntax error comes back as COTT's own message, as a shell error
+with a hint.
+
+Add `"-Dapp.args=--launch" "-Dapp.args2=calculator"` to come up with the keypad already open.
+
+**Nothing was rewritten for this.** `CalculatorApp` is still the calculator as its own program, and
+`CalculatorDesktop` is six lines. The two arrangements are built from the same parts —
+`CalculatorApp.Window` is the same keypad, the same engine and the same previews, opened under a name
+on somebody else's `GuiApp` instead of being the main window of its own — so neither is a fork of the
+other. What differs is who owns the frame loop.
+
 ## Where you left it
 
 Every window comes back where it was: position, size, maximized state, and the UI zoom, in

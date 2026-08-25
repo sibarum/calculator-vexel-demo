@@ -5,9 +5,11 @@ import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.TextClipboard;
 import dev.vexelray.gui.core.WindowControls;
+import dev.vexelray.gui.core.app.AppWindow;
 import dev.vexelray.gui.core.app.GuiApp;
 import dev.vexelray.gui.core.app.Settings;
 import dev.vexelray.gui.core.app.WindowMemory;
+import dev.vexelray.gui.core.app.WindowSpec;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.layout.LayoutEnums;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
@@ -385,6 +387,124 @@ public final class CalculatorApp {
             bridge.pump();
         } catch (BackendException e) {
             // Transient poll failure — drop this frame's input rather than tear down the loop.
+        }
+    }
+
+    /**
+     * The calculator as a window on somebody else's application: its own {@link Gui}, opened under a name on a
+     * {@link GuiApp} that already exists and already has a frame loop.
+     *
+     * <h2>Why this is not main()</h2>
+     * {@link CalculatorApp#main} is one arrangement of the calculator — the one where it is the program, owns
+     * the loop, and everything else on the desk is something it opened. This is the other arrangement, where
+     * MainFrame is the program and the calculator is one of the things <em>it</em> opens. Same tree, same
+     * engine, same history and the same previews; what differs is who owns the window and who is ticking.
+     *
+     * <p>So it is a nested class rather than a file of its own. Everything it needs -- {@code buildUi}, the
+     * {@code Engine}, the {@code History}, the sizes -- is private to {@link CalculatorApp} and stays that way,
+     * and the two arrangements cannot drift apart because they are built out of the same parts.
+     *
+     * <p><b>The session outlives the window,</b> as the console's does: the tree belongs to this object, so
+     * closing the calculator releases an OS window and leaves the tape, the entry and the zoom where they were.
+     *
+     * <p>All methods run on the frame loop.
+     */
+    public static final class Window {
+
+        /** The name this window is opened, raised and remembered under. */
+        private static final String KEY = "calculator";
+
+        private final WindowMemory memory;
+        private final Gui gui = new Gui();
+        private final Ui ui;
+        private final Engine engine;
+
+        private History history;
+        private AppWindow handle;
+
+        /**
+         * Build the calculator, without opening anything.
+         *
+         * @param memory where this window's placement, size and zoom are kept -- shared with whatever else is
+         *               on this desk, because a window memory is one file and one key per window
+         */
+        public Window(WindowMemory memory) {
+            this.memory = memory;
+            // Two em more than the keypad needs on its own: the title bar sits inside the canvas, so the
+            // smallest layout has to hold it as well as the display and the keys.
+            gui.minSize(Length.em(21), Length.em(32));
+            this.ui = buildUi(gui);
+            this.engine = ui.engine();
+            zoomShortcuts(gui);
+        }
+
+        /** This window's Gui, so the host can bind its clipboard and its shortcuts here too. */
+        public Gui gui() {
+            return gui;
+        }
+
+        /** Whether the window is up right now. */
+        public boolean open() {
+            return handle != null && handle.open();
+        }
+
+        /**
+         * Open the calculator on {@code app}, or raise it if it is already up.
+         *
+         * <p>The history and the previews are wired on the first call rather than in the constructor, because
+         * both of them open windows and neither can be given an application before there is one. After that
+         * this is one {@code show()}: asking for the calculator has to mean <em>the</em> calculator.
+         */
+        public void show(GuiApp app) {
+            if (history == null) {
+                history = new History(engine, app, memory);
+                engine.history(history);
+                zoomShortcuts(history.windowGui());
+                // Each preview is built the first time its slot is used, and gets the same zoom shortcuts every
+                // other window here has -- the only thing the calculator says about a window it did not know it
+                // was going to open.
+                engine.plotter(new Previews(app, memory, CalculatorApp::zoomShortcuts));
+            }
+            if (handle == null) {
+                handle = app.window(KEY, () -> WindowSpec
+                        .of(memory.config(KEY, "Calculator", W, H).decorations(Decorations.CLIENT), gui)
+                        .onCreated(this::onCreated)
+                        .onClosed(this::onClosed));
+            }
+            handle.show();
+        }
+
+        /**
+         * Frame loop, once per frame. The history's queue is drained here whether or not the window is open,
+         * since an evaluation recorded just before a close still has to land somewhere.
+         */
+        public void tick() {
+            if (history != null) {
+                history.drain();
+            }
+        }
+
+        /**
+         * The window exists, and its input is already attached and pumping -- the host did that from the
+         * factory it gave the framework. What is left is what only this window knows: which window its own
+         * title bar commands, where it should be, and what it was zoomed to.
+         */
+        private void onCreated(dev.vexelray.os.NativeWindow created) {
+            ui.titleBar().controls(WindowControls.of(created));
+            if (memory.maximized(KEY)) {
+                created.maximize();
+            } else {
+                memory.restoreBounds(KEY, created, W, H);
+            }
+            // Watched with its tree, so the UI zoom is remembered too: Ctrl+= is the same kind of decision as
+            // dragging the window bigger, and losing it on quit is the same loss.
+            memory.watch(KEY, created, gui);
+        }
+
+        /** The window is gone; the calculator is not. What was recorded last stands. */
+        private void onClosed() {
+            memory.forget(KEY);
+            ui.titleBar().controls(WindowControls.NONE);
         }
     }
 
