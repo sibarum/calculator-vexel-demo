@@ -66,6 +66,16 @@ final class Sheen {
     private static final double HORIZON = -0.3;
     private static final double ZENITH = 0.9;
 
+    /**
+     * The key light, fixed in the world so that turning the surface moves the shading across it. Up, and over
+     * the viewer's left shoulder at the default yaw -- the direction every product photograph uses, because it
+     * puts the lit face and the shaded face both in view.
+     */
+    private static final double[] LIGHT = normalise(-0.42, -0.5, 0.76);
+
+    /** How much light a face turned entirely away still gets. Nothing here should read as a silhouette. */
+    private static final double AMBIENT = 0.34;
+
     /** How far a concavity may be darkened. */
     private static final double CAVITY = 0.55;
 
@@ -133,6 +143,14 @@ final class Sheen {
         }
         double[] normal = slope.normal();
 
+        // Diffuse. Plain Lambert against a fixed light, and it is doing the least interesting job here and the
+        // most necessary one: curvature and Fresnel both say something about the surface, while this is what
+        // makes it read as a solid at all. A shape with no directional term is a chart of heights; with one it
+        // is an object. The light is fixed in the world rather than to the eye, so turning the surface moves the
+        // shading across it, which is most of what tells a viewer they are turning something.
+        double lambert = Math.max(0, dot(normal, LIGHT));
+        base = scale(base, AMBIENT + (1 - AMBIENT) * lambert);
+
         // Cavity. tanh rather than a clamp so that a very sharp fold eases into the limit instead of hitting a
         // flat black wall -- near a pole the curvature runs away, and the shading should not run away with it.
         // The two directions are deliberately unequal: see RIDGE.
@@ -181,6 +199,11 @@ final class Sheen {
     private static double smoothstep(double from, double to, double at) {
         double t = Math.max(0, Math.min(1, (at - from) / (to - from)));
         return t * t * (3 - 2 * t);
+    }
+
+    private static double[] normalise(double x, double y, double z) {
+        double length = Math.sqrt(x * x + y * y + z * z);
+        return new double[]{x / length, y / length, z / length};
     }
 
     private static double dot(double[] a, double[] b) {

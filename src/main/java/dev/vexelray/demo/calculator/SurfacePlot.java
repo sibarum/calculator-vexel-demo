@@ -37,17 +37,39 @@ import java.util.function.Consumer;
  * steep, the full height of the volume where the arithmetic could not bound it, which is the same honest answer
  * a painted column gives on a curve.
  *
+ * <h2>Two layers, because they say two different things</h2>
+ * Boxes alone read as blocky, and the fix is not to draw finer boxes — it is to stop asking one layer to be
+ * both the evidence and the picture.
+ *
+ * <ul>
+ *   <li>the <b>proof</b> is the enclosure over each cell, drawn as a <em>hollow outline</em>. An enclosure is a
+ *       claim about a range, so its edges are what it has to say; a filled box would be claiming the surface is
+ *       everywhere inside it. Where the arithmetic is tight the outline is a thin sliver and disappears into
+ *       the surface; where it is loose — a steep cell, a fold — it stands visibly taller than the surface
+ *       threading through it, which is exactly where a reader should be looking;
+ *   <li>the <b>picture</b> is a smooth surface bilinearly interpolated between the cell lattice's corners,
+ *       {@link #SUB} pieces per cell per axis, shaded by {@link Sheen}. Interpolating is joining up points that
+ *       were evaluated — the very thing the module refuses to do on its own — and it is safe here for one
+ *       reason and only one: <b>it is drawn inside the outline that contains it.</b> The enclosure covers every
+ *       value the surface takes on the cell, the interpolation's own corner heights are among them, so the
+ *       smooth layer can never draw outside the honest one.
+ * </ul>
+ *
+ * <p>It is also much cheaper than one fine layer would have been. An enclosure costs interval arithmetic over
+ * {@code BigDecimal} and an interpolation costs four multiplies, so the proof stays coarse while the picture
+ * gets nine times the resolution for one height and one gradient per lattice corner.
+ *
  * <h2>What is claimed, and what is not</h2>
  * A box in space projects to a hexagon, and what is drawn is that hexagon's <b>screen-space bounding
  * rectangle</b> — a conservative cover. So the claim this renderer makes is per cell and it is a real one:
  *
- * <blockquote>the rectangle drawn for a cell contains every point of the surface above that cell</blockquote>
+ * <blockquote>the outline drawn for a cell contains every point of the surface above that cell</blockquote>
  *
  * and it is deliberately <em>weaker</em> than the curve plot's, which is per pixel. Two things follow and are
  * worth stating rather than discovering:
  * <ul>
- *   <li><b>the cover is loose.</b> A bounding rectangle is up to twice the hexagon it covers, so the surface
- *       reads a little chunky. That is the same trade the fill makes — over-cover rather than under-draw;
+ *   <li><b>the cover is loose.</b> A bounding rectangle is up to twice the hexagon it covers. That is the same
+ *       trade the fill makes — over-cover rather than under-draw;
  *   <li><b>the painting order is presentation, not proof.</b> Cells are drawn far to near by
  *       {@link Camera#depthKey}, which is the ordering every heightmap renderer uses and is a statement about
  *       surfaces standing over a grid rather than a theorem about boxes in general.
@@ -80,8 +102,19 @@ import java.util.function.Consumer;
  */
 final class SurfacePlot {
 
-    /** How many cells across the floor. Each one is a node, so this is the picture's whole budget. */
+    /** How many cells across the floor. One enclosure each, and the enclosures are the expensive part. */
     private static final int CELLS = 40;
+
+    /**
+     * How many pieces each proven cell is subdivided into, per axis, for the drawn surface.
+     *
+     * <p>This is the whole reason two layers is cheaper than one fine one. An <b>enclosure</b> costs interval
+     * arithmetic over {@code BigDecimal}; an <b>interpolation</b> costs four multiplies. So the proof stays at
+     * {@link #CELLS} and the picture is drawn at {@code CELLS × SUB}, which buys most of the smoothness for
+     * almost none of the cost — the only new evaluation is one height and one gradient per lattice corner,
+     * shared between the four cells that meet there.
+     */
+    private static final int SUB = 3;
 
     /** One notch of zoom, matching the curve plot's: a root of two, so two notches are a doubling. */
     private static final double SCALE_STEP = Math.sqrt(2);
@@ -118,10 +151,20 @@ final class SurfacePlot {
     private final Gui gui;
     private final Node canvas;
     private final Node cellLayer;
+    private final Node ghostLayer;
     private final Node legendLayer;
     private final List<Node> cellPool = new ArrayList<>();
+    private final List<Node> ghostPool = new ArrayList<>();
     private final List<Node> legendPool = new ArrayList<>();
     private final List<Node> legendLabels = new ArrayList<>();
+
+    /** Heights and gradients at the cell lattice's corners, by scale then by packed corner index. */
+    private final Map<Long, Map<Long, Corner>> corners = new LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Long, Map<Long, Corner>> eldest) {
+            return size() > CACHED_SCALES;
+        }
+    };
 
     private final Consumer<String> readout;
 
@@ -161,8 +204,11 @@ final class SurfacePlot {
                 .corner(Length.rem(0.5f))
                 .scroll(false, false);
         this.cellLayer = layer();
+        this.ghostLayer = layer();
         this.legendLayer = layer();
-        canvas.children(cellLayer, legendLayer);
+        // The proof over the picture, not under it: the enclosure boxes are what is known and the interpolated
+        // surface is what is drawn, so the outlines have to stay visible across it.
+        canvas.children(cellLayer, ghostLayer, legendLayer);
         gui.onDrag(canvas, this::drag);
         // Turning has no natural end, so the window's edge should not be one. Holding the pointer for the
         // gesture is what lets a drag roll the surface over as many times as it likes on a finite desk.
@@ -187,6 +233,9 @@ final class SurfacePlot {
         Volume framed = Framing.automatic(plottable.expr(), plottable.across(), plottable.into());
         synchronized (cache) {
             cache.clear();
+        }
+        synchronized (corners) {
+            corners.clear();
         }
         Expr[] derivatives = differentiate(plottable);
         synchronized (this) {
@@ -386,15 +435,11 @@ final class SurfacePlot {
         if (e == null) {
             return;
         }
-        List<Patch> patches = new ArrayList<>(CELLS * CELLS);
+        List<Patch> patches = new ArrayList<>(CELLS * CELLS * (1 + SUB * SUB));
         for (int i = 0; i < CELLS; i++) {
             long ix = i - CELLS / 2L;
             for (int j = 0; j < CELLS; j++) {
-                long iy = j - CELLS / 2L;
-                Patch patch = patch(e, v, eye, a, b, u, ix, iy);
-                if (patch != null) {
-                    patches.add(patch);
-                }
+                patch(patches, e, v, eye, a, b, u, ix, j - CELLS / 2L);
             }
             if (revision.get() != mine) {
                 return;                              // overtaken mid-evaluation: whoever overtook us will draw
@@ -419,26 +464,58 @@ final class SurfacePlot {
      * One cell, from its enclosure to the rectangle that covers it. Null when there is nothing there — an
      * undefined cell, or a surface that has left the volume entirely at this point.
      */
-    private Patch patch(Expr e, Volume v, Camera eye, String a, String b, double u, long ix, long iy) {
+    private void patch(List<Patch> into, Expr e, Volume v, Camera eye, String a, String b,
+                       double u, long ix, long iy) {
         Sample sample = sample(e, u, a, b, ix, iy);
         Extent extent = new Extent();
         Span.of(sample.height(), v.zLo(), v.zHi()).emitTo(0, extent);
         if (extent.blank) {
-            return null;
+            return;
         }
-        double zTop = v.zAt(extent.top);
-        double zBottom = v.zAt(extent.bottom);
         double x0 = ix * u;
         double x1 = (ix + 1) * u;
         double y0 = iy * u;
         double y1 = (iy + 1) * u;
+        if (extent.filled) {
+            // Nothing to interpolate through a place the arithmetic could not bound, and nothing to outline
+            // either: the painted column IS the statement, and it is already the whole height of the volume.
+            add(into, box(v, eye, x0, x1, y0, y1, v.zLo(), v.zHi(), null, true, false));
+            return;
+        }
+        // The proof, as an outline: where the surface provably is, drawn over the picture of where it goes.
+        add(into, box(v, eye, x0, x1, y0, y1, v.zAt(extent.bottom), v.zAt(extent.top), null, false, true));
+        surfaceOver(into, v, eye, u, ix, iy,
+                    corner(e, u, a, b, ix, iy), corner(e, u, a, b, ix + 1, iy),
+                    corner(e, u, a, b, ix, iy + 1), corner(e, u, a, b, ix + 1, iy + 1));
+    }
+
+    private static void add(List<Patch> into, Patch patch) {
+        if (patch != null) {
+            into.add(patch);
+        }
+    }
+
+    /**
+     * One axis-aligned box of plot space, projected: the screen rectangle that covers it, how far away it is,
+     * and how to colour it. Null when it lies outside the volume's height entirely.
+     *
+     * <p>The one place a box becomes a rectangle, shared by the proof and the picture so that the two cannot
+     * drift apart about where a piece of space lands on the screen.
+     */
+    private static Patch box(Volume v, Camera eye, double x0, double x1, double y0, double y1,
+                             double zBottom, double zTop, Sheen.Slope slope, boolean filled, boolean ghost) {
+        double lo = Math.max(zBottom, v.zLo());
+        double hi = Math.min(zTop, v.zHi());
+        if (hi < lo) {
+            return null;
+        }
         // Normalised into the unit box the camera projects, so the camera never learns what a volume is.
         double nx0 = (x0 - v.xLo()) / v.xWidth() - 0.5;
         double nx1 = (x1 - v.xLo()) / v.xWidth() - 0.5;
         double ny0 = (y0 - v.yLo()) / v.yDepth() - 0.5;
         double ny1 = (y1 - v.yLo()) / v.yDepth() - 0.5;
-        double nzLo = (zBottom - v.zLo()) / v.zHeight() - 0.5;
-        double nzHi = (zTop - v.zLo()) / v.zHeight() - 0.5;
+        double nzLo = (lo - v.zLo()) / v.zHeight() - 0.5;
+        double nzHi = (hi - v.zLo()) / v.zHeight() - 0.5;
         double minU = Double.MAX_VALUE;
         double maxU = -Double.MAX_VALUE;
         double minV = Double.MAX_VALUE;
@@ -452,13 +529,15 @@ final class SurfacePlot {
             minV = Math.min(minV, p.v());
             maxV = Math.max(maxV, p.v());
         }
-        double midX = (nx0 + nx1) / 2;
-        double midY = (ny0 + ny1) / 2;
-        // The height the colour reads, as a fraction of the volume: the middle of the enclosure, so a tall
-        // uncertain cell is coloured by where it is rather than by how unsure it is.
-        double heat = 1 - (extent.top + extent.bottom) / 2;
-        return new Patch(minU, maxU, minV, maxV, eye.depthKey(midX, midY), heat, extent.filled,
-                         normalised(sample.slope(), v));
+        // The height the colour reads, as a fraction of the volume: the middle of the box, so a tall uncertain
+        // one is coloured by where it is rather than by how unsure it is.
+        double heat = 1 - clamp01(v.fractionOf((lo + hi) / 2));
+        return new Patch(minU, maxU, minV, maxV, eye.depthKey((nx0 + nx1) / 2, (ny0 + ny1) / 2),
+                         heat, filled, slope, ghost);
+    }
+
+    private static double clamp01(double t) {
+        return t < 0 ? 0 : (t > 1 ? 1 : t);
     }
 
     /**
@@ -558,6 +637,112 @@ final class SurfacePlot {
     private record Sample(Enclosure height, double[] slope) {
     }
 
+    /**
+     * The surface at one corner of the cell lattice: how high it is there and which way it leans.
+     *
+     * <p>Corners rather than centres, because these are what the drawn surface is <em>interpolated between</em>,
+     * and a corner is shared by the four cells that meet at it — so a lattice of {@code (CELLS+1)²} of them
+     * covers a grid of {@code CELLS²} cells at a quarter of the evaluations, and the surface comes out
+     * continuous across every cell boundary rather than agreeing only approximately.
+     *
+     * <p>Interpolating the <b>gradient</b> as well as the height is what makes the shading continuous too. It is
+     * the same idea as shading a mesh from vertex normals, except that these normals are the surface's own
+     * analytic ones rather than an average of whatever faces happened to meet there — so there is no
+     * tessellation for the light to trace.
+     */
+    private record Corner(double z, double gx, double gy, boolean real) {
+    }
+
+    /** The lattice corner at {@code (ix, iy)}, computed and remembered on the first ask. */
+    private Corner corner(Expr e, double u, String a, String b, long ix, long iy) {
+        Map<Long, Corner> scale;
+        synchronized (corners) {
+            scale = corners.computeIfAbsent(Double.doubleToLongBits(u), key -> new ConcurrentHashMap<>());
+        }
+        long key = (ix & 0xFFFFFFFFL) << 32 | (iy & 0xFFFFFFFFL);
+        Corner known = scale.get(key);
+        if (known != null) {
+            return known;
+        }
+        Cell at = Cell.of(a, Interval.at(ix * u), b, Interval.at(iy * u));
+        Double z = midpoint(e.enclose(at));
+        Expr[] derivatives;
+        synchronized (this) {
+            derivatives = partials;
+        }
+        Double gx = derivatives == null ? null : midpoint(derivatives[0].enclose(at));
+        Double gy = derivatives == null ? null : midpoint(derivatives[1].enclose(at));
+        Corner computed = z == null
+                ? new Corner(0, 0, 0, false)
+                : new Corner(z, gx == null ? 0 : gx, gy == null ? 0 : gy, true);
+        scale.put(key, computed);
+        return computed;
+    }
+
+    /**
+     * The drawn surface over one cell: {@code SUB × SUB} pieces, bilinearly interpolated between the cell's
+     * four lattice corners.
+     *
+     * <p>Nothing here is proven and nothing here pretends to be. The enclosure over this cell is drawn
+     * separately as an outline and it is the statement about where the surface actually is; this is the
+     * illustration inside it, and it is only ever <em>within</em> the box the proof drew, because the enclosure
+     * contains every value the surface takes on the cell and the interpolation's own corner heights are among
+     * them. So the smooth layer cannot draw outside the honest one — which is the whole reason it is safe to
+     * draw at all.
+     */
+    private void surfaceOver(List<Patch> into, Volume v, Camera eye, double u, long ix, long iy,
+                             Corner c00, Corner c10, Corner c01, Corner c11) {
+        if (!c00.real() || !c10.real() || !c01.real() || !c11.real()) {
+            return;                                  // a corner with no height leaves nothing to interpolate
+        }
+        double step = u / SUB;
+        for (int p = 0; p < SUB; p++) {
+            for (int q = 0; q < SUB; q++) {
+                double s0 = (double) p / SUB;
+                double s1 = (double) (p + 1) / SUB;
+                double t0 = (double) q / SUB;
+                double t1 = (double) (q + 1) / SUB;
+                // The piece's own four heights, so it covers the interpolated patch rather than hovering at a
+                // single height and leaving gaps wherever the surface is steep.
+                double z00 = lerp2(c00.z(), c10.z(), c01.z(), c11.z(), s0, t0);
+                double z10 = lerp2(c00.z(), c10.z(), c01.z(), c11.z(), s1, t0);
+                double z01 = lerp2(c00.z(), c10.z(), c01.z(), c11.z(), s0, t1);
+                double z11 = lerp2(c00.z(), c10.z(), c01.z(), c11.z(), s1, t1);
+                double zLo = Math.min(Math.min(z00, z10), Math.min(z01, z11));
+                double zHi = Math.max(Math.max(z00, z10), Math.max(z01, z11));
+                if (zHi < v.zLo() || zLo > v.zHi()) {
+                    continue;                        // this piece is outside the volume on show
+                }
+                double sm = (s0 + s1) / 2;
+                double tm = (t0 + t1) / 2;
+                double gx = lerp2(c00.gx(), c10.gx(), c01.gx(), c11.gx(), sm, tm);
+                double gy = lerp2(c00.gy(), c10.gy(), c01.gy(), c11.gy(), sm, tm);
+                add(into, box(v, eye,
+                        ix * u + p * step, ix * u + (p + 1) * step,
+                        iy * u + q * step, iy * u + (q + 1) * step,
+                        zLo, zHi, normalisedGradient(gx, gy, v), false, false));
+            }
+        }
+    }
+
+    /**
+     * A gradient scaled into the volume's normalised cube, with no curvature. The interpolated surface shades
+     * from its first derivatives only: the cavity term wants the second, and second derivatives interpolated
+     * between corners are a difference of differences — noisy where the surface is interesting and worth
+     * nothing where it is not. Curvature stays where it is exact, on the proven cells.
+     */
+    private static Sheen.Slope normalisedGradient(double gx, double gy, Volume v) {
+        if (!Double.isFinite(gx) || !Double.isFinite(gy)) {
+            return null;
+        }
+        return new Sheen.Slope(gx * v.xWidth() / v.zHeight(), gy * v.yDepth() / v.zHeight(), 0, 0, 0);
+    }
+
+    /** Bilinear interpolation between four corner values. */
+    private static double lerp2(double v00, double v10, double v01, double v11, double s, double t) {
+        return (v00 * (1 - s) + v10 * s) * (1 - t) + (v01 * (1 - s) + v11 * s) * t;
+    }
+
     /** The projected patches, back to front, one pooled box each. */
     private void drawPatches(List<Patch> patches, Camera eye, float[] size) {
         double[] view = eye.viewDirection();
@@ -570,6 +755,7 @@ final class SurfacePlot {
         double nearest = patches.isEmpty() ? 0 : patches.get(patches.size() - 1).depth();
         double span = Math.max(1e-9, farthest - nearest);
         int drawn = 0;
+        int ghosts = 0;
         for (Patch p : patches) {
             float x = (float) (midX + p.minU() * scale);
             float y = (float) (midY - p.maxV() * scale);          // screen y grows downward, v upward
@@ -577,6 +763,17 @@ final class SurfacePlot {
             float h = (float) Math.max(MIN_CELL_DP, (p.maxV() - p.minV()) * scale);
             if (x > size[0] || y > size[1] || x + w < 0 || y + h < 0) {
                 continue;                                          // wholly off the canvas
+            }
+            if (p.ghost()) {
+                // Outlined and hollow. What the proof has to say is where its edges are -- an enclosure is a
+                // claim about a range, and a filled box would say the surface is everywhere in it.
+                pooled(ghostPool, ghostLayer, ghosts++)
+                        .visible(true)
+                        .background(Color.rgba(0, 0, 0, 0))
+                        .border(Length.dp(1), Palette.PROOF_EDGE)
+                        .size(Length.dp(w), Length.dp(h))
+                        .floatAt(Length.dp(x), Length.dp(y));
+                continue;
             }
             float distance = (float) ((p.depth() - nearest) / span);
             pooled(cellPool, cellLayer, drawn++)
@@ -588,6 +785,7 @@ final class SurfacePlot {
                     .floatAt(Length.dp(x), Length.dp(y));
         }
         hideFrom(cellPool, drawn);
+        hideFrom(ghostPool, ghosts);
     }
 
     /**
@@ -707,7 +905,7 @@ final class SurfacePlot {
 
     /** One cell, projected: the rectangle that covers it, how far away it is, and how to colour it. */
     private record Patch(double minU, double maxU, double minV, double maxV,
-                         double depth, double heat, boolean filled, Sheen.Slope slope) {
+                         double depth, double heat, boolean filled, Sheen.Slope slope, boolean ghost) {
     }
 
     /**

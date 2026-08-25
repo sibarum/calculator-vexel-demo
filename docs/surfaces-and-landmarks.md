@@ -100,6 +100,41 @@ the right answer rather than a rendering failure: `1÷(x+y)` leaves every bound 
 `x = −y`, so the far half of the surface really is behind something infinitely tall. Turning the picture to look
 along the ridge brings both halves back.
 
+### A4a. Two layers
+
+Boxes alone read as blocky, and the fix turned out not to be finer boxes. It was to stop asking one layer to be
+both the evidence and the picture.
+
+- The **proof** is the enclosure over each cell, drawn as a **hollow outline**. An enclosure is a claim about a
+  range, so its edges are what it has to say; a filled box claims the surface is everywhere inside it.
+- The **picture** is a smooth surface **bilinearly interpolated** between the cell lattice's corners, `SUB`
+  pieces per cell per axis, diffuse-lit.
+
+This is also where the honesty tension named at the top of this document actually gets resolved rather than
+dodged. Interpolating *is* joining up points that were evaluated — the very thing the module refuses to do on
+its own — and it is safe here for exactly one reason: **it is drawn inside the outline that contains it.** The
+enclosure covers every value the surface takes on that cell, and the interpolation's own corner heights are
+among those values, so the smooth layer provably cannot draw outside the honest one. Both are on screen, each
+saying what it is.
+
+It reads better than either alone, too. Where the arithmetic is tight the outline is a sliver and vanishes into
+the surface; where it is loose — a steep cell, the throat of `1÷(x²+y²)` — the outline stands visibly taller
+than the surface threading through it. *The picture shows you where its own evidence is weak*, which is more
+than the box layer managed on its own and much more than a smooth surface would.
+
+And it is cheaper than one fine layer. An enclosure costs interval arithmetic over `BigDecimal`; an
+interpolation costs four multiplies. The proof stays at `CELLS`, the picture is drawn at `CELLS × SUB`, and the
+only new evaluation is one height and one gradient per lattice **corner** — shared between the four cells that
+meet there, so a lattice of `(CELLS+1)²` covers `CELLS²` cells and the surface comes out continuous across every
+cell boundary rather than agreeing only approximately.
+
+Interpolating the **gradient** as well as the height is what makes the shading continuous. It is the idea behind
+shading a mesh from vertex normals, except that these normals are the surface's own analytic ones rather than an
+average of whatever faces met there — so there is still no tessellation for the light to trace. Curvature is
+deliberately *not* interpolated: second derivatives between corners are a difference of differences, noisy where
+the surface is interesting and worthless where it is not, so the cavity term stays on the proven cells where it
+is exact.
+
 ### A5. Framing, and the cache
 
 `Framing` gains `automatic(Expr, xLo, xHi, yLo, yHi)` returning a `Volume`, fitting z by the same robust

@@ -68,9 +68,26 @@ span of z is an **axis-aligned box in space**. The surface is a field of them �
 it is steep, the full height of the volume where the arithmetic could not bound it.
 
 What is drawn for a cell is the screen-space bounding rectangle of that box's eight projected corners, so the
-claim is per cell rather than per pixel: *the rectangle drawn for a cell contains every point of the surface
-above it*. The projection is axonometric with no perspective at all, which is not a simplification — it is what
-makes the painting order a function of the floor alone, and the painting order is the whole of the occlusion.
+claim is per cell rather than per pixel: *the box drawn for a cell contains every point of the surface above
+it*. The projection is axonometric with no perspective at all, which is not a simplification — it is what makes
+the painting order a function of the floor alone, and the painting order is the whole of the occlusion.
+
+**It is drawn as two layers, because they say two different things.** Boxes alone read as blocky, and the fix is
+not finer boxes — it is to stop asking one layer to be both the evidence and the picture. The **proof** is the
+enclosure over each cell, drawn as a hollow outline: an enclosure is a claim about a range, so its edges are
+what it has to say, and a filled box would be claiming the surface is everywhere inside it. The **picture** is a
+smooth surface bilinearly interpolated between the cell lattice's corners and diffuse-lit.
+
+Interpolating is joining up points that were evaluated — the very thing this module refuses to do on its own —
+and it is safe here for exactly one reason: **it is drawn inside the outline that contains it.** The enclosure
+covers every value the surface takes on that cell and the interpolation's own corner heights are among them, so
+the smooth layer can never draw outside the honest one. Where the arithmetic is tight the outline vanishes into
+the surface; where it is loose the outline stands visibly taller than the surface threading through it, which is
+where a reader should be looking.
+
+It is also cheaper than one fine layer would have been: an enclosure costs interval arithmetic over
+`BigDecimal`, an interpolation costs four multiplies. So the proof stays coarse and the picture gets nine times
+the resolution for one height and one gradient per lattice corner.
 
 Drag turns the picture, the wheel and `+`/`−` widen and narrow the window, **Fit** re-fits the height. There is
 no pan, because a surface has no direction to be panned in once it has been turned. There are no gridlines

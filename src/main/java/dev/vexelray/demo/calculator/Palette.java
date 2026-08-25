@@ -119,4 +119,16 @@ final class Palette {
      * it.
      */
     static final Color SURFACE_POLE = Color.rgba(1f, 0.42f, 0.30f, 0.4f);
+
+    /**
+     * The edge of a proven enclosure, drawn as a hollow outline over the interpolated surface inside it.
+     *
+     * <p>Two layers because they say two different things. The interpolated surface is smooth and is a
+     * <em>guess</em> -- bilinear between corners the arithmetic did evaluate, which is the same joining-up that
+     * point sampling does and would be a lie on its own. The outline is the enclosure, and it is the claim: the
+     * surface is somewhere inside this box. Drawing both keeps the picture readable without the reader having to
+     * take the readable part on trust, and where the proof is loose -- a steep cell, a fold -- the outline stands
+     * visibly taller than the smooth surface threading through it, which is exactly where a reader should look.
+     */
+    static final Color PROOF_EDGE = Color.rgba(0.62f, 0.72f, 0.88f, 0.11f);
 }
