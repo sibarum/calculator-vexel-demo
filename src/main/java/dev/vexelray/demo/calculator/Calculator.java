@@ -25,7 +25,7 @@ import java.util.List;
  * <h2>Which way round this goes</h2>
  * The calculator used to be a program with a {@code main()} that owned a frame loop, and the plot and history
  * windows were things it opened. Plugged in here it is one rung down: MainFrame is the program, {@code apps}
- * lists the calculator among whatever else is on the desk, and {@code launch "calculator"} opens it. The
+ * lists the calculator among whatever else is on the desk, and {@code calc} opens it. The
  * calculator's own windows still open out of it, so the tree is a tree rather than a list — which is what an
  * operating system's window list has always been.
  *
@@ -34,15 +34,19 @@ import java.util.List;
  * of being the main window of its own.
  *
  * <h2>calc, and why the window is not the only way in</h2>
- * {@code calc} evaluates an expression through the same COTT reduction the {@code =} key runs, and answers with
- * text rather than opening anything. That matters more than it looks: an answer that is a value is an answer the
- * rest of the language can work on, so a calculator in a shell is not a calculator you have to read numbers off
- * a screen from.
+ * {@code calc} is both doors. With an expression it reduces it through the same COTT the {@code =} key runs and
+ * answers with a value, so a calculator in a shell is one the rest of the language can work on rather than one you
+ * read numbers off a screen from. With nothing to reduce it opens the keypad, because {@code launch "calculator"}
+ * is a verb and a quoted string for the most ordinary thing anyone does with a calculator.
  *
  * <pre>{@code
- * ~ > calc "1÷(x^2−1)"
- * ~ > ls | where kind == "file" | first 1 | calc "2^10"
+ * ~ > calc                       # the keypad
+ * ~ > calc "2^10"                # 1024
+ * ~ > calc "1÷(x^2−1)" | save ./poles.txt
  * }</pre>
+ *
+ * <p>{@code calculator} and {@code launch "calculator"} open it too — the console names a command after every
+ * launchable app, and {@code launch} takes any name at all — but {@code calc} is what a hand reaches for.
  */
 public final class Calculator implements ConsoleApp {
 
@@ -69,7 +73,7 @@ public final class Calculator implements ConsoleApp {
 
     @Override
     public void commands(Registry registry, ConsoleContext console) {
-        registry.add(calc());
+        registry.add(calc(console));
     }
 
     @Override
@@ -97,7 +101,7 @@ public final class Calculator implements ConsoleApp {
 
     @Override
     public void menu(MenuSink menu, ConsoleContext console) {
-        menu.item("Open the calculator", () -> console.run("launch \"calculator\""));
+        menu.item("Open the calculator", () -> console.run("calc"));
     }
 
     /** This window's Gui, so the host can bind the OS clipboard on it as it does on every other window. */
@@ -108,19 +112,32 @@ public final class Calculator implements ConsoleApp {
     // ---- the command -----------------------------------------------------------------
 
     /**
-     * {@code calc} — reduce an expression and answer with what it came to.
+     * {@code calc} — work something out, or, with nothing to work out, open the thing that works things out.
      *
-     * <p>Straight to COTT, not through the keypad's {@code Engine}: the engine's job is to edit a display field
-     * and it would have to be given one. These are the same three lines the {@code =} key runs, which is the
-     * point — a shell that agreed with the keypad only most of the time would be worse than not having one.
+     * <h2>Why one command and not two</h2>
+     * {@code launch "calculator"} is a verb and a quoted string for the most ordinary thing anybody does with a
+     * calculator, and nobody wants to type it. {@code calc} is what a person reaches for, so {@code calc} is
+     * what opens the keypad — and it costs nothing, because bare {@code calc} had no other meaning: it was an
+     * error message saying the expression was missing.
+     *
+     * <p>That is the same bargain a shell has always made with an interpreter's name. {@code python} opens the
+     * prompt, {@code python thing.py} runs the file, and nobody has ever found that ambiguous.
+     *
+     * <p>Reducing goes straight to COTT rather than through the keypad's {@code Engine}: the engine's job is to
+     * edit a display field and it would have to be given one. These are the same three lines the {@code =} key
+     * runs, which is the point — a shell that agreed with the keypad only most of the time would be worse than
+     * not having one.
      */
-    private Builtin calc() {
+    private Builtin calc(ConsoleContext console) {
         Signature signature = Signature.named("calc", name())
-                .summary("reduce an expression, the way the calculator's = key does")
+                .summary("work an expression out, or open the calculator when given none")
                 .rest("expression", ValueType.STRING, "what to work out; several are worked out in turn")
                 .input(ValueType.NOTHING)
                 .output(ValueType.STRING)
-                .effect(Signature.Effect.PURE)
+                // SESSION rather than PURE, because with no expression this opens a window, and a command that
+                // declares less than it does is the one thing MainFrame's signatures exist to prevent.
+                .effect(Signature.Effect.SESSION)
+                .example("calc")
                 .example("calc \"2^10\"")
                 .example("calc \"x÷x\"")
                 .example("calc \"(1+2)*3\" | save ./answer.txt")
@@ -135,10 +152,7 @@ public final class Calculator implements ConsoleApp {
             public Value run(Args args) {
                 List<String> entries = args.strings(0);
                 if (entries.isEmpty()) {
-                    throw args.failUsage("E830", "calc needs something to work out")
-                            .hint("calc \"2^10\"")
-                            .hint("launch \"calculator\" opens the keypad instead")
-                            .build();
+                    return open(args, console);
                 }
                 List<Value> answers = new java.util.ArrayList<>();
                 for (String entry : entries) {
@@ -147,6 +161,25 @@ public final class Calculator implements ConsoleApp {
                 return answers.size() == 1 ? answers.getFirst() : new Value.ListVal(answers);
             }
         };
+    }
+
+    /**
+     * Bare {@code calc}: open the keypad, or raise it if it is already up.
+     *
+     * <p>Through {@link ConsoleContext#onGuiThread} because a command body runs on the shell's job thread, and a
+     * window built from there would be built while the frame loop was drawing one. Headless there is nothing to
+     * open onto, and saying so beats doing nothing quietly.
+     */
+    private Value open(Args args, ConsoleContext console) {
+        if (console.host().isEmpty()) {
+            throw args.fail("E833", "there is no window system here to open the calculator in")
+                    .hint("this console is running without an application behind it")
+                    .hint("calc \"2^10\" works out an expression without opening anything")
+                    .build();
+        }
+        console.onGuiThread(() -> launch(console));
+        args.session().out().note("opening the calculator");
+        return Value.Nothing.INSTANCE;
     }
 
     /**

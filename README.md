@@ -177,8 +177,8 @@ mvn compile exec:exec "-Dapp.mainClass=dev.vexelray.demo.calculator.CalculatorDe
 ```
 
 That boots [MainFrame](../mainframe) as the main window, with the calculator plugged into it as an
-app. `apps` lists what is on the desk and `launch "calculator"` opens the keypad — which then opens
-its own history and plot windows, so the window list is a tree rather than a list.
+app. `apps` lists what is on the desk and **`calc` opens the keypad** — which then opens its own
+history and plot windows, so the window list is a tree rather than a list.
 
 ```
 ~ > apps
@@ -186,17 +186,22 @@ name        launchable  summary
 profiles    false       named sets of environment variables and binary directories
 calculator  true        a keypad, a tape, and a plotter for anything with a variable in it
 
-~ > launch "calculator"
+~ > calc                       # the keypad
 ~ > calc "2^10"
 1024
 ~ > calc "1÷(x^2−1)"
 1÷(-1+x^2)
 ```
 
-`calc` runs the same three lines of COTT the `=` key does, and answers with a value rather than
-opening anything — so a calculator in a shell is one the rest of the language can work on:
-`calc "2^10" | save ./answer.txt`. A syntax error comes back as COTT's own message, as a shell error
-with a hint.
+**`calc` is both doors.** Given an expression it runs the same three lines of COTT the `=` key does
+and answers with a *value*, so a calculator in a shell is one the rest of the language can work on:
+`calc "2^10" | save ./answer.txt`. Given nothing it opens the keypad — the same bargain `python`
+makes, and it costs nothing, because bare `calc` previously only ever meant "you forgot the
+expression". A syntax error comes back as COTT's own message, as a shell error with a hint.
+
+`calculator` and `launch "calculator"` open it too. MainFrame names a command after every launchable
+app, so typing a program's name runs it; `launch` is the explicit form for scripts, where a name that
+came out of a variable has to be quoted anyway.
 
 Add `"-Dapp.args=--launch" "-Dapp.args2=calculator"` to come up with the keypad already open.
 
