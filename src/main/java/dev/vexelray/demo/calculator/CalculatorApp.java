@@ -127,8 +127,9 @@ public final class CalculatorApp {
             return;
         }
 
-        // The demo, in one command: open windowed, plot this expression, and show it marched. Everything it
-        // does is reachable by hand -- press =, then March -- and doing it from a flag only saves the typing.
+        // A shortcut and nothing more: open windowed with this expression already plotted, which is what typing
+        // it and pressing = does. A two-variable expression is marched either way -- that is the ordinary
+        // behaviour of the plot now, not something this flag turns on.
         String march = args.length >= 1 && args[0].startsWith("--march")
                 ? entryOf(args[0], "1÷(x^2+y^2)") : null;
 
@@ -286,7 +287,9 @@ public final class CalculatorApp {
                 System.out.println("nothing to march: " + plottable.refusal());
                 return;
             }
-            previews.showMarched(entry, term, plottable);
+            // The ordinary path, deliberately: this is exactly what pressing = does, so a launch through the
+            // flag is evidence about the thing everyone else will use rather than about a private shortcut.
+            previews.show(entry, term, plottable);
         } catch (RuntimeException e) {
             System.out.println("nothing to march: " + e.getMessage());
         }

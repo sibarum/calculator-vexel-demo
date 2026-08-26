@@ -36,7 +36,7 @@ import java.util.List;
  * own gradient, which {@code Normalize} documents as a local correction rather than a proof. Nothing here
  * claims otherwise, and nothing here is drawn inside an outline yet.
  */
-record SdfSurface(Surface surface, Volume volume, String refusal) {
+record SdfSurface(Surface surface, Volume volume, String xName, String yName, String refusal) {
 
     /** Half the width and depth of the world box the volume's floor is mapped onto. */
     private static final double HALF = 2.0;
@@ -59,17 +59,32 @@ record SdfSurface(Surface surface, Volume volume, String refusal) {
      *                  expression that does not mention it.
      */
     static SdfSurface of(Expr expr, List<String> variables) {
+        return of(expr, variables, null);
+    }
+
+    /**
+     * As {@link #of(Expr, List)}, over a volume chosen by the caller rather than by the framing pass.
+     *
+     * <p>This is what makes the marched view zoomable at all. A marched extent is not a viewport the picture is
+     * drawn through — the volume is compiled <em>into</em> the field, since it is what maps the plot onto the
+     * fixed world box — so widening the window means lowering a new field and building a new pipeline. Passing
+     * the volume in is what lets the controls ask for that instead of being told the framing belongs to some
+     * other view.
+     *
+     * @param over the volume to compile for, or null to run the framing pass
+     */
+    static SdfSurface of(Expr expr, List<String> variables, Volume over) {
         if (variables.isEmpty() || variables.size() > 2) {
             return refused(variables.size() + " variables; a surface takes one or two");
         }
         String xName = variables.get(0);
         String yName = variables.size() == 2 ? variables.get(1) : spare(xName);
-        Volume volume = Framing.automatic(expr, xName, yName);
+        Volume volume = over != null ? over : Framing.automatic(expr, xName, yName);
         if (!(volume.zHeight() > 0)) {
             return refused("nothing to frame");
         }
         try {
-            return new SdfSurface(clipped(implicit(expr, volume, xName, yName)), volume, null);
+            return new SdfSurface(clipped(implicit(expr, volume, xName, yName)), volume, xName, yName, null);
         } catch (Unlowerable e) {
             return refused(e.getMessage());
         }
@@ -107,7 +122,7 @@ record SdfSurface(Surface surface, Volume volume, String refusal) {
     }
 
     private static SdfSurface refused(String why) {
-        return new SdfSurface(null, null, why);
+        return new SdfSurface(null, null, null, null, why);
     }
 
     /**

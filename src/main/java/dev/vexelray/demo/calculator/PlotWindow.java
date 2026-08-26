@@ -138,7 +138,10 @@ final class PlotWindow {
         gui.bus().subscribe(InputTopics.INPUT, event -> {
             if (event instanceof InputEvent.Scrolled s && s.yOffset() != 0) {
                 if (marching) {
-                    return;              // the wheel zooms a framing, and a marched one is not this view's
+                    // No "about the pointer" here: a marched zoom recompiles, so it moves in whole notches
+                    // rather than continuously, and there is nothing to keep under the cursor between them.
+                    marched.zoom(s.yOffset() > 0 ? 1 : -1);
+                    return;
                 }
                 if (showingSurface) {
                     surface.wheel(s.yOffset(), s.x(), s.y());
@@ -170,7 +173,7 @@ final class PlotWindow {
      * @param typed the term as it was written, which only a curve uses — see {@link Influence}
      */
     void show(GuiApp app, String entry, Term typed, Plottable plottable) {
-        mount(entry, plottable);
+        mount(entry, plottable, true);
         if (plottable.isSurface()) {
             surface.show(plottable);
             // Compiled up front rather than when the button is pressed: it is a worker's work either way, and
@@ -198,17 +201,24 @@ final class PlotWindow {
         open.show();
     }
 
-    /** Show the renderer this expression needs, hide the others, and title the window after what is in it. */
-    private void mount(String entry, Plottable plottable) {
+    /**
+     * Show the renderer this expression needs, hide the others, and title the window after what is in it.
+     *
+     * @param canMarch whether the marched view is available. False for the headless captures, which have no
+     *                 {@link GuiApp} to mint a render target from and so cannot march at all — the box surface
+     *                 is not a fallback there, it is the only thing that can be photographed without a window.
+     */
+    private void mount(String entry, Plottable plottable, boolean canMarch) {
         boolean asSurface = plottable.isSurface();
         heading.text((asSurface ? "z = " : "y = ") + entry);
         titleBar.title(entry);
         showingSurface = asSurface;
-        // A new expression always arrives in the box view. The marched one is a thing you ask for, and asking
-        // once should not silently change how everything evaluated afterwards is drawn.
-        marching = false;
-        toggle.text("March");
-        toggle.visible(asSurface);
+        // A surface arrives marched. It is the better picture of one -- smooth, turnable without rebuilding
+        // anything, and shaded from the expression's own normals -- so it is what pressing = should give you,
+        // and the boxes are the thing to ask for when you want the arithmetic's own evidence instead.
+        marching = asSurface && canMarch;
+        toggle.text(marching ? "Boxes" : "March");
+        toggle.visible(asSurface && canMarch);
         apply();
     }
 
@@ -248,12 +258,6 @@ final class PlotWindow {
         apply();
     }
 
-    /** Show the marched view without a press, for {@code --march}. No-op unless the expression is a surface. */
-    void march() {
-        if (showingSurface && !marching) {
-            flip();
-        }
-    }
 
     /**
      * Plot into the tree without opening a window, for the headless captures. The window is the only part of
@@ -261,7 +265,7 @@ final class PlotWindow {
      * photographed headlessly like any other tree in this application.
      */
     void headless(String entry, Term typed, Plottable plottable) {
-        mount(entry, plottable);
+        mount(entry, plottable, false);
         status.text("");
         if (plottable.isSurface()) {
             surface.showNow(plottable);
@@ -347,39 +351,25 @@ final class PlotWindow {
         }
     }
 
-    /**
-     * {@code Fit} and the zoom steps are the box view's, and the marched view says so rather than pretending.
-     *
-     * <p>Not an oversight. A marched surface's extent is not a viewport it is drawn through — it is compiled
-     * <em>into</em> the field, because {@link SdfSurface} maps the framed volume onto a fixed world box so one
-     * camera frames every expression. Re-fitting it therefore means lowering a new field and building a new
-     * pipeline, which is a shader compile per notch of the zoom. That is a real feature and not this one; until
-     * it exists, the honest thing is to leave the framing to the view that owns it.
-     */
-    private boolean boxViewOnly() {
-        if (!marching) {
-            return false;
-        }
-        status.text("framing is the box view's -- a marched extent is compiled into the field");
-        return true;
-    }
-
     private void fit() {
-        if (boxViewOnly()) {
-            return;
-        }
-        if (showingSurface) {
+        if (marching) {
+            marched.fitVertically();
+        } else if (showingSurface) {
             surface.fitVertically();
         } else {
             curve.fitVertically();
         }
     }
 
+    /**
+     * A zoom notch. It costs the marched view a recompile where it costs the other two a repaint, because a
+     * marched extent is compiled <em>into</em> the field rather than being a viewport the picture is drawn
+     * through. Same notch, same direction, same key — the difference is in what it costs, not in what it means.
+     */
     private void step(int notches) {
-        if (boxViewOnly()) {
-            return;
-        }
-        if (showingSurface) {
+        if (marching) {
+            marched.zoom(notches);
+        } else if (showingSurface) {
             surface.zoom(notches);
             surface.invalidate();
         } else {

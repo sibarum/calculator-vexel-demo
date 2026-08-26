@@ -66,12 +66,6 @@ final class Previews {
         claim().show(app, entry, typed, plottable);
     }
 
-    /** As {@link #show}, but showing the marched surface rather than the box one — what {@code --march} opens. */
-    void showMarched(String entry, Term typed, Plottable plottable) {
-        PlotWindow preview = claim();
-        preview.show(app, entry, typed, plottable);
-        preview.march();
-    }
 
     /**
      * Give every live preview a chance to march a frame. Called once per frame from the loop's

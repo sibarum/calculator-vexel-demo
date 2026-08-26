@@ -7,6 +7,8 @@ import dev.vexelray.gui.core.input.DragEvent;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.layout.Rect;
 import dev.vexelray.gui.plot.Camera;
+import dev.vexelray.gui.plot.Framing;
+import dev.vexelray.gui.plot.Volume;
 import dev.vexelray.shader.ComposedShader;
 import dev.vexelray.shader.Shadings;
 import dev.vexelray.technique.sdf.SdfComposer;
@@ -15,6 +17,7 @@ import dev.vexelray.vulkan.present.GraphicsPipeline;
 import dev.vexelray.vulkan.present.SampledColorTarget;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
@@ -65,6 +68,9 @@ final class SdfViewport {
     /** The camera push-constant block: {@code camX, camY, camZ, yaw, pitch, aspect}. */
     private static final int PUSH_BYTES = SdfComposer.CAMERA_BYTES;
 
+    /** One notch of zoom, matching the other two views: a root of two, so two notches are a doubling. */
+    private static final double SCALE_STEP = Math.sqrt(2);
+
     /** Re-mint the target once the box exceeds it by this much, in either direction. */
     private static final float GROWTH = 1.35f;
 
@@ -88,14 +94,27 @@ final class SdfViewport {
     private volatile boolean frameDirty;
     /** Whether this is the renderer currently mounted. A {@link Node} handle is write-only and cannot be asked. */
     private volatile boolean mounted;
+    /** Latest-wins guard over {@link #show}, so a wheel gesture composes once rather than a dozen times. */
+    private final AtomicInteger revision = new AtomicInteger();
+
     /** Whether the first marched frame has been reported. See {@link #pump()}. */
     private boolean announced;
 
     private Camera camera = Camera.DEFAULT;
     /** What the surface is coloured by, and what the next compose will bake in. */
     private volatile MarchStyle style = MarchStyle.LIT;
-    /** The expression on show, kept so a change of style can recompile without being handed it again. */
+    /** The expression on show, kept so a change of style or of framing can recompile without being handed it. */
     private volatile Plottable plottable;
+    /**
+     * The volume the field on show was compiled for, or null to ask the framing pass for one.
+     *
+     * <p>Held here rather than derived each time because the controls move it: zooming scales its floor and
+     * fitting re-runs its height, and each of those has to start from where the last one left off.
+     */
+    private volatile Volume volume;
+    /** The two axis names the volume is bound to, as {@link SdfSurface} chose them. */
+    private volatile String axisX = "x";
+    private volatile String axisY = "y";
 
     SdfViewport(Gui gui, Consumer<String> status) {
         this.gui = gui;
@@ -143,7 +162,16 @@ final class SdfViewport {
      * thread that presents.
      */
     void show(Plottable plottable) {
-        gui.async(() -> showNow(plottable));
+        // The latest request wins and earlier ones drop their work, the way PlotSurface.invalidate does. It
+        // matters more here: a wheel gesture asks for a dozen zooms in a second and each one is a lowering, a
+        // symbolic gradient and a SPIR-V module. Without this they would all be built and all but one thrown
+        // away, and the last picture would arrive well after the gesture stopped.
+        int mine = revision.incrementAndGet();
+        gui.async(() -> {
+            if (revision.get() == mine) {
+                showNow(plottable);
+            }
+        });
     }
 
     /**
@@ -169,12 +197,13 @@ final class SdfViewport {
 
     /** {@link #show} without the worker. */
     void showNow(Plottable plottable) {
-        // A recolour comes back through here with the expression it already had. Recognising that is what
-        // keeps a change of style from also throwing away the orientation someone turned the surface to --
-        // recolouring is not a new picture, it is the same one in different paint.
+        // A recolour or a zoom comes back through here with the expression it already had. Recognising that is
+        // what keeps either from also throwing away the orientation someone turned the surface to -- neither is
+        // a new picture, they are the same one repainted or rewidened.
         boolean sameExpression = plottable.equals(this.plottable);
         this.plottable = plottable;
-        SdfSurface built = SdfSurface.of(plottable.expr(), plottable.variables());
+        SdfSurface built = SdfSurface.of(plottable.expr(), plottable.variables(),
+                sameExpression ? volume : null);
         if (!built.ok()) {
             vertexSpirv = null;
             fragmentSpirv = null;
@@ -184,6 +213,12 @@ final class SdfViewport {
         // Style outermost, then the grid, then the light: the style says what colour the surface is, the grid
         // darkens that where a line falls, and the light shades the result. Each one only replaces the albedo
         // on the point it hands down, so none of the three knows the others exist.
+        // What was actually compiled for, which a zoom or a fit starts from next time. On the first show that
+        // is the framing pass's answer rather than anything this class chose.
+        volume = built.volume();
+        axisX = built.xName();
+        axisY = built.yName();
+
         SdfScene scene = SdfScene.of(built.surface())
                 .withAlbedo(new SdfScene.Rgb(0.78, 0.80, 0.86))
                 .withShading(style.shading(built.volume()));
@@ -202,6 +237,34 @@ final class SdfViewport {
         frameDirty = true;
     }
 
+    /**
+     * Widen or narrow the domain, by the same root-of-two notch the other two views use.
+     *
+     * <p>Unlike turning, this <b>is</b> a recompile: the volume is what maps the plot onto the fixed world box,
+     * so it is compiled into the field rather than read by the camera. It goes on a worker like every other
+     * compose, so a notch costs a moment rather than a frame.
+     */
+    void zoom(int notches) {
+        Volume from = volume;
+        Plottable current = plottable;
+        if (from == null || current == null) {
+            return;
+        }
+        volume = from.scaledFloor(Math.pow(SCALE_STEP, -notches));
+        show(current);
+    }
+
+    /** Re-fit the height to what the expression does across the floor now on show — "Fit", for a march. */
+    void fitVertically() {
+        Volume from = volume;
+        Plottable current = plottable;
+        if (from == null || current == null) {
+            return;
+        }
+        volume = Framing.refit(current.expr(), from, axisX, axisY);
+        show(current);
+    }
+
     /** Turn the picture. Costs six floats next frame, and recompiles nothing. */
     synchronized void turn(double dYaw, double dPitch) {
         camera = camera.turned(dYaw, dPitch);
@@ -212,9 +275,17 @@ final class SdfViewport {
         turn(yawSteps * KEY_TURN, pitchSteps * KEY_TURN);
     }
 
-    synchronized void home() {
-        camera = Camera.DEFAULT;
-        frameDirty = true;
+    /** Back to where the framing pass put it, pointed the way it started — "Reset", for both halves at once. */
+    void home() {
+        synchronized (this) {
+            camera = Camera.DEFAULT;
+            frameDirty = true;
+        }
+        Plottable current = plottable;
+        if (current != null) {
+            volume = null;               // null asks SdfSurface to run the framing pass again
+            show(current);
+        }
     }
 
     private void drag(DragEvent e) {
