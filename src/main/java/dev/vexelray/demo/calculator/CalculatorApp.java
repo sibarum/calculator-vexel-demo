@@ -42,7 +42,8 @@ import sibarum.tactroller.clipboard.ClipboardException;
  * threads and mutate the display through its handle.
  *
  * <p>Run: {@code CalculatorApp} (windowed), {@code CalculatorApp --capture [out.png]} (headless), or
- * {@code CalculatorApp --capture-plot[=EXPRESSION]} (the plot, headless, with its cache counts).
+ * {@code CalculatorApp --capture-plot[=EXPRESSION]} (the plot, headless, with its cache counts), or
+ * {@code CalculatorApp --capture-sdf[=EXPRESSION]} (the same expression compiled to a ray-marched shader).
  * Needs {@code --enable-native-access=ALL-UNNAMED}.
  */
 public final class CalculatorApp {
@@ -105,6 +106,13 @@ public final class CalculatorApp {
             // A saddle: the one picture that shows at a glance whether the projection and the painting order
             // are both right, since it rises on one axis exactly as it falls on the other.
             capturePlot(entryOf(args[0], "x^2−y^2"), "surface.png", "surface-turned.png");
+            return;
+        }
+
+        if (args.length >= 1 && args[0].startsWith("--capture-sdf")) {
+            // A pole ridge: the case that says whether the gradient normalisation is doing its job, since an
+            // un-normalised implicit loses the surface exactly where the height runs away.
+            captureSdf(entryOf(args[0], "1÷(x^2+y^2)"), "sdf.png");
             return;
         }
 
@@ -238,6 +246,37 @@ public final class CalculatorApp {
         }
         plot.gui().close();
         System.out.println("captured " + entry);
+    }
+
+    /**
+     * The same expression the plot would draw, drawn instead by a shader compiled from it.
+     *
+     * <p>{@code mvn compile exec:exec "-Dapp.args=--capture-sdf"} writes {@code sdf.png}; append
+     * {@code =EXPRESSION} to choose one, in ASCII, for the same console-codepage reason the other captures
+     * carry. Everything up to {@link Plottable} is shared with {@code --capture-plot} — the same parse, the
+     * same refusals, the same one-or-two-variable rule — so an expression that will not plot will not march
+     * either, and says so in the same words.
+     */
+    private static void captureSdf(String entry, String path) throws Exception {
+        Term term = Parser.parse(Notation.normalize(entry));
+        List<String> variables = Plottable.variablesIn(term);
+        if (variables.isEmpty() || variables.size() > 2) {
+            System.out.println("nothing to march: " + variables.size() + " variables in " + entry);
+            return;
+        }
+        Plottable plottable = Plottable.read(term, variables);
+        if (!plottable.ok()) {
+            System.out.println("nothing to march: " + plottable.refusal());
+            return;
+        }
+        SdfSurface surface = SdfSurface.of(plottable.expr(), variables);
+        if (!surface.ok()) {
+            System.out.println("nothing to march: " + surface.refusal());
+            return;
+        }
+        System.out.println("marching " + entry);
+        SdfPreview.capture(surface, path);
+        System.out.println("captured " + new java.io.File(path).getAbsolutePath());
     }
 
     /** The expression a {@code --capture-*} flag names, or the default that flag stands for. */

@@ -45,6 +45,14 @@
             <artifactId>vexelray-gui-plot</artifactId>
             <version>${vexelray-gui.version}</version>
         </dependency>
+        <!-- The other way to draw an expression: compile it to a true SDF and ray-march it. Brings
+             vexelray-surface (the Surface tree, the symbolic gradient, the Lipschitz normalisation) and
+             vexelray-ir in behind it. Only the sdf capture uses this; the plot windows do not. -->
+        <dependency>
+            <groupId>dev.vexelray</groupId>
+            <artifactId>vexelray-technique-sdf</artifactId>
+            <version>${vexelray.version}</version>
+        </dependency>
         <!-- The mathematics: COTT as a direct evaluator. Pure Java, no subprocess, no natives. -->
         <dependency>
             <groupId>sibarum.cott</groupId>
