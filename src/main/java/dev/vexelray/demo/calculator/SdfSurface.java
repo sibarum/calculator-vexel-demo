@@ -5,6 +5,7 @@ import dev.vexelray.gui.plot.Expr;
 import dev.vexelray.gui.plot.Framing;
 import dev.vexelray.gui.plot.Volume;
 import dev.vexelray.ir.Ir;
+import dev.vexelray.shader.Shading;
 import dev.vexelray.surface.Surface;
 
 import java.math.BigDecimal;
@@ -36,7 +37,7 @@ import java.util.List;
  * own gradient, which {@code Normalize} documents as a local correction rather than a proof. Nothing here
  * claims otherwise, and nothing here is drawn inside an outline yet.
  */
-record SdfSurface(Surface surface, Volume volume, String xName, String yName, String refusal) {
+record SdfSurface(Surface surface, Volume volume, Expr plotExpr, String xName, String yName, String refusal) {
 
     /** Half the width and depth of the world box the volume's floor is mapped onto. */
     private static final double HALF = 2.0;
@@ -46,6 +47,34 @@ record SdfSurface(Surface surface, Volume volume, String xName, String yName, St
 
     /** The largest integer exponent expanded into repeated multiplication rather than handed to {@code pow}. */
     private static final int MAX_UNROLL = 16;
+
+    /**
+     * How far past the box's own ceiling a height is allowed to reach before it is clamped.
+     *
+     * <p><b>Nothing infinite may enter the field.</b> A pole sends the height to something enormous, and an
+     * enormous value is fine — it is outside the box and the intersection clips it away, which is the honest
+     * picture of a pole. An <em>infinite</em> one is not fine: infinity minus infinity is NaN, and one NaN
+     * anywhere poisons the field, then the gradient that normalises it, then the finite-difference normal that
+     * shades it. So the height is clamped well outside anything visible, where the clamp changes no picture and
+     * the arithmetic downstream stays finite. Honest up to machine precision, and no further.
+     */
+    private static final double HEIGHT_CLAMP = HALF_Z * 4;
+
+    /**
+     * The smallest base any fractional power is raised from — strictly positive, and that is the whole point.
+     *
+     * <p>Clamping the base at <em>zero</em> is not enough, and the reason is a good illustration of why a field
+     * has to be finite in its derivative and not only in its value. {@code pow(u, ½)} at {@code u = 0} is a
+     * perfectly good 0; its derivative is {@code ½·u^(-½)}, which is <b>infinite</b> there. The compiler
+     * normalises an implicit by its own symbolic gradient, so an infinite derivative divides the field by
+     * infinity and hands the marcher a distance of zero everywhere — which it reads as "already touching the
+     * surface" and reports a hit for almost every ray. The speckle comes back, from the gradient rather than
+     * from the value.
+     *
+     * <p>A strictly positive floor bounds the derivative at {@code floor^(e-1)} and costs nothing visible:
+     * {@code (1e-4)^½} is a hundredth of a unit, far below a pixel at any framing this draws.
+     */
+    private static final double DOMAIN_FLOOR = 1e-4;
 
     boolean ok() {
         return surface != null;
@@ -84,7 +113,8 @@ record SdfSurface(Surface surface, Volume volume, String xName, String yName, St
             return refused("nothing to frame");
         }
         try {
-            return new SdfSurface(clipped(implicit(expr, volume, xName, yName)), volume, xName, yName, null);
+            return new SdfSurface(clipped(implicit(expr, volume, xName, yName)),
+                    volume, expr, xName, yName, null);
         } catch (Unlowerable e) {
             return refused(e.getMessage());
         }
@@ -122,7 +152,42 @@ record SdfSurface(Surface surface, Volume volume, String xName, String yName, St
     }
 
     private static SdfSurface refused(String why) {
-        return new SdfSurface(null, null, null, null, why);
+        return new SdfSurface(null, null, null, null, null, why);
+    }
+
+    /**
+     * The whole shading chain for this surface at {@code style} — the one place it is assembled.
+     *
+     * <p>The undefined paint goes <b>outside</b> everything else, because it must not be lit. A style replaces
+     * the albedo and the light shades it; a region where the expression has no value is not a surface being
+     * lit, it is a place where there is no surface to light, and shading it would make it read as geometry.
+     */
+    Shading shading(MarchStyle style) {
+        return Undefined.over(style.shading(volume), this);
+    }
+
+    /**
+     * Where this expression has a real value, as a signed expression of a <em>world</em> position: non-negative
+     * where defined, negative where not. Null when the expression is defined everywhere.
+     *
+     * <p>Built through the same {@link #lower} the geometry went through, from the same volume and the same
+     * axis names, so the painted region and the clamped one are the same region by construction rather than by
+     * two predicates being written to agree.
+     */
+    dev.supirvast.vastir.core.Expr domainAt(dev.supirvast.vastir.core.Expr worldPoint) {
+        Lowering ctx = new Lowering(new Axes(
+                xName, plotX(volume, Ir.x(worldPoint)),
+                yName, plotY(volume, Ir.z(worldPoint))));
+        lower(plotExpr, ctx);
+        if (ctx.guards.isEmpty()) {
+            return null;
+        }
+        dev.supirvast.vastir.core.Expr worst = ctx.guards.get(0);
+        for (int i = 1; i < ctx.guards.size(); i++) {
+            // Defined only where every guard is, so the tightest one decides -- a min, not a sum.
+            worst = Ir.min(worst, ctx.guards.get(i));
+        }
+        return worst;
     }
 
     /**
@@ -137,15 +202,20 @@ record SdfSurface(Surface surface, Volume volume, String xName, String yName, St
      */
     private static dev.supirvast.vastir.core.Expr implicit(Expr expr, Volume volume, String xName, String yName) {
         // World point back to plot coordinates: the volume's floor covers [-HALF, HALF] in x and z.
-        dev.supirvast.vastir.core.Expr height = lower(expr, new Axes(
+        Lowering ctx = new Lowering(new Axes(
                 xName, plotX(volume, Ir.x(Ir.POINT)),
                 yName, plotY(volume, Ir.z(Ir.POINT))));
+        dev.supirvast.vastir.core.Expr height = lower(expr, ctx);
 
         // Plot height to world height: the same mapping, run the other way.
         double zMid = (volume.zLo() + volume.zHi()) / 2;
         double zHalf = volume.zHeight() / 2;
         dev.supirvast.vastir.core.Expr worldHeight =
                 Ir.mul(Ir.sub(height, Ir.f(zMid)), Ir.f(HALF_Z / zHalf));
+
+        // Clamped far outside the box, where it changes no picture -- see HEIGHT_CLAMP on why an infinity is a
+        // different thing from a very large number here.
+        worldHeight = Ir.clamp(worldHeight, Ir.f(-HEIGHT_CLAMP), Ir.f(HEIGHT_CLAMP));
 
         return Ir.sub(Ir.y(Ir.POINT), worldHeight);
     }
@@ -213,20 +283,20 @@ record SdfSurface(Surface surface, Volume volume, String xName, String yName, St
      * clamps every step to {@code maxStep} and gives up at {@code farPlane}. So a pole costs a ray its whole
      * step budget and comes back as sky, rather than as anything untrue.
      */
-    private static dev.supirvast.vastir.core.Expr lower(Expr e, Axes axes) {
+    private static dev.supirvast.vastir.core.Expr lower(Expr e, Lowering ctx) {
         return switch (e) {
             case Expr.Const c -> Ir.f(c.value().doubleValue());
-            case Expr.Param p -> axes.of(p.name());
-            case Expr.Add a -> Ir.add(lower(a.left(), axes), lower(a.right(), axes));
-            case Expr.Sub s -> Ir.sub(lower(s.left(), axes), lower(s.right(), axes));
-            case Expr.Mul m -> Ir.mul(lower(m.left(), axes), lower(m.right(), axes));
-            case Expr.Div d -> Ir.div(lower(d.left(), axes), lower(d.right(), axes));
-            case Expr.Power p -> power(p, axes);
-            case Expr.Sin s -> Ir.call(MathFn.SIN, Ir.F32, lower(s.arg(), axes));
-            case Expr.Cos c -> Ir.call(MathFn.COS, Ir.F32, lower(c.arg(), axes));
-            case Expr.Tan t -> Ir.call(MathFn.TAN, Ir.F32, lower(t.arg(), axes));
-            case Expr.Exp x -> Ir.call(MathFn.EXP, Ir.F32, lower(x.arg(), axes));
-            case Expr.Log l -> Ir.call(MathFn.LOG, Ir.F32, lower(l.arg(), axes));
+            case Expr.Param p -> ctx.axes.of(p.name());
+            case Expr.Add a -> Ir.add(lower(a.left(), ctx), lower(a.right(), ctx));
+            case Expr.Sub s -> Ir.sub(lower(s.left(), ctx), lower(s.right(), ctx));
+            case Expr.Mul m -> Ir.mul(lower(m.left(), ctx), lower(m.right(), ctx));
+            case Expr.Div d -> Ir.div(lower(d.left(), ctx), lower(d.right(), ctx));
+            case Expr.Power p -> power(p, ctx);
+            case Expr.Sin s -> Ir.call(MathFn.SIN, Ir.F32, lower(s.arg(), ctx));
+            case Expr.Cos c -> Ir.call(MathFn.COS, Ir.F32, lower(c.arg(), ctx));
+            case Expr.Tan t -> Ir.call(MathFn.TAN, Ir.F32, lower(t.arg(), ctx));
+            case Expr.Exp x -> Ir.call(MathFn.EXP, Ir.F32, lower(x.arg(), ctx));
+            case Expr.Log l -> Ir.call(MathFn.LOG, Ir.F32, lower(l.arg(), ctx));
             default -> throw new Unlowerable("no shader form for " + e.getClass().getSimpleName());
         };
     }
@@ -239,10 +309,10 @@ record SdfSurface(Surface surface, Volume volume, String xName, String yName, St
      * multiplication has no such hole, and it differentiates through the product rule the compiler already has
      * rather than through {@code POW}'s logarithm, which carries the same restriction into the gradient.
      */
-    private static dev.supirvast.vastir.core.Expr power(Expr.Power p, Axes axes) {
+    private static dev.supirvast.vastir.core.Expr power(Expr.Power p, Lowering ctx) {
         BigDecimal exponent = p.exponent().constant()
                 .orElseThrow(() -> new Unlowerable("a varying exponent"));
-        dev.supirvast.vastir.core.Expr base = lower(p.base(), axes);
+        dev.supirvast.vastir.core.Expr base = lower(p.base(), ctx);
         BigDecimal whole = exponent.stripTrailingZeros();
         if (whole.scale() <= 0 && whole.abs().compareTo(BigDecimal.valueOf(MAX_UNROLL)) <= 0) {
             int n = whole.intValueExact();
@@ -255,7 +325,34 @@ record SdfSurface(Surface surface, Volume volume, String xName, String yName, St
             }
             return n > 0 ? product : Ir.div(Ir.f(1.0), product);
         }
-        return Ir.call(MathFn.POW, Ir.F32, base, Ir.f(exponent.doubleValue()));
+
+        // A fractional exponent is a root, and a root of a negative number is not a real value. This is the
+        // case the integer unroll above cannot cover -- there is no repeated multiplication that means x^0.5 --
+        // so it is the one place the shader's own pow is reached, and pow of a negative base is NaN.
+        //
+        // Two things happen here rather than one. The base is <b>clamped</b>, so the arithmetic stays finite
+        // and no NaN is ever created; and the unclamped base is recorded as a <b>guard</b>, so the shading can
+        // paint the region where the clamp was doing something. Clamping alone would be dishonest -- it draws
+        // a flat plateau of zeroes exactly where the expression has no value, and a plateau is a claim.
+        ctx.guards.add(base);
+        dev.supirvast.vastir.core.Expr safe = Ir.max(base, Ir.f(DOMAIN_FLOOR));
+        return Ir.call(MathFn.POW, Ir.F32, safe, Ir.f(exponent.doubleValue()));
+    }
+
+    /**
+     * What a single lowering pass carries: where the axes are, and what it learned about the domain on the way.
+     *
+     * <p>The guards are collected rather than returned because they are found deep inside the tree and belong
+     * to the whole expression. Each one is an expression that is non-negative exactly where that node had a
+     * real value to give.
+     */
+    private static final class Lowering {
+        final Axes axes;
+        final java.util.List<dev.supirvast.vastir.core.Expr> guards = new java.util.ArrayList<>();
+
+        Lowering(Axes axes) {
+            this.axes = axes;
+        }
     }
 
     /** Thrown while lowering, caught by {@link #of}, and reported as a refusal rather than a crash. */

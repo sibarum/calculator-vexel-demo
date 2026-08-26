@@ -221,7 +221,7 @@ final class SdfViewport {
 
         SdfScene scene = SdfScene.of(built.surface())
                 .withAlbedo(new SdfScene.Rgb(0.78, 0.80, 0.86))
-                .withShading(style.shading(built.volume()));
+                .withShading(built.shading(style));
         List<ComposedShader> composed = new SdfComposer().compose(scene);
         sky = scene.sky();
         vertexSpirv = composed.get(0).spirv();

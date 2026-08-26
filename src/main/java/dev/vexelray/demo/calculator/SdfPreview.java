@@ -64,7 +64,7 @@ final class SdfPreview {
     static void capture(SdfSurface surface, MarchStyle style, String path) throws IOException {
         SdfScene scene = SdfScene.of(surface.surface())
                 .withAlbedo(new SdfScene.Rgb(0.78, 0.80, 0.86))
-                .withShading(style.shading(surface.volume()));
+                .withShading(surface.shading(style));
 
         Field field = SdfComposer.field(scene);
         System.out.println("  field      lipschitz " + field.lipschitz()
