@@ -253,9 +253,25 @@ final class PlotWindow {
         if (!showingSurface) {
             return;
         }
+        // Carry the viewpoint across, so the swap is the same surface seen the same way and not a new picture
+        // of it. Without this the comparison the two views exist for is the hardest thing in the window to
+        // make: you would have to turn the second one back to where the first was, by eye, every time.
+        //
+        // The angles copy verbatim rather than being converted. Both renderers keep a plot-module Camera, and
+        // both mean the same thing by it: the box view projects along Camera.viewDirection, and the marched one
+        // orbits its eye to minus the direction the generated fragment builds from the same two angles, which
+        // in plot coordinates is that same vector term for term.
+        if (marching) {
+            surface.camera(marched.camera());
+        } else {
+            marched.camera(surface.camera());
+        }
         marching = !marching;
         toggle.text(marching ? "Boxes" : "March");
         apply();
+        if (!marching) {
+            surface.invalidate();        // the box view repaints to be turned; the marched one just marches
+        }
     }
 
 

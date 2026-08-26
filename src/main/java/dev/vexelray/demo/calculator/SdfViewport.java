@@ -271,6 +271,27 @@ final class SdfViewport {
         frameDirty = true;
     }
 
+    /** Where this picture is being looked at from, so the box view can match it when they are swapped. */
+    synchronized Camera camera() {
+        return camera;
+    }
+
+    /**
+     * Look from {@code eye} instead — how the box view hands its orientation over when they are swapped.
+     *
+     * <p>The angles transfer verbatim. The eye this class orbits to is minus the forward direction the
+     * generated fragment builds from {@code (yaw, pitch)}, which written in plot coordinates is exactly
+     * {@link Camera#viewDirection}: {@code (cos p sin y, cos p cos y, -sin p)}. The box renderer projects along
+     * that same vector, so the two agree about what a viewpoint is without either being adjusted for the other.
+     *
+     * <p>Costs nothing but a push constant — the camera was never in the shader, so arriving from somewhere
+     * else does not recompile anything.
+     */
+    synchronized void camera(Camera eye) {
+        this.camera = eye;
+        frameDirty = true;
+    }
+
     void nudge(double yawSteps, double pitchSteps) {
         turn(yawSteps * KEY_TURN, pitchSteps * KEY_TURN);
     }
@@ -370,23 +391,22 @@ final class SdfViewport {
      * The camera block for the current orientation: the eye orbited around the origin at {@link #DISTANCE},
      * pointed back at it.
      *
-     * <p>The forward direction the generated fragment builds from {@code (yaw, pitch)} is
-     * {@code (cos p sin y, -sin p, cos p cos y)} — positive pitch looks <em>down</em> — so an eye placed at
-     * minus that, times the distance, looks straight through the middle of the box whichever way it is turned.
+     * <p>The position comes from {@link Camera#eye} rather than from trigonometry written here. That is what
+     * makes swapping with the box view sound instead of merely lucky: both renderers take their viewpoint from
+     * the same vector, so equal angles are equal viewpoints by construction and there are not two derivations
+     * to drift apart. It is also checked — {@code CameraTest} pins that an eye stands opposite the direction it
+     * looks along, and that firing a ray from it arrives at the origin.
+     *
+     * <p>The only thing left to do here is the axis swap this class does everywhere: the plot's {@code z} is
+     * the world's {@code y}, and the plot's {@code y} is the world's {@code z}.
      */
     private byte[] cameraBytes(double aspect) {
-        double yaw;
-        double pitch;
+        Camera eye;
         synchronized (this) {
-            yaw = camera.yaw();
-            pitch = camera.pitch();
+            eye = camera;
         }
-        double cosPitch = Math.cos(pitch);
-        return SdfComposer.cameraBytes(
-                -DISTANCE * cosPitch * Math.sin(yaw),
-                DISTANCE * Math.sin(pitch),
-                -DISTANCE * cosPitch * Math.cos(yaw),
-                yaw, pitch, aspect);
+        double[] at = eye.eye(DISTANCE);
+        return SdfComposer.cameraBytes(at[0], at[2], at[1], eye.yaw(), eye.pitch(), aspect);
     }
 
     private String turned() {

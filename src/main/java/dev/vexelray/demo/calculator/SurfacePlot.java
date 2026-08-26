@@ -339,6 +339,23 @@ final class SurfacePlot {
         camera = camera.turned(yaw, pitch);
     }
 
+    /** Where this picture is being looked at from, so another renderer of the same surface can match it. */
+    synchronized Camera camera() {
+        return camera;
+    }
+
+    /**
+     * Look from {@code eye} instead — how the marched view hands its orientation back when they are swapped.
+     *
+     * <p>Safe to copy between the two verbatim, and that is a fact about {@link Camera} rather than a
+     * coincidence: this renderer projects through {@link Camera#viewDirection}, and the marched one places its
+     * eye at minus the direction the generated fragment builds from the same two angles. Written out in plot
+     * coordinates the two vectors are identical term for term, so equal angles really are equal viewpoints.
+     */
+    synchronized void camera(Camera eye) {
+        this.camera = eye;
+    }
+
     /** One arrow key's worth of turn. */
     void nudge(double yawSteps, double pitchSteps) {
         turn(yawSteps * KEY_TURN, pitchSteps * KEY_TURN);
