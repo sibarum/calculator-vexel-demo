@@ -43,7 +43,8 @@ import sibarum.tactroller.clipboard.ClipboardException;
  *
  * <p>Run: {@code CalculatorApp} (windowed), {@code CalculatorApp --capture [out.png]} (headless), or
  * {@code CalculatorApp --capture-plot[=EXPRESSION]} (the plot, headless, with its cache counts), or
- * {@code CalculatorApp --capture-sdf[=EXPRESSION]} (the same expression compiled to a ray-marched shader).
+ * {@code CalculatorApp --capture-sdf[=EXPRESSION]} (the same expression compiled to a ray-marched shader),
+ * or {@code CalculatorApp --march[=EXPRESSION]} (windowed, with that surface already marched in a preview).
  * Needs {@code --enable-native-access=ALL-UNNAMED}.
  */
 public final class CalculatorApp {
@@ -126,7 +127,16 @@ public final class CalculatorApp {
             return;
         }
 
-        int maxFrames = args.length > 0 ? Integer.parseInt(args[0]) : 0;
+        // The demo, in one command: open windowed, plot this expression, and show it marched. Everything it
+        // does is reachable by hand -- press =, then March -- and doing it from a flag only saves the typing.
+        String march = args.length >= 1 && args[0].startsWith("--march")
+                ? entryOf(args[0], "1÷(x^2+y^2)") : null;
+
+        // A frame cap is the first argument ordinarily and the second after --march, so a marched launch can
+        // still be run bounded -- which is the only way anything about the windowed path gets checked.
+        int maxFrames = march != null
+                ? (args.length >= 2 ? Integer.parseInt(args[1]) : 0)
+                : (args.length > 0 ? Integer.parseInt(args[0]) : 0);
         // Placement is read before the window exists, so the calculator is created where it was left rather
         // than moved there after appearing -- and clamped on the way, because the desk may have changed shape
         // since. Every window here goes through the same three lines: config it, restore its state, watch it.
@@ -158,13 +168,22 @@ public final class CalculatorApp {
             // Each preview is built the first time its slot is used, and gets the same UI zoom shortcuts every
             // other window here has -- which is the only thing the calculator has to say about a window it did
             // not know it was going to open.
-            engine.plotter(new Previews(app, memory, CalculatorApp::zoomShortcuts));
+            Previews previews = new Previews(app, memory, CalculatorApp::zoomShortcuts);
+            engine.plotter(previews);
+            if (march != null) {
+                // Safe before the loop starts: showing a preview only posts the window request, and the window
+                // is created at the top of the first frame like any other.
+                openMarched(previews, march);
+            }
             TactrollerInputBridge bridge = input == null ? null : new TactrollerInputBridge(input, gui.bus());
             try {
                 app.run(gui, maxFrames, () -> {
                     pump(bridge);
                     history.drain();
                     memory.poll();
+                    // A marched viewport does its GPU work here and nowhere else: this hook runs on the thread
+                    // that presents, and the device queue belongs to it.
+                    previews.pump();
                 });
             } finally {
                 // The debounce has no next frame to fire on once the loop is over, so the last move of the
@@ -246,6 +265,31 @@ public final class CalculatorApp {
         }
         plot.gui().close();
         System.out.println("captured " + entry);
+    }
+
+    /**
+     * Open {@code entry} in a preview, already marched — what {@code --march} does.
+     *
+     * <p>Refusals are reported and then dropped rather than aborting the launch: the calculator is opening
+     * either way, and an expression that cannot be marched is a reason to see the keypad, not to see nothing.
+     */
+    private static void openMarched(Previews previews, String entry) {
+        try {
+            Term term = Parser.parse(Notation.normalize(entry));
+            List<String> variables = Plottable.variablesIn(term);
+            if (variables.size() != 2) {
+                System.out.println("nothing to march: " + entry + " needs two variables to be a surface");
+                return;
+            }
+            Plottable plottable = Plottable.read(term, variables);
+            if (!plottable.ok()) {
+                System.out.println("nothing to march: " + plottable.refusal());
+                return;
+            }
+            previews.showMarched(entry, term, plottable);
+        } catch (RuntimeException e) {
+            System.out.println("nothing to march: " + e.getMessage());
+        }
     }
 
     /**

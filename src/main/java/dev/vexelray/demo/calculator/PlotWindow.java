@@ -59,14 +59,25 @@ final class PlotWindow {
     private final TitleBar titleBar;
     private final PlotSurface curve;
     private final SurfacePlot surface;
+    private final SdfViewport marched;
     private final Node heading;
     private final Node status;
     private final Node body;
 
     private final Node controls;
+    private final Node toggle;
     private volatile AppWindow window;
     /** Which renderer is mounted. Set before the tree is touched, and read by every control below. */
     private volatile boolean showingSurface;
+    /**
+     * Whether the surface on show is the marched one rather than the box one.
+     *
+     * <p>Only ever true while {@link #showingSurface} is: the two are the same expression drawn two ways, and
+     * the comparison is the point of offering both. A curve has no marched counterpart worth looking at — the
+     * field would be its graph extruded into a ridge, which is a worse picture of one variable than the curve
+     * already is.
+     */
+    private volatile boolean marching;
 
     PlotWindow(String key, WindowMemory memory) {
         this.key = key;
@@ -83,13 +94,16 @@ final class PlotWindow {
                 .scroll(false, false);
         this.curve = new PlotSurface(gui, status::text);
         this.surface = new SurfacePlot(gui, status::text);
+        this.marched = new SdfViewport(gui, status::text);
 
+        this.toggle = button("March", this::flip);
         this.controls = gui.row().width(Length.FILL).height(Length.rem(2f))
                 .gap(Length.dp(8)).alignItems(AlignItems.STRETCH)
                 .children(button("−", () -> step(-1)),
                           button("+", () -> step(1)),
                           button("Fit", this::fit),
                           button("Reset", this::home),
+                          toggle,
                           status);
 
         // Both renderers live in the tree from the start and one of them is hidden. A hidden child is not
@@ -97,9 +111,10 @@ final class PlotWindow {
         // swap rather than two half-height canvases, and neither renderer has to be built or torn down when
         // the next expression turns out to be the other kind.
         this.surface.node().visible(false);
+        this.marched.mounted(false);
         this.body = gui.column().width(Length.FILL).height(Length.FILL)
                 .padding(Length.dp(12)).gap(Length.dp(8))
-                .children(heading, curve.node(), surface.node(), controls);
+                .children(heading, curve.node(), surface.node(), marched.node(), controls);
 
         this.titleBar = new TitleBar(gui, WindowControls.NONE, "Plot");
         gui.root().background(Palette.BG).children(titleBar.node(), body);
@@ -117,6 +132,9 @@ final class PlotWindow {
         // Straight off the device bus: see the class note on why neither of these is a node handler.
         gui.bus().subscribe(InputTopics.INPUT, event -> {
             if (event instanceof InputEvent.Scrolled s && s.yOffset() != 0) {
+                if (marching) {
+                    return;              // the wheel zooms a framing, and a marched one is not this view's
+                }
                 if (showingSurface) {
                     surface.wheel(s.yOffset(), s.x(), s.y());
                 } else {
@@ -150,6 +168,10 @@ final class PlotWindow {
         mount(entry, plottable);
         if (plottable.isSurface()) {
             surface.show(plottable);
+            // Compiled up front rather than when the button is pressed: it is a worker's work either way, and
+            // doing it now means the swap is instant instead of pausing on a shader compile.
+            marched.attach(app);
+            marched.show(plottable);
         } else {
             curve.show(plottable, typed);
         }
@@ -171,14 +193,49 @@ final class PlotWindow {
         open.show();
     }
 
-    /** Show the renderer this expression needs, hide the other, and title the window after what is in it. */
+    /** Show the renderer this expression needs, hide the others, and title the window after what is in it. */
     private void mount(String entry, Plottable plottable) {
         boolean asSurface = plottable.isSurface();
         heading.text((asSurface ? "z = " : "y = ") + entry);
         titleBar.title(entry);
         showingSurface = asSurface;
-        curve.node().visible(!asSurface);
-        surface.node().visible(asSurface);
+        // A new expression always arrives in the box view. The marched one is a thing you ask for, and asking
+        // once should not silently change how everything evaluated afterwards is drawn.
+        marching = false;
+        toggle.text("March");
+        toggle.visible(asSurface);
+        apply();
+    }
+
+    /** Put exactly one of the three renderers on screen, matching {@link #showingSurface} and {@link #marching}. */
+    private void apply() {
+        curve.node().visible(!showingSurface);
+        surface.node().visible(showingSurface && !marching);
+        marched.mounted(showingSurface && marching);
+    }
+
+    /**
+     * Swap between the box surface and the marched one — the same expression, drawn by two entirely different
+     * routes, in the same box.
+     *
+     * <p>Which is the whole demonstration. One is a lattice of enclosures with a bilinear picture inside it,
+     * rebuilt and re-uploaded whenever the camera moves; the other is a distance field compiled to SPIR-V,
+     * where the camera is six floats of push constant and turning rebuilds nothing at all.
+     */
+    private void flip() {
+        if (!showingSurface) {
+            return;
+        }
+        marching = !marching;
+        toggle.text(marching ? "Boxes" : "March");
+        apply();
+    }
+
+    /** Show the marched view without a press, for {@code --march}. No-op unless the expression is a surface. */
+    void march() {
+        if (showingSurface && !marching) {
+            flip();
+        }
     }
 
     /**
@@ -256,8 +313,15 @@ final class PlotWindow {
         memory.watch(key, window, gui);
     }
 
+    /** March a frame if the viewport asked for one. Called from the frame loop; see {@link SdfViewport#pump}. */
+    void pump() {
+        marched.pump();
+    }
+
     private void home() {
-        if (showingSurface) {
+        if (marching) {
+            marched.home();
+        } else if (showingSurface) {
             surface.reset();
             surface.invalidate();
         } else {
@@ -266,7 +330,27 @@ final class PlotWindow {
         }
     }
 
+    /**
+     * {@code Fit} and the zoom steps are the box view's, and the marched view says so rather than pretending.
+     *
+     * <p>Not an oversight. A marched surface's extent is not a viewport it is drawn through — it is compiled
+     * <em>into</em> the field, because {@link SdfSurface} maps the framed volume onto a fixed world box so one
+     * camera frames every expression. Re-fitting it therefore means lowering a new field and building a new
+     * pipeline, which is a shader compile per notch of the zoom. That is a real feature and not this one; until
+     * it exists, the honest thing is to leave the framing to the view that owns it.
+     */
+    private boolean boxViewOnly() {
+        if (!marching) {
+            return false;
+        }
+        status.text("framing is the box view's -- a marched extent is compiled into the field");
+        return true;
+    }
+
     private void fit() {
+        if (boxViewOnly()) {
+            return;
+        }
         if (showingSurface) {
             surface.fitVertically();
         } else {
@@ -275,6 +359,9 @@ final class PlotWindow {
     }
 
     private void step(int notches) {
+        if (boxViewOnly()) {
+            return;
+        }
         if (showingSurface) {
             surface.zoom(notches);
             surface.invalidate();
@@ -284,9 +371,11 @@ final class PlotWindow {
         }
     }
 
-    /** An arrow key: a nudge along the plane for a curve, a turn of the picture for a surface. */
+    /** An arrow key: a nudge along the plane for a curve, a turn of the picture for either kind of surface. */
     private void arrow(int x, int y) {
-        if (showingSurface) {
+        if (marching) {
+            marched.nudge(x, y);
+        } else if (showingSurface) {
             surface.nudge(x, y);
         } else {
             curve.pan(x, y);

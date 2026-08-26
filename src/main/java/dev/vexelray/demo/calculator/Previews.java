@@ -66,6 +66,30 @@ final class Previews {
         claim().show(app, entry, typed, plottable);
     }
 
+    /** As {@link #show}, but showing the marched surface rather than the box one — what {@code --march} opens. */
+    void showMarched(String entry, Term typed, Plottable plottable) {
+        PlotWindow preview = claim();
+        preview.show(app, entry, typed, plottable);
+        preview.march();
+    }
+
+    /**
+     * Give every live preview a chance to march a frame. Called once per frame from the loop's
+     * {@code beforeFrame} hook, which is the thread that presents.
+     *
+     * <p>A ray-march submits to the device queue and waits, and a {@code VkQueue} is not thread-safe — so this
+     * cannot be driven from the worker a drag handler runs on without racing the presenter. Every viewport
+     * therefore only sets a flag when the camera moves, and does its GPU work here. Slots with nothing marched
+     * in them return immediately, which is every slot until someone presses <b>March</b>.
+     */
+    void pump() {
+        for (PlotWindow slot : slots) {
+            if (slot != null) {
+                slot.pump();
+            }
+        }
+    }
+
     /** The preview a new plot should go to: a free slot if there is one, else the one shown longest ago. */
     private synchronized PlotWindow claim() {
         int index = free();
