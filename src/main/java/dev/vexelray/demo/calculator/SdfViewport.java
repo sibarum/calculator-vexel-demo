@@ -92,6 +92,10 @@ final class SdfViewport {
     private boolean announced;
 
     private Camera camera = Camera.DEFAULT;
+    /** What the surface is coloured by, and what the next compose will bake in. */
+    private volatile MarchStyle style = MarchStyle.LIT;
+    /** The expression on show, kept so a change of style can recompile without being handed it again. */
+    private volatile Plottable plottable;
 
     SdfViewport(Gui gui, Consumer<String> status) {
         this.gui = gui;
@@ -142,8 +146,34 @@ final class SdfViewport {
         gui.async(() -> showNow(plottable));
     }
 
+    /**
+     * Recolour without re-deriving anything.
+     *
+     * <p>A style is part of the shader, not a uniform in it, so this recompiles — see {@link MarchStyle}. It
+     * goes back through the same worker the expression did, because the expensive half is the same half: the
+     * field is lowered and normalised again on the way. Held expressions make that cheap to <em>ask</em> for
+     * and it is still a compile, which is why it is on a button and not on the pointer.
+     */
+    void style(MarchStyle next) {
+        this.style = next;
+        Plottable current = plottable;
+        if (current != null) {
+            show(current);
+        }
+    }
+
+    /** Which style the surface is coloured by. */
+    MarchStyle style() {
+        return style;
+    }
+
     /** {@link #show} without the worker. */
     void showNow(Plottable plottable) {
+        // A recolour comes back through here with the expression it already had. Recognising that is what
+        // keeps a change of style from also throwing away the orientation someone turned the surface to --
+        // recolouring is not a new picture, it is the same one in different paint.
+        boolean sameExpression = plottable.equals(this.plottable);
+        this.plottable = plottable;
         SdfSurface built = SdfSurface.of(plottable.expr(), plottable.variables());
         if (!built.ok()) {
             vertexSpirv = null;
@@ -151,17 +181,22 @@ final class SdfViewport {
             status.accept("cannot march: " + built.refusal());
             return;
         }
+        // Style outermost, then the grid, then the light: the style says what colour the surface is, the grid
+        // darkens that where a line falls, and the light shades the result. Each one only replaces the albedo
+        // on the point it hands down, so none of the three knows the others exist.
         SdfScene scene = SdfScene.of(built.surface())
                 .withAlbedo(new SdfScene.Rgb(0.78, 0.80, 0.86))
-                .withShading(PlotGrid.over(Shadings.defaultKeyLight(), built.volume()));
+                .withShading(style.shading(built.volume()));
         List<ComposedShader> composed = new SdfComposer().compose(scene);
         sky = scene.sky();
         vertexSpirv = composed.get(0).spirv();
         fragmentSpirv = composed.get(1).spirv();
-        report = "marched, " + fragmentSpirv.length / 1024 + "kB of shader, "
-                + scene.march().steps() + " steps a pixel";
-        synchronized (this) {
-            camera = Camera.DEFAULT;
+        report = style.label().toLowerCase() + ", marched -- " + fragmentSpirv.length / 1024
+                + "kB of shader, " + scene.march().steps() + " steps a pixel";
+        if (!sameExpression) {
+            synchronized (this) {
+                camera = Camera.DEFAULT;
+            }
         }
         sceneDirty = true;
         frameDirty = true;

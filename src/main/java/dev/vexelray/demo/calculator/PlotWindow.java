@@ -66,6 +66,7 @@ final class PlotWindow {
 
     private final Node controls;
     private final Node toggle;
+    private final Node styleButton;
     private volatile AppWindow window;
     /** Which renderer is mounted. Set before the tree is touched, and read by every control below. */
     private volatile boolean showingSurface;
@@ -97,6 +98,9 @@ final class PlotWindow {
         this.marched = new SdfViewport(gui, status::text);
 
         this.toggle = button("March", this::flip);
+        // Cycles rather than opening a menu: there are three, they are all worth seeing, and the fastest way to
+        // compare them is a button you can press three times without moving the pointer.
+        this.styleButton = button(marched.style().label(), this::cycleStyle);
         this.controls = gui.row().width(Length.FILL).height(Length.rem(2f))
                 .gap(Length.dp(8)).alignItems(AlignItems.STRETCH)
                 .children(button("−", () -> step(-1)),
@@ -104,6 +108,7 @@ final class PlotWindow {
                           button("Fit", this::fit),
                           button("Reset", this::home),
                           toggle,
+                          styleButton,
                           status);
 
         // Both renderers live in the tree from the start and one of them is hidden. A hidden child is not
@@ -212,6 +217,18 @@ final class PlotWindow {
         curve.node().visible(!showingSurface);
         surface.node().visible(showingSurface && !marching);
         marched.mounted(showingSurface && marching);
+        // Only the marched view has styles, so the control appears with it rather than sitting there greyed.
+        styleButton.visible(showingSurface && marching);
+    }
+
+    /** Next render style, and recompile for it. See {@link MarchStyle} on why that is a compile and not a flag. */
+    private void cycleStyle() {
+        if (!marching) {
+            return;
+        }
+        MarchStyle next = marched.style().next();
+        styleButton.text(next.label());
+        marched.style(next);
     }
 
     /**

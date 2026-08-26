@@ -319,8 +319,16 @@ public final class CalculatorApp {
             return;
         }
         System.out.println("marching " + entry);
-        SdfPreview.capture(surface, path);
-        System.out.println("captured " + new java.io.File(path).getAbsolutePath());
+        // One photograph per render style, because a style is compiled into the shader rather than switched at
+        // runtime -- so "does Height look right" is a question about a different SPIR-V module, and a capture
+        // that only ever built one of them would not be asking it.
+        for (MarchStyle style : MarchStyle.values()) {
+            String file = style == MarchStyle.LIT ? path
+                    : path.replace(".png", "-" + style.label().toLowerCase() + ".png");
+            System.out.println("  " + style.label());
+            SdfPreview.capture(surface, style, file);
+            System.out.println("  captured " + new java.io.File(file).getAbsolutePath());
+        }
     }
 
     /** The expression a {@code --capture-*} flag names, or the default that flag stands for. */

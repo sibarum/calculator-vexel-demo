@@ -61,10 +61,10 @@ final class SdfPreview {
      * whether it had to normalise, and the module size is the one number that runs away when gradient
      * normalisation compounds through a deeply nested expression.
      */
-    static void capture(SdfSurface surface, String path) throws IOException {
+    static void capture(SdfSurface surface, MarchStyle style, String path) throws IOException {
         SdfScene scene = SdfScene.of(surface.surface())
                 .withAlbedo(new SdfScene.Rgb(0.78, 0.80, 0.86))
-                .withShading(PlotGrid.over(Shadings.defaultKeyLight(), surface.volume()));
+                .withShading(style.shading(surface.volume()));
 
         Field field = SdfComposer.field(scene);
         System.out.println("  field      lipschitz " + field.lipschitz()

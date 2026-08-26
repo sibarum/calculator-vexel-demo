@@ -152,6 +152,19 @@ record SdfSurface(Surface surface, Volume volume, String refusal) {
         return unmap(worldZ, volume.yLo(), volume.yHi(), HALF);
     }
 
+    /**
+     * Where a world point sits between the floor and the ceiling of the box, as 0 to 1.
+     *
+     * <p>The height ramp's input, and it needs no volume: the whole point of mapping every framing onto one
+     * fixed box is that the box's floor and ceiling are the same numbers for every expression, so "how high is
+     * this" is answerable without knowing what is being drawn.
+     */
+    static dev.supirvast.vastir.core.Expr heat(dev.supirvast.vastir.core.Expr worldY) {
+        return Ir.clamp(
+                Ir.div(Ir.add(worldY, Ir.f(HALF_Z)), Ir.f(2 * HALF_Z)),
+                Ir.f(0.0), Ir.f(1.0));
+    }
+
     /** A world coordinate in {@code [-half, half]}, read back as the plot coordinate it stands for. */
     private static dev.supirvast.vastir.core.Expr unmap(dev.supirvast.vastir.core.Expr world,
                                                        double lo, double hi, double half) {
