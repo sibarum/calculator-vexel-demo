@@ -5,6 +5,8 @@ import java.math.BigDecimal;
 import java.math.MathContext;
 import java.util.List;
 import java.util.TreeSet;
+import sibarum.cott.Rational;
+import sibarum.cott.Real;
 import sibarum.cott.Term;
 
 /**
@@ -17,22 +19,37 @@ import sibarum.cott.Term;
  * that do not are <b>refused by name</b> rather than approximated into something plottable — a plot of
  * {@code x + ω} that quietly dropped the ω would be a picture of a different expression.
  *
+ * <p>Every one of those refusals is this projection losing something, and {@link Place} is where the lost
+ * thing is drawn instead. The two are complementary and neither is a fallback for the other: a term with a
+ * variable in it is a <b>function</b> and wants a curve, and one without is a <b>value</b> and wants a place.
+ * What a variable and an {@code ω} in the same expression should look like is a real gap and is neither
+ * class's yet.
+ *
  * <h2>What a point is worth on the real line</h2>
  * Every numeral in COTT is {@code k} copies of {@code 0^(g + tω + r)}, so the reading is a small table:
  * <ul>
  *   <li>grade {@code 0} is 1, so {@code Pt(k, xp(0,0,0))} is {@code k} — every ordinary number;
  *   <li>grade above zero is 0, so {@code 0} itself and every multiple of it read as zero;
- *   <li>grade below zero is ω — <b>refused</b>, since infinity is not a value the plot can hold;
+ *   <li>grade below zero is ω — <b>refused</b>, since infinity is not a value a <em>line</em> can hold. It is
+ *       a place on {@link Place}'s torus, and {@code 2÷0} draws there;
  *   <li>a twist of 1 is {@code 0^ω = −1}, so it negates. Any other twist is off the real line ({@code 1/2} is
  *       {@code i}) and is <b>refused</b>, as is any torsion at all.
  * </ul>
  *
- * <h2>Two deliberate refusals worth stating</h2>
+ * <h2>Three deliberate refusals worth stating</h2>
  * <b>{@code log} is not the logarithm.</b> COTT's {@code log(x, b)} is the base-0 exponent reading — the thing
  * that makes {@code lg(0^E) = E} — and on ordinary numbers it does not reduce at all ({@code log(8, 2)} comes
  * back as itself). Mapping it onto the natural logarithm the plot module offers would draw a curve the
  * calculator does not agree with, so it is refused instead. That refusal is a real gap in what can be plotted,
  * and it is a notation question rather than a plotting one.
+ *
+ * <p><b>The inverse circular functions have a value and no curve.</b> {@link Real}'s catalogue is bigger than
+ * the plot module's set of nodes, and most of the difference is bridged by <em>building</em> one out of the
+ * others — {@code sec} is a quotient of {@link Expr.Cos}, the hyperbolics are expressions in {@link Expr.Exp},
+ * and their inverses are logarithms of something algebraic (see {@code call}). Nothing in
+ * {@code Add/Mul/Div/Power/Exp/Log/Sin/Cos/Tan} composes into {@code arcsin}, so those are refused by name.
+ * Closing that gap means new {@link Expr} nodes with sound enclosures and derivatives of their own, in the
+ * module rather than here.
  *
  * <p><b>The residue families are refused too.</b> {@code 1^a} and {@code 0^a} are the forms the whole theory
  * exists to keep, and a residue is not a number on a line. Note that they are almost never reached from here
@@ -64,6 +81,10 @@ record Plottable(List<String> variables, Expr expr, String refusal) {
 
     /** The constants that are constants: everything else opaque in a term is a variable. */
     private static final List<String> CONSTANTS = List.of("π", "e");
+
+    /** The two twists that are {@code i} and {@code −i} — the complex numbers a keypad actually produces. */
+    private static final Rational HALF_TURN = Rational.of(1, 2);
+    private static final Rational THREE_HALF_TURNS = Rational.of(3, 2);
 
     /** Whether there is something to plot. */
     boolean ok() {
@@ -131,6 +152,7 @@ record Plottable(List<String> variables, Expr expr, String refusal) {
             case Term.Approx a -> collect(a.of(), into);
             case Term.Lg l -> collect(l.of(), into);
             case Term.Logb l -> { collect(l.base(), into); collect(l.of(), into); }
+            case Term.Call c -> c.args().forEach(arg -> collect(arg, into));
         }
     }
 
@@ -151,12 +173,85 @@ record Plottable(List<String> variables, Expr expr, String refusal) {
             case Term.Approx a -> throw new Unreadable("an approximation has no curve to draw");
             case Term.Lg l -> throw new Unreadable(LOG_REFUSAL);
             case Term.Logb l -> throw new Unreadable(LOG_REFUSAL);
+            case Term.Call c -> call(c, variables);
             case Term.Xp x -> throw new Unreadable("an exponent is not a value, so there is nothing to plot");
         };
     }
 
     private static final String LOG_REFUSAL =
-            "log here is COTT's exponent reading, not a real logarithm -- nothing to plot";
+            "log here returns COTT's exponent, not a logarithm -- there is no curve to draw";
+
+    /**
+     * A call from {@link Real}'s catalogue, as an expression the plot module can enclose.
+     *
+     * <p>Three of them are nodes there already — {@code sin}, {@code cos}, {@code tan} — and most of the rest
+     * are <b>built out of those</b> rather than added to the module. That is a deliberate limit on how far this
+     * bridge reaches: a new {@link Expr} node has to carry a sound interval enclosure and a derivative, and the
+     * module's zero-dependency pom is not the place to acquire nine of them on a keypad's say-so. A quotient of
+     * two existing nodes is already sound, and its poles fall out of the same divisor-straddles-zero test every
+     * other pole here does — {@code sec} draws its poles without being told they are there.
+     *
+     * <p>What cannot be built that way is refused <b>by name</b>, as everything else in this class is. The
+     * inverse circular functions are the gap: nothing in {@code Add/Mul/Div/Power/Exp/Log/Sin/Cos/Tan} composes
+     * into {@code arcsin}, so a key that reaches one produces a number and does not produce a curve, and the
+     * status line says which.
+     */
+    private static Expr call(Term.Call c, List<String> variables) {
+        Real fn = Real.of(c.name());
+        if (fn == null) {
+            throw new Unreadable(c.name() + " is not a function this can draw");
+        }
+        if (c.args().size() != fn.arity()) {
+            throw new Unreadable(c.name() + " takes " + fn.arity() + " here, not " + c.args().size());
+        }
+        Expr a = translate(c.args().get(0), variables);
+        return switch (fn) {
+            case SIN -> new Expr.Sin(a);
+            case COS -> new Expr.Cos(a);
+            case TAN -> new Expr.Tan(a);
+            // The reciprocals. cot is cos÷sin rather than 1÷tan for the reason Expr.Tan's own derivative is
+            // written as a quotient: one divisor, and its zeros are exactly the poles.
+            case SEC -> new Expr.Div(one(), new Expr.Cos(a));
+            case CSC -> new Expr.Div(one(), new Expr.Sin(a));
+            case COT -> new Expr.Div(new Expr.Cos(a), new Expr.Sin(a));
+            // The hyperbolics, out of the exponential. sinh comes out exact -- both halves are increasing in x,
+            // so interval arithmetic on the sum is the true range -- while cosh and tanh come out sound and a
+            // little wide, which is the ordinary price of writing a function as an expression in its argument.
+            case SINH -> half(new Expr.Sub(exp(a), exp(negated(a))));
+            case COSH -> half(new Expr.Add(exp(a), exp(negated(a))));
+            case TANH -> new Expr.Div(new Expr.Sub(exp(a), exp(negated(a))),
+                    new Expr.Add(exp(a), exp(negated(a))));
+            // And their inverses, which ARE logarithms of something algebraic.
+            case ASINH -> new Expr.Log(new Expr.Add(a, root(new Expr.Add(square(a), one()))));
+            case ACOSH -> new Expr.Log(new Expr.Add(a, root(new Expr.Sub(square(a), one()))));
+            case ATANH -> half(new Expr.Log(new Expr.Div(new Expr.Add(one(), a), new Expr.Sub(one(), a))));
+            // Angle constructors: the radian is the native measure, so one of them is the identity.
+            case RAD -> a;
+            case DEG -> new Expr.Mul(a, new Expr.Const(BigDecimal.valueOf(Math.PI / 180)));
+            default -> throw new Unreadable(c.name()
+                    + " has a value here but no curve -- the inverse circular functions are not plottable yet");
+        };
+    }
+
+    private static Expr exp(Expr of) {
+        return new Expr.Exp(of);
+    }
+
+    private static Expr negated(Expr of) {
+        return new Expr.Sub(zero(), of);
+    }
+
+    private static Expr half(Expr of) {
+        return new Expr.Div(of, new Expr.Const(BigDecimal.valueOf(2)));
+    }
+
+    private static Expr square(Expr of) {
+        return new Expr.Power(of, new Expr.Const(BigDecimal.valueOf(2)));
+    }
+
+    private static Expr root(Expr of) {
+        return new Expr.Power(of, new Expr.Const(BigDecimal.valueOf(0.5)));
+    }
 
     /**
      * {@code k} copies of {@code 0^(g + tω + r)}, read on the real line. The exact multiplicity is kept exact:
@@ -169,7 +264,14 @@ record Plottable(List<String> variables, Expr expr, String refusal) {
         }
         boolean negated = p.exp().twist().isOne();
         if (!negated && !p.exp().twist().isZero()) {
-            throw new Unreadable("a twist of " + p.exp().twist() + " turns off the real line");
+            // Every twist that is not a whole turn is off the real axis, and a HALF turn is i itself -- which
+            // is what an expression like e^(iπx) has in it. Saying so is the difference between a message about
+            // the carrier the theory happens to use and a message about what was typed: "a twist of 1÷2" is
+            // true and useless, and the reader has an i on the screen in front of them.
+            Rational twist = p.exp().twist();
+            throw new Unreadable(twist.equals(HALF_TURN) || twist.equals(THREE_HALF_TURNS)
+                    ? "this is complex-valued -- there is an i in it -- so there is no real curve to draw"
+                    : "a twist of " + twist + " is off the real line, so there is no curve to draw");
         }
         int grade = p.exp().grade().signum();
         if (grade < 0) {

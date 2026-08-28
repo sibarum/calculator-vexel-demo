@@ -29,6 +29,25 @@ final class Palette {
     static final Color INK = Color.rgb(0xeef2f8);
     static final Color DIM = Color.rgb(0x93a0b4);
 
+    /**
+     * What a refusal is marked in -- the ring around an entry the engine would not read.
+     *
+     * <p>The same red {@link #MARK_POLE} gives a pole, deliberately: one red in this application rather than
+     * two, since both of them mean the same thing to the eye. It is the only warm colour in the interface,
+     * which is what makes it legible against a scheme that is otherwise entirely cool.
+     */
+    static final Color REFUSED = Color.rgb(0xff6b4d);
+
+    /**
+     * What a wash over the entry is tinted with when a line arrives in it from another window.
+     *
+     * <p>{@link #BTN_BLUE_HOVER}, at an alpha chosen so the tint reads and the expression underneath stays
+     * legible. A wash takes the colour it is given <em>at the alpha it is given</em> and rises to it, so
+     * handing it an opaque accent -- the obvious thing, since that is the accent -- covers the entry
+     * completely at the peak and hides the very line the wash exists to point at.
+     */
+    static final Color WASH = Color.rgba(0.184f, 0.471f, 0.788f, 0.30f);
+
     /** The plot's own ground: a shade darker than a panel, so the curve on it is the brightest thing there. */
     static final Color PLOT_BG = Color.rgb(0x0c0f15);
 
@@ -131,4 +150,21 @@ final class Palette {
      * visibly taller than the smooth surface threading through it, which is exactly where a reader should look.
      */
     static final Color PROOF_EDGE = Color.rgba(0.62f, 0.72f, 0.88f, 0.11f);
+
+    // --- the spiral --------------------------------------------------------------------------------------
+
+    /**
+     * The outward end of the spiral — what {@code ω} is drawn in, where {@link SpiralPlot} draws where it is.
+     *
+     * <p>It is the same red as {@link #MARK_POLE} and {@link #REFUSED}, and being the same is the whole reason
+     * it is written here rather than picked as a fourth warm colour. A column a curve could not bound is a
+     * column where the value ran to {@code ω}; a refused line is usually one with an {@code ω} in it; and the
+     * spiral is the picture of where {@code ω} actually sits. One fact, one colour, in an interface that is
+     * otherwise entirely cool.
+     *
+     * <p>The inward end needs no constant of its own. A zero is drawn in {@link #LOW}, which is where the
+     * surface's height ramp starts as well, and in both pictures that end of the ramp means the same thing:
+     * the bottom of whatever the picture is of.
+     */
+    static final Color SPIRAL_OMEGA = Color.rgb(0xff6b4d);
 }

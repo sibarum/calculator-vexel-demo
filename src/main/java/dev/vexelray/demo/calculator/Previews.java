@@ -48,7 +48,13 @@ final class Previews {
     private final PlotWindow[] slots = new PlotWindow[SLOTS];
     /** Slot indices, least recently shown first. The recycling order when every slot is taken. */
     private final List<Integer> recency = new ArrayList<>(SLOTS);
+    /** The slot the last {@link #show} claimed. See {@link #latest}. */
+    private volatile PlotWindow latest;
 
+    /**
+     * @param app the application these open onto, or null for a capture -- see {@link #show}, which then
+     *            mounts and paints a preview where it would otherwise have asked for a window
+     */
     Previews(GuiApp app, WindowMemory memory, Consumer<Gui> prepare) {
         this.app = app;
         this.memory = memory;
@@ -63,7 +69,52 @@ final class Previews {
      * own thread-safe handles.
      */
     void show(String entry, Term typed, Plottable plottable) {
-        claim().show(app, entry, typed, plottable);
+        PlotWindow slot = claim();
+        latest = slot;
+        if (app == null) {
+            // No application to open onto: the capture. The plot is nodes, and nodes are laid out and
+            // photographed without a window -- so the same slot is mounted and painted on this thread
+            // instead of on the frame a window would have been created on. See PlotWindow.headless.
+            //
+            // Every plot then recycles slot one, since a slot that never opens never counts as taken. That
+            // is the right behaviour rather than a limitation of it: a capture photographs a preview before
+            // it moves on to the next, so there is never a second one that needed keeping.
+            // Mounted but not yet painted, and that is the handshake rather than an omission: the plot
+            // paints off a laid-out canvas, and nothing has been laid out until something frames the tree.
+            // Capture frames it and then calls settle, which is why that pair lives with the photograph.
+            slot.headless(entry, typed, plottable);
+        } else {
+            slot.show(app, entry, typed, plottable);
+        }
+    }
+
+    /**
+     * Draw where {@code place} sits, in a preview of its own, and raise it — {@link #show}'s counterpart for a
+     * value that has a place rather than a curve.
+     *
+     * <p>It claims a slot the same way and for the same reasons, which is worth stating because the alternative
+     * was tempting: a spiral is cheap and always the same shape, so a single shared window for all of them would
+     * have worked. It would also have made the one comparison this feature exists for impossible —
+     * {@code 2÷0} beside {@code 2·0}, which are two turns apart on the same coil and say nothing at all apart.
+     */
+    void show(String entry, Place place) {
+        PlotWindow slot = claim();
+        latest = slot;
+        if (app == null) {
+            slot.headless(entry, place);
+        } else {
+            slot.show(app, entry, place);
+        }
+    }
+
+    /**
+     * The preview the last {@link #show} went to, or null if nothing has been plotted.
+     *
+     * <p>For the capture, which has to drive the plot it has just opened -- zoom it, turn it, ask it what it
+     * cached -- and cannot go looking for it, because which slot a plot lands in is this class's business.
+     */
+    PlotWindow latest() {
+        return latest;
     }
 
 

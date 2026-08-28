@@ -5,6 +5,8 @@ import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.TextClipboard;
 import dev.vexelray.gui.core.WindowControls;
+import dev.vexelray.gui.core.WindowRegion;
+import dev.vexelray.gui.core.input.InteractionState;
 import dev.vexelray.gui.core.app.AppWindow;
 import dev.vexelray.gui.core.app.GuiApp;
 import dev.vexelray.gui.core.app.Settings;
@@ -13,16 +15,21 @@ import dev.vexelray.gui.core.app.WindowSpec;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.layout.LayoutEnums;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
+import dev.vexelray.gui.krono.KronoGui;
 import dev.vexelray.gui.core.text.Document;
+import dev.vexelray.gui.widget.Ramp;
+import dev.vexelray.gui.widget.Tabs;
 import dev.vexelray.gui.widget.TextField;
 import dev.vexelray.gui.widget.TitleBar;
 import dev.vexelray.os.Decorations;
 import dev.vexelray.os.WindowConfig;
 import dev.vexelray.text.TextLayout;
 import java.util.List;
+import sibarum.cott.Bindings;
 import sibarum.cott.Cott;
 import sibarum.cott.Notation;
 import sibarum.cott.Parser;
+import sibarum.cott.Real;
 import sibarum.cott.Render;
 import sibarum.cott.SyntaxException;
 import sibarum.cott.Term;
@@ -41,34 +48,59 @@ import sibarum.tactroller.clipboard.ClipboardException;
  * The tree is built once through {@link Gui}/{@link Node} handles; click handlers run on worker
  * threads and mutate the display through its handle.
  *
- * <p>Run: {@code CalculatorApp} (windowed), {@code CalculatorApp --capture [out.png]} (headless), or
- * {@code CalculatorApp --capture-plot[=EXPRESSION]} (the plot, headless, with its cache counts), or
- * {@code CalculatorApp --capture-sdf[=EXPRESSION]} (the same expression compiled to a ray-marched shader),
- * or {@code CalculatorApp --march[=EXPRESSION]} (windowed, with that surface already marched in a preview).
- * Needs {@code --enable-native-access=ALL-UNNAMED}.
+ * <p>Run: {@code CalculatorApp} (windowed), {@code CalculatorApp --march[=EXPRESSION]} (windowed, with that
+ * expression already plotted), or {@code CalculatorApp --capture[=SCENE[=SUBJECT]]} (headless). There is one
+ * capture mode and it holds one application; the scenes are listed in {@link Capture}, which also says why
+ * there used to be five of these and what went wrong with having five. Needs
+ * {@code --enable-native-access=ALL-UNNAMED}.
  */
 public final class CalculatorApp {
 
     /**
-     * Window and capture size, in the engine's logical coordinates. The GUI draws the frame now, so the
-     * client area is the whole window and the height carries {@link #BAR_H} of the application's own title
-     * bar on top of the 600 the keypad had beneath an OS one -- same keypad, same outer rect.
+     * Window and capture size, in the engine's logical coordinates. The GUI draws the frame, so the client area
+     * is the whole window and the height carries {@link #BAR_H} of the application's own title bar on top of
+     * the keypad's own — 640 of it since the tab strip arrived, where it was 600 for six rows and a display.
      */
-    private static final int W = 420;
+    static final int W = 420;
     /** The title bar's own height, in dp -- {@code TitleBar}'s, which is the Windows caption metric. */
-    private static final int BAR_H = 32;
-    private static final int H = 600 + BAR_H;
+    static final int BAR_H = 32;
+    static final int H = 640 + BAR_H;
 
-    /** The plot window's size, and the size --capture-plot photographs it at. */
-    private static final int PLOT_W = 720;
-    private static final int PLOT_H = 560 + BAR_H;
+    /**
+     * The smallest the calculator may be, in em, and it is asked of two different things.
+     *
+     * <p>{@code Gui.minSize} is the smallest <b>canvas the UI is laid out on</b>: below it the layout keeps
+     * running at the minimum and the window shows part of it, rather than six rows of keys each absorbing a
+     * sixth of the deficit until they have no height left. {@code WindowConfig.minSize} is the smallest the
+     * <b>window manager will let the drag reach</b>, so the case above stops arising in the first place.
+     *
+     * <p>Both from these two numbers, which is the point of having them here: a window that stops at one size
+     * and a layout that gives up at another would be a gap of exactly the width of the disagreement, and the
+     * bug would only show at the edge of a drag. The window's copy is read at zoom 1 -- see {@link #smallest} --
+     * while the layout's grows with the zoom, which is the right way round: a zoomed UI really does need more
+     * room, and the window manager cannot be told so after the window was created.
+     */
+    static final float MIN_EM_W = 21f;
+    static final float MIN_EM_H = 34f;
+
+    /**
+     * {@code em} as a whole number of pixels at zoom 1 — how a {@code Gui} minimum is said to a
+     * {@code WindowConfig}, which takes pixels and is settled once, when the window is created.
+     */
+    static int smallest(Gui gui, float em) {
+        return Math.round(em * gui.rootEmPx());
+    }
+
+    /** The plot window's size, and the size the plotting scenes photograph it at. */
+    static final int PLOT_W = 720;
+    static final int PLOT_H = 560 + BAR_H;
 
     /**
      * The multiplication key's label, and the sign it inserts. Taken from the engine rather than written
      * here, because the keypad and the printer disagreeing about it is exactly the failure
      * {@link Notation} exists to prevent — a display the calculator cannot read back.
      */
-    private static final String TIMES = String.valueOf(Notation.TIMES);
+    static final String TIMES = String.valueOf(Notation.TIMES);
 
     /** The keys that go into the field verbatim. Everything else is an operand — see {@code insertOperand}. */
     private static final java.util.Set<String> OPERATORS =
@@ -90,42 +122,39 @@ public final class CalculatorApp {
     public static void main(String[] args) throws Exception {
         args = java.util.Arrays.stream(args).filter(s -> !s.isBlank()).toArray(String[]::new);
 
+        // Every headless photograph, in one mode over one application -- see Capture, which says at length
+        // why there used to be five of these and why one of them could not draw a name this session had
+        // defined. Checked before anything below is built, because Capture builds its own world: the same
+        // one this method goes on to build, and handing it a half-made one is how the five drifted apart.
+        if (args.length >= 1 && args[0].startsWith("--capture")) {
+            String flag = args[0];
+            if (flag.equals("--capture")) {
+                Capture.run(null);
+            } else if (flag.startsWith("--capture=")) {
+                Capture.run(flag.substring("--capture=".length()));
+            } else {
+                // --capture-plot and its three siblings are scenes now rather than flags. Worth saying so
+                // rather than silently running every scene, since the old spellings are in the README and
+                // in muscle memory.
+                System.out.println(flag + " is gone: the captures are one mode over one application now.");
+                System.out.println("try --capture, or --capture=SCENE[=SUBJECT] with scenes: "
+                        + Capture.names());
+            }
+            return;
+        }
+
         Gui gui = new Gui();
-        // Two em more than the keypad needs on its own: the title bar sits inside the canvas now, so the
-        // smallest layout has to hold it as well as the display and the keys.
-        gui.minSize(Length.em(21), Length.em(32));
-        Ui ui = buildUi(gui);
+        // The title bar sits inside the canvas now, so the smallest layout has to hold it as well as the
+        // display, the tab strip and six rows of keys. See MIN_EM_W on why there is one pair of numbers.
+        gui.minSize(Length.em(MIN_EM_W), Length.em(MIN_EM_H));
+        // The clock, attached before the UI is built, because a widget that animates is handed its timing at
+        // construction rather than asking for it later. The capture attaches one to every tree it builds; if
+        // this path did not, the world a photograph is taken of would differ from the running program in
+        // exactly the dimension the photographs are now for.
+        KronoGui krono = KronoGui.attach(gui);
+        Ui ui = buildUi(gui, Motion.of(krono));
         Engine engine = ui.engine();
         zoomShortcuts(gui);
-
-        if (args.length >= 1 && args[0].startsWith("--capture-plot")) {
-            capturePlot(entryOf(args[0], "1÷(x^2−1)"), "plot.png", "plot-zoomed.png");
-            return;
-        }
-
-        if (args.length >= 1 && args[0].startsWith("--capture-surface")) {
-            // A saddle: the one picture that shows at a glance whether the projection and the painting order
-            // are both right, since it rises on one axis exactly as it falls on the other.
-            capturePlot(entryOf(args[0], "x^2−y^2"), "surface.png", "surface-turned.png");
-            return;
-        }
-
-        if (args.length >= 1 && args[0].startsWith("--capture-sdf")) {
-            // A pole ridge: the case that says whether the gradient normalisation is doing its job, since an
-            // un-normalised implicit loses the surface exactly where the height runs away.
-            captureSdf(entryOf(args[0], "1÷(x^2+y^2)"), "sdf.png");
-            return;
-        }
-
-        if (args.length >= 1 && args[0].equals("--capture")) {
-            // Exercise the residue vertical: 1 over 1 in an additive context keeps its winding.
-            for (String k : new String[]{"x", "+", "(", "1", "÷", "1", ")", "="}) {
-                engine.press(k);
-            }
-            GuiApp.capture(gui, W, H, 0.06f, 0.07f, 0.09f, args.length >= 2 ? args[1] : "calculator.png");
-            System.out.println("captured");
-            return;
-        }
 
         // A shortcut and nothing more: open windowed with this expression already plotted, which is what typing
         // it and pressing = does. A two-variable expression is marched either way -- that is the ordinary
@@ -145,7 +174,8 @@ public final class CalculatorApp {
         try (Tactroller input = openInput();
              Clipboard clipboard = openClipboard(gui);
              GuiApp app = new GuiApp(memory.config("main", "Calculator", W, H)
-                     .decorations(Decorations.CLIENT))) {
+                     .decorations(Decorations.CLIENT)
+                     .minSize(smallest(gui, MIN_EM_W), smallest(gui, MIN_EM_H)))) {
             attachInput(input, app, gui);
             // The window exists at last, so the chrome can be pointed at it. Until now the bar has been a
             // working bar against WindowControls.NONE -- which is also what --capture renders.
@@ -171,27 +201,39 @@ public final class CalculatorApp {
             // not know it was going to open.
             Previews previews = new Previews(app, memory, CalculatorApp::zoomShortcuts);
             engine.plotter(previews);
+            // The session's names, and the window that edits them. Built here for the same reason the history
+            // is: it needs an application to open onto, and there is none until now.
+            Definitions definitions = new Definitions(memory, engine::bindings);
+            definitions.attach(app);
+            zoomShortcuts(definitions.gui());
+            engine.definitions(definitions);
             if (march != null) {
                 // Safe before the loop starts: showing a preview only posts the window request, and the window
                 // is created at the top of the first frame like any other.
-                openMarched(previews, march);
+                openMarched(engine, march);
             }
             TactrollerInputBridge bridge = input == null ? null : new TactrollerInputBridge(input, gui.bus());
+            FpsProbe probe = new FpsProbe(krono.kron());
             try {
                 app.run(gui, maxFrames, () -> {
+                    krono.tick();
                     pump(bridge);
                     history.drain();
+                    definitions.drain();
                     memory.poll();
                     // A marched viewport does its GPU work here and nowhere else: this hook runs on the thread
                     // that presents, and the device queue belongs to it.
                     previews.pump();
+                    probe.sample();
                 });
             } finally {
+                probe.report("calculator, idle");
                 // The debounce has no next frame to fire on once the loop is over, so the last move of the
                 // session is written here or not at all.
                 memory.save();
             }
         }
+        krono.close();   // the clock outlives the window but not the process: closed with the GUI it drove
         gui.close();
         System.out.println("clean shutdown");
     }
@@ -210,63 +252,7 @@ public final class CalculatorApp {
      * reopened at launch would have no expression to draw. Restoring a window to show emptiness is worse than
      * not restoring it -- there is nothing there to be where you left it.
      */
-    private static final String APP_NAME = "calculator";
-
-    /**
-     * Headless proof that the plot draws: frame the tree once so the canvas has a size, paint into it, then
-     * frame again and photograph the result. Two frames rather than one because the surface paints from a
-     * worker off a laid-out canvas -- the same handshake a real window makes, minus the window.
-     *
-     * <p>{@code mvn compile exec:exec "-Dapp.args=--capture-plot"} writes {@code plot.png}; append
-     * {@code =EXPRESSION} to plot something else. The default is {@code 1÷(x²−1)}, which is the whole point of
-     * the technique in one picture: two poles, found by the arithmetic rather than by a solver, drawn as
-     * painted columns instead of as lines through infinity.
-     */
-    private static void capturePlot(String entry, String first, String second) throws Exception {
-        Term term = Parser.parse(Notation.normalize(entry));
-        List<String> variables = Plottable.variablesIn(term);
-        if (variables.isEmpty() || variables.size() > 2) {
-            System.out.println("nothing to plot: " + variables.size() + " variables in " + entry);
-            return;
-        }
-        Plottable plottable = Plottable.read(term, variables);
-        if (!plottable.ok()) {
-            System.out.println("nothing to plot: " + plottable.refusal());
-            return;
-        }
-        // A real window memory, over the real settings: it is only ever read here, since a capture opens no
-        // window to place and nothing on this path calls watch, poll or save.
-        PlotWindow plot = new PlotWindow("capture", new WindowMemory(Settings.open(APP_NAME)));
-        plot.headless(entry, term, plottable);
-        GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, first);
-        plot.settle();
-        GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, first);
-        // Two paints' worth: the layout watch draws the plot the moment the first frame gives the canvas a
-        // size, and the handshake above draws it again to be certain before the photograph. The second is
-        // entirely cache hits, which is why this line reads half-and-half.
-        System.out.println("  framed     " + plot.cacheReport());
-        // Then the half that would otherwise never be exercised without a pointer, and the numbers that say
-        // whether the cache is doing what this whole design is for. On a curve: a zoom lands on a scale nothing
-        // is cached at and pays for every column; the pan after it moves within that scale and should pay for
-        // almost none; and going home returns to a scale already visited and should pay for nothing at all. On
-        // a surface the middle step turns the picture instead of panning it, which is the stronger claim of the
-        // two -- turning re-projects and re-sorts and must evaluate nothing whatsoever.
-        plot.zoomTo(4);
-        System.out.println("  zoomed in  " + plot.cacheReport());
-        plot.panBy(0.4);
-        System.out.println("  moved      " + plot.cacheReport());
-        GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, second);
-        plot.goHome();
-        System.out.println("  back home  " + plot.cacheReport());
-        // And the half that needs a pointer. A capture has no input backend and so no pointer, but the hover
-        // path can still be walked from its own end: point at the first marker, and photograph what it says.
-        if (plot.hoverMark()) {
-            GuiApp.capture(plot.gui(), PLOT_W, PLOT_H, 0.06f, 0.07f, 0.09f, "plot-landmark.png");
-            System.out.println("  landmark   named");
-        }
-        plot.gui().close();
-        System.out.println("captured " + entry);
-    }
+    static final String APP_NAME = "calculator";
 
     /**
      * Open {@code entry} in a preview, already marched — what {@code --march} does.
@@ -274,72 +260,28 @@ public final class CalculatorApp {
      * <p>Refusals are reported and then dropped rather than aborting the launch: the calculator is opening
      * either way, and an expression that cannot be marched is a reason to see the keypad, not to see nothing.
      */
-    private static void openMarched(Previews previews, String entry) {
-        try {
-            Term term = Parser.parse(Notation.normalize(entry));
-            List<String> variables = Plottable.variablesIn(term);
-            if (variables.size() != 2) {
-                System.out.println("nothing to march: " + entry + " needs two variables to be a surface");
-                return;
-            }
-            Plottable plottable = Plottable.read(term, variables);
-            if (!plottable.ok()) {
-                System.out.println("nothing to march: " + plottable.refusal());
-                return;
-            }
-            // The ordinary path, deliberately: this is exactly what pressing = does, so a launch through the
-            // flag is evidence about the thing everyone else will use rather than about a private shortcut.
-            previews.show(entry, term, plottable);
-        } catch (RuntimeException e) {
-            System.out.println("nothing to march: " + e.getMessage());
+    private static void openMarched(Engine engine, String entry) {
+        // Type it and press =, which is all this flag ever claimed to be. It used to parse the line itself
+        // and hand the result to Previews, which meant --march=f(x) could not open a name this session had
+        // defined -- the engine expands the session's names before parsing and this did not. That is the
+        // same divergence Capture was written to end, and it was here too.
+        engine.enter(entry);
+        engine.press("=");
+        // Refusals are reported and then dropped rather than aborting the launch: the calculator is opening
+        // either way, and an expression that cannot be drawn is a reason to see the keypad, not to see
+        // nothing. The engine has already put its own words on the status line; this is for the console.
+        String refused = engine.reported();
+        if (!refused.isEmpty()) {
+            System.out.println("nothing to march: " + refused);
         }
     }
 
-    /**
-     * The same expression the plot would draw, drawn instead by a shader compiled from it.
-     *
-     * <p>{@code mvn compile exec:exec "-Dapp.args=--capture-sdf"} writes {@code sdf.png}; append
-     * {@code =EXPRESSION} to choose one, in ASCII, for the same console-codepage reason the other captures
-     * carry. Everything up to {@link Plottable} is shared with {@code --capture-plot} — the same parse, the
-     * same refusals, the same one-or-two-variable rule — so an expression that will not plot will not march
-     * either, and says so in the same words.
-     */
-    private static void captureSdf(String entry, String path) throws Exception {
-        Term term = Parser.parse(Notation.normalize(entry));
-        List<String> variables = Plottable.variablesIn(term);
-        if (variables.isEmpty() || variables.size() > 2) {
-            System.out.println("nothing to march: " + variables.size() + " variables in " + entry);
-            return;
-        }
-        Plottable plottable = Plottable.read(term, variables);
-        if (!plottable.ok()) {
-            System.out.println("nothing to march: " + plottable.refusal());
-            return;
-        }
-        SdfSurface surface = SdfSurface.of(plottable.expr(), variables);
-        if (!surface.ok()) {
-            System.out.println("nothing to march: " + surface.refusal());
-            return;
-        }
-        System.out.println("marching " + entry);
-        // One photograph per render style, because a style is compiled into the shader rather than switched at
-        // runtime -- so "does Height look right" is a question about a different SPIR-V module, and a capture
-        // that only ever built one of them would not be asking it.
-        for (MarchStyle style : MarchStyle.values()) {
-            String file = style == MarchStyle.LIT ? path
-                    : path.replace(".png", "-" + style.label().toLowerCase() + ".png");
-            System.out.println("  " + style.label());
-            SdfPreview.capture(surface, style, file);
-            System.out.println("  captured " + new java.io.File(file).getAbsolutePath());
-        }
-    }
-
-    /** The expression a {@code --capture-*} flag names, or the default that flag stands for. */
+    /** The expression the {@code --march} flag names, or the default it stands for. */
     private static String entryOf(String arg, String fallback) {
         return arg.contains("=") ? arg.substring(arg.indexOf('=') + 1) : fallback;
     }
 
-    private static void zoomShortcuts(Gui gui) {
+    static void zoomShortcuts(Gui gui) {
         gui.zoomRange(0.5f, 3f, 1.25f);
         gui.shortcut(Key.EQUAL, gui::zoomIn, Modifier.CONTROL);
         gui.shortcut(Key.MINUS, gui::zoomOut, Modifier.CONTROL);
@@ -510,10 +452,20 @@ public final class CalculatorApp {
 
         private final WindowMemory memory;
         private final Gui gui = new Gui();
+        /** This window's clock, ticked from {@link #tick}. See the note where main() attaches its own. */
+        private final KronoGui krono;
         private final Ui ui;
         private final Engine engine;
 
         private History history;
+        /** The preview windows, kept because they have per-frame GPU work -- see {@link #tick}. */
+        private Previews previews;
+        /**
+         * The session's names. Built with this object rather than on the first {@link #show}, because a
+         * definition is a fact about the session and not about a window -- and its edits are queued, so it is
+         * kept here to be drained from {@link #tick}.
+         */
+        private final Definitions definitions;
         private AppWindow handle;
 
         /**
@@ -524,17 +476,59 @@ public final class CalculatorApp {
          */
         public Window(WindowMemory memory) {
             this.memory = memory;
-            // Two em more than the keypad needs on its own: the title bar sits inside the canvas, so the
-            // smallest layout has to hold it as well as the display and the keys.
-            gui.minSize(Length.em(21), Length.em(32));
-            this.ui = buildUi(gui);
+            // The title bar sits inside the canvas, so the smallest layout has to hold it as well as the
+            // display, the tab strip and six rows of keys. See MIN_EM_W on why there is one pair of numbers.
+            gui.minSize(Length.em(MIN_EM_W), Length.em(MIN_EM_H));
+            this.krono = KronoGui.attach(gui);
+            this.ui = buildUi(gui, Motion.of(krono));
             this.engine = ui.engine();
             zoomShortcuts(gui);
+            // Built here and not on the first show(), unlike the history and the previews. Those need an
+            // application before they can do anything at all; this one only needs an application to be *seen*,
+            // and `calc "k = 3"` at a prompt is a definition whether or not the keypad has ever been opened.
+            this.definitions = new Definitions(memory, engine::bindings);
+            zoomShortcuts(definitions.gui());
+            engine.definitions(definitions);
         }
 
         /** This window's Gui, so the host can bind its clipboard and its shortcuts here too. */
         public Gui gui() {
             return gui;
+        }
+
+        /**
+         * What this session has named. Public so that a shell hosting the calculator can read an expression in
+         * the same vocabulary the keypad does — a {@code calc} that agreed with the keys only until somebody
+         * defined something would be worse than not having one.
+         */
+        public Bindings bindings() {
+            return engine.bindings();
+        }
+
+        /**
+         * Show the definitions window. Public because a host's menu is a fair second way in — the first is the
+         * keypad's own tab strip — and because the names are what its prompt reads expressions in too.
+         *
+         * <p>Silent until the calculator has been opened once, which is when the window learns what application
+         * to appear on. The definitions themselves exist from the start.
+         */
+        public void openDefinitions() {
+            engine.openDefinitions();
+        }
+
+        /**
+         * Name something from outside the keypad — a shell prompt — and get back the definition as it will be
+         * listed. Exactly the act typing it into the display performs, through the same door, so the window
+         * comes up here too.
+         *
+         * @throws SyntaxException with the reason, when the line is not a definition
+         */
+        public String define(String line) {
+            Definitions.Made made = definitions.request(line);
+            if (made.refusal() != null) {
+                throw new SyntaxException(made.refusal());
+            }
+            return made.definition().source();
         }
 
         /** Whether the window is up right now. */
@@ -557,11 +551,15 @@ public final class CalculatorApp {
                 // Each preview is built the first time its slot is used, and gets the same zoom shortcuts every
                 // other window here has -- the only thing the calculator says about a window it did not know it
                 // was going to open.
-                engine.plotter(new Previews(app, memory, CalculatorApp::zoomShortcuts));
+                previews = new Previews(app, memory, CalculatorApp::zoomShortcuts);
+                engine.plotter(previews);
+                // The definitions were built with this object; what they were missing is somewhere to appear.
+                definitions.attach(app);
             }
             if (handle == null) {
                 handle = app.window(KEY, () -> WindowSpec
-                        .of(memory.config(KEY, "Calculator", W, H).decorations(Decorations.CLIENT), gui)
+                        .of(memory.config(KEY, "Calculator", W, H).decorations(Decorations.CLIENT)
+                                .minSize(smallest(gui, MIN_EM_W), smallest(gui, MIN_EM_H)), gui)
                         .onCreated(this::onCreated)
                         .onClosed(this::onClosed));
             }
@@ -571,11 +569,23 @@ public final class CalculatorApp {
         /**
          * Frame loop, once per frame. The history's queue is drained here whether or not the window is open,
          * since an evaluation recorded just before a close still has to land somewhere.
+         *
+         * <p>The previews are pumped here for a stronger reason than tidiness: a marched viewport submits to the
+         * device queue and waits, so it does its GPU work on the thread that presents and nowhere else. Hosted in
+         * an application that owns the frame loop, this method <em>is</em> that hook -- the standalone entry point
+         * calls {@code previews.pump()} from its own {@code beforeFrame} and the two have to agree, or a plot
+         * opened from here comes up marched and never marches: the box view draws as ordinary canvas nodes and is
+         * fine, while the viewport beside it stays the colour of an empty box.
          */
         public void tick() {
+            krono.tick();
             if (history != null) {
                 history.drain();
             }
+            if (previews != null) {
+                previews.pump();
+            }
+            definitions.drain();
         }
 
         /**
@@ -602,11 +612,88 @@ public final class CalculatorApp {
         }
     }
 
-    /** What main() needs back from the tree: the calculator, and the chrome awaiting its window. */
-    private record Ui(Engine engine, TitleBar titleBar) {
+    /**
+     * What main() needs back from the tree: the calculator, the chrome awaiting its window, and the pads —
+     * which are here for the capture, since a photograph has no pointer to click a tab with, and a pad nobody
+     * can photograph is a pad nobody checks.
+     */
+    record Ui(Engine engine, TitleBar titleBar, Tabs pads) {
     }
 
-    private static Ui buildUi(Gui gui) {
+    /**
+     * The arithmetic pad. Beyond digits: the constants e/i/π, the wheel's ω (= 1/0), plotting variables x/y/z,
+     * {@code ^} for n^x, and {@code log(x, n)} for COTT's base-0 exponent reading (via the log/comma/paren keys).
+     *
+     * <p>There is one engine, so there is no engine key: COTT-ONE answers every expression the keypad can build.
+     * The freed slot went back to the row.
+     */
+    private static final String[][] NUMBER_KEYS = {
+            {"C", "DEL", "(", ")", "÷"},
+            {"7", "8", "9", "^", TIMES},
+            {"4", "5", "6", "log", "−"},
+            {"1", "2", "3", ",", "+"},
+            {"0", ".", "x", "y", "z"},
+            {"e", "i", "π", "ω", "="},
+    };
+
+    /**
+     * The circular pad. Every label is the token it types, which is why the inverses read {@code asin} rather
+     * than {@code sin⁻¹}: the atlas has no superscript minus (its charset stops at U+206F), and a label that
+     * cannot be typed back is a label that teaches the wrong thing about what is in the entry.
+     *
+     * <p><b>rad and deg construct an angle</b> rather than switching a mode — {@code sin(deg(90))} is 1 — so an
+     * expression carries which measure it was written in and a tape of old results cannot be misread later. See
+     * {@link Real}.
+     *
+     * <p>The bottom-right corner is {@code =}, in the cell it occupies on the number pad, because a pad you
+     * cannot evaluate from is a pad you have to leave to finish the expression it was building — and the corner
+     * is where the hand already goes for it. It used to hold Euler's formula as a template; π moved up into the
+     * slot that left, which keeps it in the right-hand column it was already in. A template that types itself is
+     * a definition, and {@link Definitions} is where one goes.
+     */
+    private static final String[][] TRIG_KEYS = {
+            {"sin", "asin", "sec", "asec"},
+            {"cos", "acos", "csc", "acsc"},
+            {"tan", "atan", "cot", "acot"},
+            {"sinh", "cosh", "tanh", "atan2"},
+            {"asinh", "acosh", "atanh", "π"},
+            {"rad", "deg", "i", "="},
+    };
+
+    /** The keys that are operators rather than operands — drawn dimmer, because they join rather than mean. */
+    private static final java.util.Set<String> DIMMED =
+            java.util.Set.of("÷", TIMES, "−", "+", "^", "log", ",", "(", ")", "C", "DEL");
+
+    /** One pad: rows of flex-grown buttons over {@code labels}, every one of them wired to the engine. */
+    private static Node pad(Gui gui, Engine engine, String[][] labels, Length textSize) {
+        Node pad = gui.column().width(Length.FILL).height(Length.FILL).gap(Length.rem(0.5f));
+        for (String[] row : labels) {
+            Node r = gui.row().width(Length.FILL).height(Length.grow(1)).gap(Length.rem(0.5f))
+                    .alignItems(AlignItems.STRETCH);
+            for (String label : row) {
+                boolean accent = label.equals("=");
+                // A call is an operator in the same sense the others are: it is something done TO an operand,
+                // and reading the two apart at a glance is what the two inks are for.
+                boolean op = DIMMED.contains(label) || Real.of(label) != null;
+                Node b = key(gui, label,
+                        accent ? Color.WHITE : (op ? DIM : INK),
+                        accent ? BTN_BLUE : PANEL,
+                        accent ? BTN_BLUE_HOVER : PANEL_HOVER,
+                        accent ? BTN_BLUE_PRESSED : PANEL_PRESSED);
+                b.textSize(textSize);
+                if (accent) {
+                    b.textSunken(true);
+                }
+                gui.onClick(b, () -> engine.press(label));
+                r.append(b);
+            }
+            pad.append(r);
+        }
+        return pad;
+    }
+
+
+    static Ui buildUi(Gui gui, Motion motion) {
         // The display is an editable field, not a label: type the expression directly, or build it
         // from the keypad, or mix the two. Enter evaluates, exactly like the "=" key.
         TextField display = new TextField(gui, "");
@@ -617,7 +704,7 @@ public final class CalculatorApp {
                 .padding(Length.dp(16))
                 .textSize(Length.rem(1.75f)).textColor(INK);
 
-        Engine engine = new Engine(display);
+        Engine engine = new Engine(display, motion);
         gui.focusable(display.node(), true);
         gui.focus(display.node());
         display.onSubmit(s -> engine.press("="));
@@ -632,40 +719,44 @@ public final class CalculatorApp {
             }
         });
 
-        // The keypad: rows of flex-grown buttons, no hard-coded rects anywhere. Beyond digits: the
-        // constants e/i/π, the wheel's ω (= 1/0), plotting variables x/y/z, ^ for n^x, and log(x, n)
-        // for log base n (via the log/comma/paren keys).
-        // There is one engine, so there is no engine key: COTT-ONE answers every expression the
-        // keypad can build. The freed slot went back to the row.
-        String[][] rows = {
-                {"C", "DEL", "(", ")", "÷"},
-                {"7", "8", "9", "^", TIMES},
-                {"4", "5", "6", "log", "−"},
-                {"1", "2", "3", ",", "+"},
-                {"0", ".", "x", "y", "z"},
-                {"e", "i", "π", "ω", "="},
-        };
-        Node pad = gui.column().width(Length.FILL).height(Length.FILL).gap(Length.rem(0.5f));
-        for (String[] row : rows) {
-            Node r = gui.row().width(Length.FILL).height(Length.grow(1)).gap(Length.rem(0.5f))
-                    .alignItems(AlignItems.STRETCH);
-            for (String label : row) {
-                boolean accent = label.equals("=");
-                boolean op = java.util.Set.of("÷", TIMES, "−", "+", "^", "log", ",", "(", ")", "C", "DEL")
-                        .contains(label);
-                Node b = key(gui, label,
-                        accent ? Color.WHITE : (op ? DIM : INK),
-                        accent ? BTN_BLUE : PANEL,
-                        accent ? BTN_BLUE_HOVER : PANEL_HOVER,
-                        accent ? BTN_BLUE_PRESSED : PANEL_PRESSED);
-                if (accent) {
-                    b.textSunken(true);
-                }
-                gui.onClick(b, () -> engine.press(label));
-                r.append(b);
-            }
-            pad.append(r);
-        }
+        // The keypads: rows of flex-grown buttons, no hard-coded rects anywhere, in the framework's own tab
+        // panel. Which is worth saying because the first version of this was a hand-rolled strip of two
+        // buttons swapping two hidden columns -- forty lines that Tabs already had, and had better: its
+        // headers are focusable so Tab reaches them and Left/Right walk the bar, it carries a context menu,
+        // and it hides pages rather than removing them for the reason its own doc gives (a registration is
+        // keyed by node id and released when a node leaves the tree, so a removed page comes back inert).
+        Tabs pads = new Tabs(gui)
+                // Panes, not documents. There is nothing behind a pad and no way to ask for one back, so the
+                // Close a tab bar offers by default is an action whose only outcome is a worse window.
+                .closable(false)
+                // And they are drawn as keys -- see padTab. A default tab is a document tab: a slab of chrome
+                // with rounded shoulders sitting on a content panel, which is right over a page of text and
+                // wrong over a keypad, where it reads as a band of a different program.
+                .skin(CalculatorApp::padTab);
+        // No surface under either half: the keys float on the window background, so a bar and a page panel
+        // behind them would be the only slabs in the window. Spaced by the gap the keys are spaced by, which
+        // is what makes the top row read as part of the grid rather than as a strip above it.
+        pads.bar().background(Color.TRANSPARENT).gap(Length.rem(0.5f)).height(Length.rem(2.5f));
+        // The pages carry BG rather than nothing, which is the same pixels -- BG is what is behind them --
+        // and not the same thing. Tabs paints a content surface precisely so that a transition has a known
+        // backdrop to blend against: src-over leaves (1-a)(1-b) of whatever is behind two half-faded pages,
+        // and with no surface of its own that term resolves to whatever the application happened to put
+        // there. Transparent was right while the swap was a cut and wrong the moment it became a slide.
+        pads.pages().background(BG).corner(Length.ZERO);
+        // One pad leaves and the other arrives; they do not dissolve into each other, they travel. The ramp
+        // is LINEAR because a page in flight has no place to arrive at -- Tabs.slide eases its own travel
+        // inside the transition and takes the fade underneath it straight, which is the same division
+        // Motion.announce makes for the status line.
+        Ramp slide = motion.transition();
+        if (slide != null) {
+            pads.transition(Tabs.slide(slide));
+        }   // and with no clock, no transition is installed: the panel flips, exactly as it did before
+        // The space between the bar and the first row of keys, put on the panel's own column rather than as
+        // padding on the pages: padding is symmetric, and the copy of it under the bottom row would be height
+        // the window has to find at its smallest size for the sake of a gap nothing sits in.
+        pads.node().gap(Length.rem(0.5f));
+        pads.add("⁘", pad(gui, engine, NUMBER_KEYS, Length.rem(1.25f)));
+        pads.add("θ", pad(gui, engine, TRIG_KEYS, Length.rem(0.9375f)));
 
         // A rejection is reported here rather than in the entry, so the expression survives it and
         // can be fixed and re-evaluated without retyping. A notification does not belong in the
@@ -679,13 +770,47 @@ public final class CalculatorApp {
 
         Node root = gui.column().width(Length.FILL).height(Length.FILL)
                 .padding(Length.dp(16)).gap(Length.rem(0.75f))
-                .children(display.node(), statusText, pad);
+                .children(display.node(), statusText, pads.node());
         // The window's own title bar: ordinary widgets, plus the two declarations that tell the window
         // manager which pixels are caption (DRAG on the strip, INTERACTIVE on each button). Bound to the
         // real window in main(); here it commands WindowControls.NONE, which is what --capture draws.
         TitleBar titleBar = new TitleBar(gui, WindowControls.NONE, "Calculator");
+        // The way in to the session's names, in the caption rather than on the tab bar -- which is where it
+        // belongs and not merely where there was room. It opens a WINDOW; the tabs beside it swap a pad. Two
+        // different kinds of thing reading as one row of buttons was the tell that the hand-rolled strip had
+        // taken on a job that was not a tab bar's.
+        titleBar.addLeading(names(gui, engine));
         gui.root().background(BG).children(titleBar.node(), root);
-        return new Ui(engine, titleBar);
+        return new Ui(engine, titleBar, pads);
+    }
+
+    /**
+     * The caption button that opens {@link Definitions}: {@code ℱ}, the function symbol from the letterlike
+     * block, for the place functions are named.
+     *
+     * <p>{@code ℱ} and the tabs' {@code ⁘} and {@code θ} come from a short list, because the text atlas carries
+     * Latin, Greek, Cyrillic, punctuation, currency and the letterlike block and <b>nothing else</b> — of the
+     * mathematical operators it has exactly one, the minus sign. So the obvious icons here (a script f, a 2x2
+     * box, a sine wave) are all missing glyphs, and a missing glyph renders as a box. Every one was checked
+     * against {@code primary.json} before it was used.
+     *
+     * <p>{@link WindowRegion#INTERACTIVE} is not optional and {@code TitleBar.addLeading} says so: the caption
+     * is a drag surface to the window manager, so without the declaration a click here starts moving the window
+     * instead of landing on the button.
+     */
+    private static Node names(Gui gui, Engine engine) {
+        Node b = gui.text("ℱ").width(Length.rem(2f)).height(Length.FILL)
+                .textSize(Length.rem(1f)).textColor(DIM)
+                .align(TextLayout.HAlign.CENTER, TextLayout.VAlign.MIDDLE)
+                .background(Color.TRANSPARENT)
+                .windowRegion(WindowRegion.INTERACTIVE);
+        gui.onState(b, state -> b.background(switch (state) {
+            case NORMAL -> Color.TRANSPARENT;
+            case HOVER -> PANEL_HOVER;
+            case PRESSED -> PANEL_PRESSED;
+        }));
+        gui.onClick(b, engine::openDefinitions);
+        return b;
     }
 
     /**
@@ -754,7 +879,10 @@ public final class CalculatorApp {
             while (rows.size() > LIMIT) {
                 rows.removeFirst().remove();
             }
-            if (!shown) {
+            // Silent with no application to open onto, which is the capture -- the same rule
+            // Definitions.show keeps. The tape still fills either way, so a headless run can photograph
+            // this window without one.
+            if (!shown && app != null) {
                 shown = true;
                 app.requestPopup(memory.config("history", "History", W, H).decorations(Decorations.CLIENT),
                         gui, this::onCreated, this::onClosed);
@@ -875,7 +1003,7 @@ public final class CalculatorApp {
      * {@link GuiApp#requestPopup} belong to the GUI thread, so both only enqueue and
      * {@link #drain()} services them from the frame loop.
      */
-    private static final class History {
+    static final class History {
         private final Engine engine;
         private final GuiApp app;
         private final HistoryWindow window;
@@ -912,6 +1040,44 @@ public final class CalculatorApp {
         }
     }
 
+    /**
+     * A tab, drawn as a key — which is the whole of making the bar belong to the keypad rather than sit above it.
+     *
+     * <p>Same silhouette as {@link #key}: fully rounded, the same hairline border, lit, and floating on the same
+     * elevation that lifts under the pointer and drops flat when pressed. And the same two inks the keypad
+     * already uses to mean two things — a selected pad wears the accent the {@code =} key wears, because that is
+     * what this keypad's blue already means, while an idle one is a panel like every other key.
+     *
+     * <p>The default tab silhouette — a chrome slab with rounded shoulders and a flat seat, sitting on a content
+     * panel — is right over a page of text and reads as a band of a different program over a grid of keys. This
+     * is the same widget saying the same thing in the vocabulary of what surrounds it.
+     */
+    private static void padTab(Node header, boolean selected, InteractionState state) {
+        header.padding(Length.ZERO, Length.rem(1.125f))
+                .textSize(Length.rem(1.125f))
+                .align(TextLayout.HAlign.CENTER, TextLayout.VAlign.MIDDLE)
+                .corner(Length.rem(0.625f)).border(Length.rem(0.1f), LINE)
+                .textColor(selected ? Color.WHITE : DIM)
+                .textSunken(selected)
+                .lit(true)
+                .background(selected
+                        ? switch (state) {
+                            case NORMAL -> BTN_BLUE;
+                            case HOVER -> BTN_BLUE_HOVER;
+                            case PRESSED -> BTN_BLUE_PRESSED;
+                        }
+                        : switch (state) {
+                            case NORMAL -> PANEL;
+                            case HOVER -> PANEL_HOVER;
+                            case PRESSED -> PANEL_PRESSED;
+                        })
+                .elevation(switch (state) {
+                    case NORMAL -> Length.rem(0.375f);
+                    case HOVER -> Length.rem(0.625f);
+                    case PRESSED -> Length.ZERO;
+                });
+    }
+
     /** One keypad button: lit, elevated, restyled per interaction state. */
     private static Node key(Gui gui, String label, Color fg, Color base, Color hover, Color pressed) {
         Node b = gui.text(label).width(Length.grow(1)).height(Length.FILL)
@@ -942,8 +1108,10 @@ public final class CalculatorApp {
      * <p>Handlers arrive on worker threads, so all state transitions are synchronized; the only
      * output is the display handle, which is thread-safe by framework contract.
      */
-    private static final class Engine {
+    static final class Engine {
         private final TextField display;
+        /** How this application says what happened. Never null; {@link Motion#none()} where there is no clock. */
+        private final Motion motion;
         private boolean justEvaluated;
         /** The line that reports a rejection. */
         private volatile Node statusLabel;
@@ -951,21 +1119,75 @@ public final class CalculatorApp {
         private volatile History history;
         /** Where a plotted expression opens a window. Null until main() has a window loop to open onto. */
         private volatile Previews previews;
+        /** The session's names, kept here because this is what reads an expression. Never null. */
+        private volatile Bindings session = Bindings.EMPTY;
+        /** The window that edits them. Null under {@code --capture}, which has no window loop. */
+        private volatile Definitions definitions;
 
-        Engine(TextField display) {
+        Engine(TextField display, Motion motion) {
             this.display = display;
+            this.motion = motion;
         }
 
         void statusLabel(Node status) {
             this.statusLabel = status;
         }
 
-        /** Report a rejection, or clear the report. Never touches the entry. */
+        /**
+         * Report something, or clear the report. Never touches the entry.
+         *
+         * <p>A non-empty message makes the line <b>arrive</b> rather than merely appear -- see
+         * {@link Motion#announce}. Without that, reporting the same thing twice rewrote an identical string
+         * and nothing moved, so pressing = twice on one bad expression looked like the second press had been
+         * dropped. Reporting is the case where saying it again is the ordinary thing, so it has to be the case
+         * that reads.
+         */
         private void status(String message) {
+            status(message, BTN_BLUE_HOVER);
+        }
+
+        /**
+         * Report in a given ink.
+         *
+         * <p>The colour is set on every report rather than only when it changes, because {@code textColor} has
+         * no identity value -- architecture.md's rule for what may live in the visual-transform layer, and this
+         * does not. Whatever sets one owns putting it back, and the only thing here that knows the resting
+         * value is this method, so this method says it every time rather than leaving a refusal's red on the
+         * next ordinary notice.
+         */
+        private void status(String message, Color ink) {
             Node s = statusLabel;
             if (s != null) {
-                s.text(message);
+                s.text(message).textColor(ink);
+                if (!message.isEmpty()) {
+                    motion.announce(s);
+                }
             }
+            reported = message;
+        }
+
+        /**
+         * Report a rejection: the message on the line, and a ring around the entry it is about.
+         *
+         * <p>Every refusal in this class goes through here rather than through {@link #status}, which is what
+         * keeps the mark and the words together -- a rejection reported without one would be a rejection the
+         * eye has to go looking for, and the entry it concerns is the thing about to be corrected.
+         */
+        private void refuse(String message) {
+            status(message, Palette.REFUSED);
+            motion.refused(display.node());
+        }
+
+        /** The last thing the status line was told, for a capture that has no screen to read it off. */
+        private volatile String reported = "";
+
+        String reported() {
+            return reported;
+        }
+
+        /** What is in the display right now — the same read a capture would take off the glass. */
+        String shown() {
+            return display.document().value().text();
         }
 
         void history(History history) {
@@ -978,14 +1200,47 @@ public final class CalculatorApp {
         }
 
         /**
+         * The window that names things, and the names it currently holds.
+         *
+         * <p>The engine keeps its own copy rather than asking the window each time, so that an evaluation on a
+         * worker thread reads one settled vocabulary: {@link Notation#normalize} and {@link Parser#parse} have
+         * to be given the <em>same</em> one, since the first decides where a word begins and the second reads
+         * what is there, and a definition landing between the two calls would leave them disagreeing.
+         */
+        void definitions(Definitions definitions) {
+            this.definitions = definitions;
+            this.session = definitions.bindings();
+        }
+
+        /** A definition was made or forgotten. Called on the frame loop, read on a worker. */
+        void bindings(Bindings session) {
+            this.session = session;
+        }
+
+        /** The names in play, for anything else that has to read an expression the way this does. */
+        Bindings bindings() {
+            return session;
+        }
+
+        /** Show the definitions. What the strip's last button does. */
+        void openDefinitions() {
+            Definitions open = definitions;
+            if (open != null) {
+                open.show();
+            }
+        }
+
+        /**
          * An evaluated expression, offered to the plotter. <b>How many variables it has is the whole
          * decision</b>, and it is taken on the term the user typed rather than on the reduced one — COTT
          * leaves {@code x÷x} standing as a residue whose variable has become part of a form, and the curve
          * being asked about is the one that was written down.
          *
          * <ul>
-         *   <li><b>None</b> — a number was evaluated. There is nothing to plot and nothing to say about it,
-         *       so nothing is said: an arithmetic result must not come with a notice attached.
+         *   <li><b>None</b> — a number was evaluated, and the question becomes what <em>kind</em> of number.
+         *       One on the real line says nothing at all, because an arithmetic result must not come with a
+         *       notice attached; one off it — a zero, an infinity, a twist that is not a whole turn — has a
+         *       <b>place</b> rather than a curve, and the place is drawn. See {@link #offerPlace}.
          *   <li><b>One</b> — a curve, against that variable whatever it is called. x is the usual one and
          *       nothing here depends on it being x.
          *   <li><b>Two</b> — a surface, in three dimensions, over the two of them in the order they are named.
@@ -995,14 +1250,18 @@ public final class CalculatorApp {
          * </ul>
          *
          * <p>Either way it opens a <b>preview of its own</b> — see {@link Previews}.
+         *
+         * @param value the reduced term. Only the no-variable branch reads it, and it has to: what
+         *              {@code 2÷0} is cannot be seen in {@code 2÷0}, only in the {@code 2ω} it came to.
          */
-        private void offerPlot(String entry, Term term) {
+        private void offerPlot(String entry, Term term, Term value) {
             Previews windows = previews;
             if (windows == null) {
                 return;
             }
             List<String> variables = Plottable.variablesIn(term);
             if (variables.isEmpty()) {
+                offerPlace(entry, value, windows);
                 return;
             }
             if (variables.size() > 2) {
@@ -1018,8 +1277,83 @@ public final class CalculatorApp {
             }
         }
 
-        /** Put the entry back as it was, from a history click. */
+        /**
+         * An expression with no variable in it, which used to be the end of the matter and is not any more.
+         *
+         * <p><b>The gate is {@link Place#offTheLine}, and it is narrow on purpose.</b> Ordinary arithmetic is
+         * still silent — {@code 2+2} answers 4, {@code 5÷2} answers 5÷2, and {@code 0^ω} answers −1, which is a
+         * real number however it was spelled. What opens a window is a value the real line cannot hold: a
+         * grade, a torsion, or a twist that is not a whole turn. Those are exactly the answers that used to be
+         * correct on the display and undrawable everywhere else, and {@link Place} is the picture of them.
+         *
+         * <p>A refusal is reported here where an ordinary result is not, and the asymmetry is the point: a
+         * value that is off the line and still has no place is a value with something to say about it, and the
+         * sentence saying it is more use than a silence that looks identical to arithmetic.
+         */
+        private void offerPlace(String entry, Term value, Previews windows) {
+            if (!Place.offTheLine(value)) {
+                return;
+            }
+            Place place = Place.read(value);
+            if (place.ok()) {
+                windows.show(entry, place);
+            } else {
+                status(place.refusal());
+            }
+        }
+
+        /**
+         * Name something: {@code k = 3}, or {@code f(x) = x^2+1}.
+         *
+         * <p>The entry is cleared only when the definition was accepted, which is the rule every rejection in
+         * this class follows — a line that did not parse stays where it is so it can be corrected, and the
+         * reason appears on the status line beside it rather than in the field being corrected.
+         *
+         * <p>On success the definitions window comes up. That is {@link Definitions}' doing rather than this
+         * method's, and it is deliberate: a definition made from the keypad, from that window's own entry and
+         * from a shell prompt are the same act, so they go through one door and the same thing happens.
+         */
+        synchronized void define(String line) {
+            Definitions names = definitions;
+            if (names == null) {
+                refuse("there is nowhere to keep a definition here");
+                return;
+            }
+            Definitions.Made made = names.request(line);
+            if (made.refusal() != null) {
+                refuse(made.refusal());
+                return;
+            }
+            display.text("");
+            status("defined " + made.definition().head());
+            justEvaluated = false;
+        }
+
+        /**
+         * Put the entry back as it was, from a history click or a definition.
+         *
+         * <p>Washed, because this is the one way the entry changes without the user having typed into it --
+         * and the click that did it was in a <em>different window</em>, which is to say somewhere the eye is
+         * not. See {@link Motion#changed}.
+         */
         synchronized void restore(String entry) {
+            enter(entry);
+            // The report went with the line it was about. A refusal left standing over a replaced entry says
+            // something false about what is now in the field -- which typing does NOT do, because a typed
+            // correction is an answer to the report and wants it still there to be answered.
+            status("");
+            motion.changed(display.node());
+        }
+
+        /**
+         * Put a line in the entry, as typing it would be -- and unmarked, because the hand that typed it
+         * knows it did.
+         *
+         * <p>Split from {@link #restore} when that grew a wash. The two were one method while neither said
+         * anything, and they are not one act: a line the user typed and a line that arrived from another
+         * window differ in exactly whether anyone needs telling.
+         */
+        synchronized void enter(String entry) {
             display.text(entry);
             justEvaluated = false;
         }
@@ -1041,29 +1375,51 @@ public final class CalculatorApp {
                     else { display.deleteBack(); }   // backspaces at the caret, or eats the selection
                 }
                 case "=" -> {
+                    // A line with an = in it is a DEFINITION and not an expression, and there is no ambiguity
+                    // to weigh: COTT's grammar has no = in it at all, so such a line was a syntax error until
+                    // now. The keypad's = key never types one either -- it evaluates -- so the only way to get
+                    // one into the entry is to mean it.
+                    if (doc.text().indexOf('=') >= 0) {
+                        define(doc.text());
+                        return;
+                    }
                     if (!doc.text().isEmpty()) {
                         String entry = doc.text();
+                        // One reading of the session for the whole press. See definitions(Definitions).
+                        Bindings names = session;
                         try {
                             // Parsed here rather than through Cott.evaluate, which parses too: the term is
                             // what the plotter reads its variables out of, and re-parsing to get it would
                             // let the two disagree about what was typed.
-                            Term term = Parser.parse(Notation.normalize(entry));
-                            String result = Render.show(Cott.reduce(term));
+                            //
+                            // Expanded before either use, so a defined name is the expression it stands for
+                            // everywhere -- which is what makes plotting f(x) draw f's body rather than an
+                            // opaque symbol with no curve.
+                            Term term = names.expand(Parser.parse(Notation.normalize(entry, names), names));
+                            // Both the written term and what it came to are kept, because the plotter needs
+                            // both and they answer different questions: which variables were written down,
+                            // and -- when none were -- what kind of value this turned out to be.
+                            Term value = Cott.reduce(term);
+                            String result = Render.show(value);
                             status("");
                             display.text(result);
+                            // The press that most needs saying so is the one that changes nothing on screen:
+                            // an expression that reduces to itself, or a second = on a result already
+                            // showing. Both used to be indistinguishable from a dropped click.
+                            motion.acknowledged(display.node());
                             justEvaluated = true;
                             History h = history;
                             if (h != null) {
                                 h.record(entry, result);
                             }
-                            offerPlot(entry, term);
+                            offerPlot(entry, term, value);
                         } catch (SyntaxException e) {
                             // A rejection is REPORTED, never written into the field: the entry stays
                             // put so the expression can be fixed and "=" pressed again without
                             // retyping it, which a message sitting in the display would prevent.
-                            status(e.getMessage());
+                            refuse(e.getMessage());
                         } catch (RuntimeException e) {
-                            status("Error");   // an evaluator fault; the entry still survives it
+                            refuse("Error");   // an evaluator fault; the entry still survives it
                         }
                     }
                 }
@@ -1087,7 +1443,10 @@ public final class CalculatorApp {
          * an implicit multiplication sign when it lands directly after something that ends an operand.
          */
         private void insertOperand(String label, Document doc) {
-            String token = label.equals("log") ? "log(" : label;
+            // A call key types the name and its opening bracket, so the caret lands where the argument goes.
+            // log is here with the rest of them: it is spelled like a call and typed like one, and only what it
+            // returns makes it different.
+            String token = label.equals("log") || Real.of(label) != null ? label + "(" : label;
             if (justEvaluated) {
                 display.text("");
                 doc = display.document().value();

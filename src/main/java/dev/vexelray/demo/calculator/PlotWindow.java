@@ -21,12 +21,19 @@ import sibarum.tactroller.api.Key;
 /**
  * One preview: the chrome around a plot, and everything the user reaches for.
  *
- * <p>It holds <b>both</b> renderers — {@link PlotSurface} for a curve of one variable, {@link SurfacePlot} for a
- * surface of two — and mounts whichever the expression turned out to need. Which one is not a mode the user
- * selects; it is the arity of what they typed, decided once in {@link #show} and never asked about again. The
- * controls below are deliberately the same four whichever is mounted, doing the corresponding thing: the plus
- * and minus narrow and widen the window, <b>Fit</b> re-runs the framing policy over the window now on show, and
- * <b>Reset</b> goes back to where the framing pass put it.
+ * <p>It holds <b>every</b> renderer — {@link PlotSurface} for a curve of one variable, {@link SurfacePlot} and
+ * {@link SdfViewport} for a surface of two, and {@link SpiralPlot} for a value that has a place rather than a
+ * curve — and mounts whichever the expression turned out to need. Which one is not a mode the user selects; it
+ * is a property of what they typed, decided once in {@link #show} and never asked about again. The controls
+ * below are deliberately the same four whichever is mounted, doing the corresponding thing: the plus and minus
+ * narrow and widen the window (or lengthen and shorten the coil, which is the same gesture over the one axis a
+ * spiral has), <b>Fit</b> re-runs the framing policy over the window now on show, and <b>Reset</b> goes back to
+ * where the framing pass put it.
+ *
+ * <p>Three of the four are pictures of a <em>function</em> and the fourth is a picture of a <em>place</em>.
+ * That is the only structural difference between them, and it shows up in exactly two places: the spiral is
+ * given a {@link Place} rather than a {@link Plottable}, and it has no cache to report because it has nothing
+ * to evaluate.
  *
  * <h2>One window per preview</h2>
  * This used to be <em>the</em> plot window — a single named window that re-plotted whatever was evaluated last.
@@ -60,6 +67,7 @@ final class PlotWindow {
     private final PlotSurface curve;
     private final SurfacePlot surface;
     private final SdfViewport marched;
+    private final SpiralPlot spiral;
     private final Node heading;
     private final Node status;
     private final Node body;
@@ -68,17 +76,27 @@ final class PlotWindow {
     private final Node toggle;
     private final Node styleButton;
     private volatile AppWindow window;
-    /** Which renderer is mounted. Set before the tree is touched, and read by every control below. */
-    private volatile boolean showingSurface;
+
     /**
-     * Whether the surface on show is the marched one rather than the box one.
+     * Which of the four renderers is mounted. Set before the tree is touched, and read by every control below.
      *
-     * <p>Only ever true while {@link #showingSurface} is: the two are the same expression drawn two ways, and
-     * the comparison is the point of offering both. A curve has no marched counterpart worth looking at — the
-     * field would be its graph extruded into a ridge, which is a worse picture of one variable than the curve
-     * already is.
+     * <p>This was a pair of booleans — <em>is it a surface</em> and <em>is it marched</em> — which was exactly
+     * right while there were three views and one of them was a mode of another, and stopped being right the
+     * moment a fourth arrived that is neither. The states a pair of booleans can spell but the window cannot
+     * be in (a marched curve) are now unspellable, which is the ordinary reason to reach for an enum and the
+     * reason it is worth the diff: every control below asks one question instead of two nested ones.
      */
-    private volatile boolean marching;
+    private volatile View view = View.CURVE;
+
+    /**
+     * What a preview can be showing.
+     *
+     * <p>{@link #SURFACE} and {@link #MARCHED} are the same expression drawn two entirely different ways and
+     * the comparison is the point of offering both, so <b>March</b> swaps between exactly those two. A curve
+     * has no marched counterpart worth looking at — the field would be its graph extruded into a ridge — and
+     * the {@link #SPIRAL} has none either, for a better reason: it is not a field at all, it is a place.
+     */
+    private enum View { CURVE, SURFACE, MARCHED, SPIRAL }
 
     PlotWindow(String key, WindowMemory memory) {
         this.key = key;
@@ -96,6 +114,7 @@ final class PlotWindow {
         this.curve = new PlotSurface(gui, status::text);
         this.surface = new SurfacePlot(gui, status::text);
         this.marched = new SdfViewport(gui, status::text);
+        this.spiral = new SpiralPlot(gui, status::text);
 
         this.toggle = button("March", this::flip);
         // Cycles rather than opening a menu: there are three, they are all worth seeing, and the fastest way to
@@ -117,9 +136,10 @@ final class PlotWindow {
         // the next expression turns out to be the other kind.
         this.surface.node().visible(false);
         this.marched.mounted(false);
+        this.spiral.node().visible(false);
         this.body = gui.column().width(Length.FILL).height(Length.FILL)
                 .padding(Length.dp(12)).gap(Length.dp(8))
-                .children(heading, curve.node(), surface.node(), marched.node(), controls);
+                .children(heading, curve.node(), surface.node(), marched.node(), spiral.node(), controls);
 
         this.titleBar = new TitleBar(gui, WindowControls.NONE, "Plot");
         gui.root().background(Palette.BG).children(titleBar.node(), body);
@@ -137,18 +157,17 @@ final class PlotWindow {
         // Straight off the device bus: see the class note on why neither of these is a node handler.
         gui.bus().subscribe(InputTopics.INPUT, event -> {
             if (event instanceof InputEvent.Scrolled s && s.yOffset() != 0) {
-                if (marching) {
+                switch (view) {
                     // No "about the pointer" here: a marched zoom recompiles, so it moves in whole notches
                     // rather than continuously, and there is nothing to keep under the cursor between them.
-                    marched.zoom(s.yOffset() > 0 ? 1 : -1);
-                    return;
+                    case MARCHED -> marched.zoom(s.yOffset() > 0 ? 1 : -1);
+                    case SURFACE -> surface.wheel(s.yOffset(), s.x(), s.y());
+                    // Nor here, and for the plainer reason: the wheel lengthens the coil by a whole turn,
+                    // and there is nothing between one grade and the next to land on.
+                    case SPIRAL -> spiral.wheel(s.yOffset(), s.x(), s.y());
+                    case CURVE -> curve.wheel(s.yOffset(), s.x(), s.y());
                 }
-                if (showingSurface) {
-                    surface.wheel(s.yOffset(), s.x(), s.y());
-                } else {
-                    curve.wheel(s.yOffset(), s.x(), s.y());
-                }
-            } else if (event instanceof InputEvent.PointerMoved m && !showingSurface) {
+            } else if (event instanceof InputEvent.PointerMoved m && view == View.CURVE) {
                 curve.hover(m.x(), m.y());
             }
         });
@@ -183,6 +202,26 @@ final class PlotWindow {
         } else {
             curve.show(plottable, typed);
         }
+        raise(app);
+    }
+
+    /**
+     * Show where {@code place} sits, written as {@code entry}, and raise the window — {@link #show}'s
+     * counterpart for the values that have a place rather than a curve.
+     *
+     * <p>There is no {@code typed} term here and there is nothing missing in that. A curve is given the term as
+     * it was written because {@link Influence} breaks it into the pieces carrying the value at a landmark, and
+     * a place has no landmarks: the value <em>is</em> the landmark, and it is the reduced one, because where
+     * {@code 2÷0} sits is where {@code 2ω} sits.
+     */
+    void show(GuiApp app, String entry, Place place) {
+        mount(entry, place);
+        spiral.show(place);
+        raise(app);
+    }
+
+    /** Open the OS window on this preview, building it the first time this slot is claimed. */
+    private void raise(GuiApp app) {
         AppWindow open = window;
         if (open == null) {
             // The bar wires itself to whatever window this opens, and unwires when it closes -- the two lines
@@ -212,28 +251,40 @@ final class PlotWindow {
         boolean asSurface = plottable.isSurface();
         heading.text((asSurface ? "z = " : "y = ") + entry);
         titleBar.title(entry);
-        showingSurface = asSurface;
         // A surface arrives marched. It is the better picture of one -- smooth, turnable without rebuilding
         // anything, and shaded from the expression's own normals -- so it is what pressing = should give you,
         // and the boxes are the thing to ask for when you want the arithmetic's own evidence instead.
-        marching = asSurface && canMarch;
-        toggle.text(marching ? "Boxes" : "March");
+        view = asSurface ? (canMarch ? View.MARCHED : View.SURFACE) : View.CURVE;
         toggle.visible(asSurface && canMarch);
         apply();
     }
 
-    /** Put exactly one of the three renderers on screen, matching {@link #showingSurface} and {@link #marching}. */
+    /**
+     * Mount the spiral. The heading says neither {@code y =} nor {@code z =} because the picture is not a graph
+     * of the entry against anything — it is where the entry <em>is</em>, and the word for that is "at".
+     */
+    private void mount(String entry, Place place) {
+        heading.text(entry + " is at");
+        titleBar.title(entry);
+        view = View.SPIRAL;
+        toggle.visible(false);
+        apply();
+    }
+
+    /** Put exactly one of the four renderers on screen, matching {@link #view}. */
     private void apply() {
-        curve.node().visible(!showingSurface);
-        surface.node().visible(showingSurface && !marching);
-        marched.mounted(showingSurface && marching);
+        curve.node().visible(view == View.CURVE);
+        surface.node().visible(view == View.SURFACE);
+        marched.mounted(view == View.MARCHED);
+        spiral.node().visible(view == View.SPIRAL);
+        toggle.text(view == View.MARCHED ? "Boxes" : "March");
         // Only the marched view has styles, so the control appears with it rather than sitting there greyed.
-        styleButton.visible(showingSurface && marching);
+        styleButton.visible(view == View.MARCHED);
     }
 
     /** Next render style, and recompile for it. See {@link MarchStyle} on why that is a compile and not a flag. */
     private void cycleStyle() {
-        if (!marching) {
+        if (view != View.MARCHED) {
             return;
         }
         MarchStyle next = marched.style().next();
@@ -250,7 +301,7 @@ final class PlotWindow {
      * where the camera is six floats of push constant and turning rebuilds nothing at all.
      */
     private void flip() {
-        if (!showingSurface) {
+        if (view != View.SURFACE && view != View.MARCHED) {
             return;
         }
         // Carry the viewpoint across, so the swap is the same surface seen the same way and not a new picture
@@ -261,16 +312,15 @@ final class PlotWindow {
         // both mean the same thing by it: the box view projects along Camera.viewDirection, and the marched one
         // orbits its eye to minus the direction the generated fragment builds from the same two angles, which
         // in plot coordinates is that same vector term for term.
-        if (marching) {
+        if (view == View.MARCHED) {
             surface.camera(marched.camera());
+            view = View.SURFACE;
+            apply();
+            surface.invalidate();        // the box view repaints to be turned; the marched one just marches
         } else {
             marched.camera(surface.camera());
-        }
-        marching = !marching;
-        toggle.text(marching ? "Boxes" : "March");
-        apply();
-        if (!marching) {
-            surface.invalidate();        // the box view repaints to be turned; the marched one just marches
+            view = View.MARCHED;
+            apply();
         }
     }
 
@@ -290,12 +340,19 @@ final class PlotWindow {
         }
     }
 
+    /** {@link #headless} for a place. The spiral photographs like the others: it is nodes and nothing else. */
+    void headless(String entry, Place place) {
+        mount(entry, place);
+        status.text("");
+        spiral.showNow(place);
+    }
+
     /** Paint what {@link #headless} set up, on the calling thread. */
     void settle() {
-        if (showingSurface) {
-            surface.settle();
-        } else {
-            curve.settle();
+        switch (view) {
+            case SURFACE, MARCHED -> surface.settle();
+            case SPIRAL -> spiral.settle();
+            case CURVE -> curve.settle();
         }
     }
 
@@ -305,12 +362,12 @@ final class PlotWindow {
         settle();
     }
 
-    /** Pan a curve by a fraction of the window, or turn a surface by a quarter. For the captures. */
+    /** Pan a curve by a fraction of the window, or turn a surface or a coil by a quarter. For the captures. */
     void panBy(double fraction) {
-        if (showingSurface) {
-            surface.turn(fraction * Math.PI, 0);
-        } else {
-            curve.nudge(fraction, 0);
+        switch (view) {
+            case SURFACE, MARCHED -> surface.turn(fraction * Math.PI, 0);
+            case SPIRAL -> spiral.turn(fraction * Math.PI, 0);
+            case CURVE -> curve.nudge(fraction, 0);
         }
         settle();
     }
@@ -323,12 +380,21 @@ final class PlotWindow {
 
     /** Open the first landmark's tooltip without a pointer, for the capture. False when there is no landmark. */
     boolean hoverMark() {
-        return !showingSurface && curve.hoverFirstMark();
+        return view == View.CURVE && curve.hoverFirstMark();
     }
 
-    /** What the cache saved across everything asked of it so far. */
+    /**
+     * What the cache saved across everything asked of it so far.
+     *
+     * <p>The spiral has none and reports none. That is not an omission: a place is two numbers settled before
+     * the first frame, so there is nothing a cache would be holding and nothing a turn would ask it for.
+     */
     String cacheReport() {
-        return showingSurface ? surface.cacheReport() : curve.cacheReport();
+        return switch (view) {
+            case SURFACE, MARCHED -> surface.cacheReport();
+            case SPIRAL -> "nothing to cache";
+            case CURVE -> curve.cacheReport();
+        };
     }
 
     /**
@@ -356,24 +422,22 @@ final class PlotWindow {
     }
 
     private void home() {
-        if (marching) {
-            marched.home();
-        } else if (showingSurface) {
-            surface.reset();
-            surface.invalidate();
-        } else {
-            curve.reset();
-            curve.invalidate();
+        switch (view) {
+            case MARCHED -> marched.home();
+            case SURFACE -> { surface.reset(); surface.invalidate(); }
+            case SPIRAL -> { spiral.reset(); spiral.invalidate(); }
+            case CURVE -> { curve.reset(); curve.invalidate(); }
         }
     }
 
     private void fit() {
-        if (marching) {
-            marched.fitVertically();
-        } else if (showingSurface) {
-            surface.fitVertically();
-        } else {
-            curve.fitVertically();
+        switch (view) {
+            case MARCHED -> marched.fitVertically();
+            case SURFACE -> surface.fitVertically();
+            // The same act one dimension sideways: Fit leaves the window holding what is in it and no more,
+            // and on a spiral the number that means is how many turns are on screen.
+            case SPIRAL -> { spiral.fitVertically(); spiral.invalidate(); }
+            case CURVE -> curve.fitVertically();
         }
     }
 
@@ -383,25 +447,22 @@ final class PlotWindow {
      * through. Same notch, same direction, same key — the difference is in what it costs, not in what it means.
      */
     private void step(int notches) {
-        if (marching) {
-            marched.zoom(notches);
-        } else if (showingSurface) {
-            surface.zoom(notches);
-            surface.invalidate();
-        } else {
-            curve.zoom(notches);
-            curve.invalidate();
+        switch (view) {
+            case MARCHED -> marched.zoom(notches);
+            case SURFACE -> { surface.zoom(notches); surface.invalidate(); }
+            // A notch is a whole turn of the coil, which is a whole grade -- the two are the same thing here.
+            case SPIRAL -> { spiral.zoom(notches); spiral.invalidate(); }
+            case CURVE -> { curve.zoom(notches); curve.invalidate(); }
         }
     }
 
-    /** An arrow key: a nudge along the plane for a curve, a turn of the picture for either kind of surface. */
+    /** An arrow key: a nudge along the plane for a curve, a turn of the picture for everything else. */
     private void arrow(int x, int y) {
-        if (marching) {
-            marched.nudge(x, y);
-        } else if (showingSurface) {
-            surface.nudge(x, y);
-        } else {
-            curve.pan(x, y);
+        switch (view) {
+            case MARCHED -> marched.nudge(x, y);
+            case SURFACE -> surface.nudge(x, y);
+            case SPIRAL -> spiral.nudge(x, y);
+            case CURVE -> curve.pan(x, y);
         }
     }
 

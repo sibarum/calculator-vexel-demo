@@ -10,6 +10,7 @@ import dev.mainframe.value.Value;
 import dev.mainframe.value.ValueType;
 import dev.vexelray.gui.core.app.WindowMemory;
 import dev.vexelray.gui.core.input.MenuSink;
+import sibarum.cott.Bindings;
 import sibarum.cott.Cott;
 import sibarum.cott.Notation;
 import sibarum.cott.Parser;
@@ -93,7 +94,11 @@ public final class Calculator implements ConsoleApp {
         console.host().ifPresent(window::show);
     }
 
-    /** The history's queue is drained here. See {@link CalculatorApp.Window#tick}. */
+    /**
+     * The history's queue is drained here, and the plot previews are given their frame -- a marched viewport
+     * touches the GPU only from this hook, because MainFrame's loop is the thread that presents. See
+     * {@link CalculatorApp.Window#tick}.
+     */
     @Override
     public void tick() {
         window.tick();
@@ -102,6 +107,9 @@ public final class Calculator implements ConsoleApp {
     @Override
     public void menu(MenuSink menu, ConsoleContext console) {
         menu.item("Open the calculator", () -> console.run("calc"));
+        // The definitions are reachable from the keypad's tab strip, and from here, because a name defined in
+        // them is what the prompt reads expressions in as well -- so the desk's menu is a fair place to ask.
+        menu.item("Names this session has given", window::openDefinitions);
     }
 
     /** This window's Gui, so the host can bind the OS clipboard on it as it does on every other window. */
@@ -125,8 +133,9 @@ public final class Calculator implements ConsoleApp {
      *
      * <p>Reducing goes straight to COTT rather than through the keypad's {@code Engine}: the engine's job is to
      * edit a display field and it would have to be given one. These are the same three lines the {@code =} key
-     * runs, which is the point — a shell that agreed with the keypad only most of the time would be worse than
-     * not having one.
+     * runs, <b>in the same vocabulary</b> — the session's {@code Bindings} are read here too, so a name defined
+     * in the calculator's definitions window means the same thing at the prompt. A shell that agreed with the
+     * keypad only until somebody defined something would be worse than not having one.
      */
     private Builtin calc(ConsoleContext console) {
         Signature signature = Signature.named("calc", name())
@@ -156,7 +165,12 @@ public final class Calculator implements ConsoleApp {
                 }
                 List<Value> answers = new java.util.ArrayList<>();
                 for (String entry : entries) {
-                    answers.add(new Value.Str(reduce(args, entry)));
+                    // A line with an = in it names something instead of asking something, exactly as it does in
+                    // the keypad's own entry -- and the vocabulary is read per line rather than once for the
+                    // command, because a definition earlier in the list is in scope for what follows it.
+                    answers.add(new Value.Str(entry.indexOf('=') >= 0
+                            ? define(args, entry)
+                            : reduce(args, entry, window.bindings())));
                 }
                 return answers.size() == 1 ? answers.getFirst() : new Value.ListVal(answers);
             }
@@ -183,16 +197,31 @@ public final class Calculator implements ConsoleApp {
     }
 
     /**
-     * One expression, reduced.
+     * One definition, made — {@code calc "k = 3"}, which is the same act as typing it into the keypad and gets
+     * the same window. The answer is the definition as it will be listed, so a pipeline can see what was named.
+     */
+    private String define(Args args, String line) {
+        try {
+            return window.define(line);
+        } catch (SyntaxException e) {
+            throw args.fail("E831", e.getMessage())
+                    .hint("a definition is name = expression, or f(x) = expression")
+                    .build();
+        }
+    }
+
+    /**
+     * One expression, reduced in {@code names} — whatever the keypad's own session has been told to call things,
+     * so {@code calc "f(2)"} and pressing {@code =} on {@code f(2)} are the same question.
      *
      * <p>A syntax error is the shell's kind of error, with the message COTT already wrote — it says where the
      * expression stopped making sense, which is the whole of what anyone needs. An evaluator fault is a
      * different code, because "this is not valid" and "this is valid and I could not do it" are not the same
      * news.
      */
-    private static String reduce(Args args, String entry) {
+    private static String reduce(Args args, String entry, Bindings names) {
         try {
-            Term term = Parser.parse(Notation.normalize(entry));
+            Term term = names.expand(Parser.parse(Notation.normalize(entry, names), names));
             return Render.show(Cott.reduce(term));
         } catch (SyntaxException e) {
             throw args.fail("E831", e.getMessage())
