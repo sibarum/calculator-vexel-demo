@@ -213,7 +213,13 @@ public final class CalculatorApp {
                 openMarched(engine, march);
             }
             TactrollerInputBridge bridge = input == null ? null : new TactrollerInputBridge(input, gui.bus());
-            FpsProbe probe = new FpsProbe(krono.kron());
+            FpsProbe probe = new FpsProbe(krono.kron(), app::postWake, () -> gui.root().opacity(1f), gui.handlers());
+            if (maxFrames <= 0) {
+                // Render on demand: block until the kernel says a frame is due. Only on an uncapped run --
+                // a frame cap is a script, and blocking would make N frames of a still window take forever.
+                gui.onWork(app::postWake);   // mutations from worker-thread handlers wake the loop too
+                app.pacing(() -> krono.kron().sleepTimeout().nanos());
+            }
             try {
                 app.run(gui, maxFrames, () -> {
                     krono.tick();
@@ -1030,11 +1036,18 @@ public final class CalculatorApp {
             requests.add(() -> engine.restore(e.input()));
         }
 
-        /** GUI thread, once per frame. */
+        /**
+         * GUI thread, once per frame. Drains <em>everything</em> queued, not one request.
+         *
+         * <p>One per frame was survivable only while the loop redrew unconditionally, because the next
+         * frame was always a few milliseconds away. A loop that parks when nothing is happening has no
+         * next frame to rely on: it runs this, leaves the rest of the backlog sitting there, and then
+         * asks whether anything needs drawing — and nothing here can tell it yes. The queue is emptied
+         * or the queue is stuck.
+         */
         void drain() {
             window.pump();
-            Runnable r = requests.poll();
-            if (r != null) {
+            for (Runnable r; (r = requests.poll()) != null; ) {
                 r.run();
             }
         }

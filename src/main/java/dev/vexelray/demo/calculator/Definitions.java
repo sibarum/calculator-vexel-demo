@@ -169,10 +169,14 @@ final class Definitions {
         open.show();
     }
 
-    /** GUI thread, once per frame: apply whatever the entry and the row buttons asked for. */
+    /**
+     * GUI thread, once per frame: apply whatever the entry and the row buttons asked for.
+     *
+     * <p>Everything queued, not one request. A loop that parks when nothing is happening has no next
+     * frame to leave the remainder for, and nothing here can ask for one.
+     */
     void drain() {
-        Runnable r = requests.poll();
-        if (r != null) {
+        for (Runnable r; (r = requests.poll()) != null; ) {
             r.run();
         }
     }
