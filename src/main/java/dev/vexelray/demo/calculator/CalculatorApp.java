@@ -6,7 +6,9 @@ import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.TextClipboard;
 import dev.vexelray.gui.core.WindowControls;
 import dev.vexelray.gui.core.WindowRegion;
+import dev.vexelray.gui.core.input.ClaimScope;
 import dev.vexelray.gui.core.input.InteractionState;
+import dev.vexelray.gui.core.input.Shortcut;
 import dev.vexelray.gui.core.app.AppWindow;
 import dev.vexelray.gui.core.app.GuiApp;
 import dev.vexelray.gui.core.app.Settings;
@@ -217,8 +219,9 @@ public final class CalculatorApp {
             if (maxFrames <= 0) {
                 // Render on demand: block until the kernel says a frame is due. Only on an uncapped run --
                 // a frame cap is a script, and blocking would make N frames of a still window take forever.
-                gui.onWork(app::postWake);   // mutations from worker-thread handlers wake the loop too
                 app.pacing(() -> krono.kron().sleepTimeout().nanos());
+                app.idleRefresh(200_000_000L)   // 5 Hz floor while focused: a missed wake is late, never lost
+                   .maxFrameRate(16_666_666L);  // 60 Hz ceiling while animating
             }
             try {
                 app.run(gui, maxFrames, () -> {
@@ -715,12 +718,18 @@ public final class CalculatorApp {
         gui.focus(display.node());
         display.onSubmit(s -> engine.press("="));
         // Typing w yields omega. Substituting in onChange re-enters once and then terminates,
-        // since the replacement contains no w. text() parks the caret at the end, so put it back —
+        // since the replacement contains no w. The substitution parks the caret at the end, so put it back —
         // w and ω are one char each, so every offset survives the substitution unchanged.
+        //
+        // Select-and-insert rather than text(), for the reason Engine.put gives: text() resets the undo
+        // history, and this fires on an ordinary keystroke. A field that forgot everything the moment a w was
+        // typed is an undo that works until the first ω, which is a worse failure than the extra entry this
+        // leaves (one Ctrl+Z takes the ω back to the w, a second takes the w away).
         display.onChange(s -> {
             if (s.indexOf('w') >= 0) {
                 int at = display.caret();
-                display.text(s.replace('w', 'ω'));
+                display.select(0, s.length());
+                display.insert(s.replace('w', 'ω'));
                 display.caret(at);
             }
         });
@@ -777,6 +786,21 @@ public final class CalculatorApp {
         Node root = gui.column().width(Length.FILL).height(Length.FILL)
                 .padding(Length.dp(16)).gap(Length.rem(0.75f))
                 .children(display.node(), statusText, pads.node());
+
+        // Undo/redo for the whole window, not just for the field the caret is in.
+        //
+        // The field already binds these chords for itself, and that binding is the right one in an editor,
+        // where the thing being undone is the thing you are typing into. Here there is one line of text and a
+        // grid of buttons that write into it, so an undo that stops working the moment Tab moves the focus to
+        // a key would stop working exactly when the user was driving the calculator by mouse. A GLOBAL claim
+        // is how the framework says that: while it applies the chord reaches nothing else, the focused node's
+        // own handler included, so there is one door and no question of which of the two answered.
+        //
+        // Gui.history(node, history, scope) would bind the same three chords to the same stack; these go
+        // through Engine because a calculator's undo has to put back more than the text -- see Engine.undo.
+        gui.claim(root, Shortcut.of(Key.Z, Modifier.CONTROL), ClaimScope.GLOBAL, engine::undo);
+        gui.claim(root, Shortcut.of(Key.Z, Modifier.CONTROL, Modifier.SHIFT), ClaimScope.GLOBAL, engine::redo);
+        gui.claim(root, Shortcut.of(Key.Y, Modifier.CONTROL), ClaimScope.GLOBAL, engine::redo);
         // The window's own title bar: ordinary widgets, plus the two declarations that tell the window
         // manager which pixels are caption (DRAG on the strip, INTERACTIVE on each button). Bound to the
         // real window in main(); here it commands WindowControls.NONE, which is what --capture draws.
@@ -1337,7 +1361,7 @@ public final class CalculatorApp {
                 refuse(made.refusal());
                 return;
             }
-            display.text("");
+            put("");
             status("defined " + made.definition().head());
             justEvaluated = false;
         }
@@ -1367,8 +1391,61 @@ public final class CalculatorApp {
          * window differ in exactly whether anyone needs telling.
          */
         synchronized void enter(String entry) {
-            display.text(entry);
+            put(entry);
             justEvaluated = false;
+        }
+
+        /**
+         * Replace the whole entry, as an <b>undoable</b> step.
+         *
+         * <p>{@link TextField#text(String)} is the wrong door for every one of this class's whole-entry
+         * replacements, and its own contract says so: it resets the history. That is right for a field handed
+         * new content it has no past with -- a document loaded over the top -- and exactly wrong here, where
+         * every replacement is something the user just did to a line they were writing. Going through it left
+         * the calculator with an undo that covered typing and covered nothing else: C, =, DEL over a result, a
+         * click in the history window and a definition each silently emptied the stack, which are the five
+         * moments a calculator's Ctrl+Z is for.
+         *
+         * <p>So the swap is spelled the way a completion popup spells one -- select the line, then insert over
+         * it -- which is the framework's recording path and lands as one entry. An empty replacement is a
+         * deletion instead, because {@link TextField#insert} takes no empty string.
+         */
+        private void put(String text) {
+            String current = display.document().value().text();
+            if (current.isEmpty() && text.isEmpty()) {
+                return;   // nothing to replace and nothing to put there: not an edit, so not an undo entry
+            }
+            display.select(0, current.length());
+            if (text.isEmpty()) {
+                display.deleteBack();   // eats the selection, which is the whole line
+            } else {
+                display.insert(text);
+            }
+        }
+
+        /**
+         * Undo one step of the entry, and forget that a result is showing.
+         *
+         * <p>Claimed at {@link ClaimScope#GLOBAL} in {@link #buildUi} rather than left to the field's own
+         * Ctrl+Z, for the two reasons the keypad has and a text field cannot: the chord has to work while the
+         * focus is on a key rather than in the display, and {@code justEvaluated} is state of this class that
+         * the field knows nothing about. Leaving it set across an undo means the restored expression is one the
+         * next digit wipes -- the flag says a result is on the glass when what is on the glass is the line it
+         * came from.
+         */
+        synchronized void undo() {
+            if (display.history().undo()) {
+                justEvaluated = false;
+                status("");   // the report went with the line it was about; see restore(String)
+            }
+        }
+
+        /** Redo one undone step. The same reasoning as {@link #undo()}, in the other direction. */
+        synchronized void redo() {
+            if (display.history().redo()) {
+                justEvaluated = false;
+                status("");
+            }
         }
 
         /**
@@ -1382,9 +1459,9 @@ public final class CalculatorApp {
             // snapshot for the whole press: text and caret have to come from the same version.
             Document doc = display.document().value();
             switch (label) {
-                case "C" -> { display.text(""); justEvaluated = false; }
+                case "C" -> { put(""); justEvaluated = false; }
                 case "DEL" -> {
-                    if (justEvaluated) { display.text(""); justEvaluated = false; }
+                    if (justEvaluated) { put(""); justEvaluated = false; }
                     else { display.deleteBack(); }   // backspaces at the caret, or eats the selection
                 }
                 case "=" -> {
@@ -1415,7 +1492,7 @@ public final class CalculatorApp {
                             Term value = Cott.reduce(term);
                             String result = Render.show(value);
                             status("");
-                            display.text(result);
+                            put(result);   // undoable: Ctrl+Z is how the expression comes back
                             // The press that most needs saying so is the one that changes nothing on screen:
                             // an expression that reduces to itself, or a second = on a result already
                             // showing. Both used to be indistinguishable from a dropped click.
@@ -1461,7 +1538,12 @@ public final class CalculatorApp {
             // returns makes it different.
             String token = label.equals("log") || Real.of(label) != null ? label + "(" : label;
             if (justEvaluated) {
-                display.text("");
+                // Typing over a result: select it rather than clearing it, so the removal and the insertion
+                // that follows are ONE edit and one Ctrl+Z brings the result back. Clearing first works and
+                // undoes wrong -- the first Ctrl+Z would leave an empty field, which is a state the user was
+                // never shown. Selecting all also puts the insert at offset 0, which is what suppresses the
+                // implicit multiplication sign below: this token starts a new expression.
+                display.select(0, doc.text().length());
                 doc = display.document().value();
             }
             // The character to the left of where the insert lands, which is selectionStart rather
