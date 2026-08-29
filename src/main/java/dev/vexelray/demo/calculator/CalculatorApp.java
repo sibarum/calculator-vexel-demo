@@ -224,7 +224,11 @@ public final class CalculatorApp {
             if (maxFrames <= 0) {
                 // Render on demand: block until the kernel says a frame is due. Only on an uncapped run --
                 // a frame cap is a script, and blocking would make N frames of a still window take forever.
-                app.pacing(() -> krono.kron().sleepTimeout().nanos());
+                // Every deadline this application holds, in one place - which is what the supplier is for.
+                // The clock knows about animations; it does not know the window placement is 700ms from
+                // being written, and a loop that parks has no next frame to discover that on.
+                app.pacing(() -> Math.min(
+                        krono.kron().sleepTimeout().nanos(), memory.nanosUntilSettle()));
                 app.idleRefresh(200_000_000L)   // 5 Hz floor while focused: a missed wake is late, never lost
                    .maxFrameRate(16_666_666L);  // 60 Hz ceiling while animating
             }
@@ -726,15 +730,14 @@ public final class CalculatorApp {
         // since the replacement contains no w. The substitution parks the caret at the end, so put it back —
         // w and ω are one char each, so every offset survives the substitution unchanged.
         //
-        // Select-and-insert rather than text(), for the reason Engine.put gives: text() resets the undo
-        // history, and this fires on an ordinary keystroke. A field that forgot everything the moment a w was
-        // typed is an undo that works until the first ω, which is a worse failure than the extra entry this
-        // leaves (one Ctrl+Z takes the ω back to the w, a second takes the w away).
+        // replace() rather than text(), for the reason Engine.put gives: text() resets the undo history, and
+        // this fires on an ordinary keystroke. A field that forgot everything the moment a w was typed is an
+        // undo that works until the first ω, which is a worse failure than the extra entry this leaves (one
+        // Ctrl+Z takes the ω back to the w, a second takes the w away).
         display.onChange(s -> {
             if (s.indexOf('w') >= 0) {
                 int at = display.caret();
-                display.select(0, s.length());
-                display.insert(s.replace('w', 'ω'));
+                display.replace(s.replace('w', 'ω'));
                 display.caret(at);
             }
         });
@@ -1424,27 +1427,19 @@ public final class CalculatorApp {
          *
          * <p>{@link TextField#text(String)} is the wrong door for every one of this class's whole-entry
          * replacements, and its own contract says so: it resets the history. That is right for a field handed
-         * new content it has no past with -- a document loaded over the top -- and exactly wrong here, where
-         * every replacement is something the user just did to a line they were writing. Going through it left
-         * the calculator with an undo that covered typing and covered nothing else: C, =, DEL over a result, a
-         * click in the history window and a definition each silently emptied the stack, which are the five
-         * moments a calculator's Ctrl+Z is for.
+         * content it has no past with -- a document loaded over the top -- and exactly wrong here, where every
+         * replacement is something the user just did to a line they were writing. Going through it left the
+         * calculator with an undo that covered typing and covered nothing else: C, =, DEL over a result, a click
+         * in the tape window and a definition each silently emptied the stack, which are the five moments a
+         * calculator's Ctrl+Z is for.
          *
-         * <p>So the swap is spelled the way a completion popup spells one -- select the line, then insert over
-         * it -- which is the framework's recording path and lands as one entry. An empty replacement is a
-         * deletion instead, because {@link TextField#insert} takes no empty string.
+         * <p>{@link TextField#replace(String)} is the other door, and this class is why it exists: one entry,
+         * and a replacement that changes nothing costs no entry at all -- which is the {@code =} pressed on an
+         * expression that reduces to itself, and happens often enough here to be worth the framework saying it
+         * once rather than every caller checking.
          */
         private void put(String text) {
-            String current = display.document().value().text();
-            if (current.isEmpty() && text.isEmpty()) {
-                return;   // nothing to replace and nothing to put there: not an edit, so not an undo entry
-            }
-            display.select(0, current.length());
-            if (text.isEmpty()) {
-                display.deleteBack();   // eats the selection, which is the whole line
-            } else {
-                display.insert(text);
-            }
+            display.replace(text);
         }
 
         /**
@@ -1562,13 +1557,14 @@ public final class CalculatorApp {
             // returns makes it different.
             String token = label.equals("log") || Real.of(label) != null ? label + "(" : label;
             if (justEvaluated) {
-                // Typing over a result: select it rather than clearing it, so the removal and the insertion
-                // that follows are ONE edit and one Ctrl+Z brings the result back. Clearing first works and
-                // undoes wrong -- the first Ctrl+Z would leave an empty field, which is a state the user was
-                // never shown. Selecting all also puts the insert at offset 0, which is what suppresses the
-                // implicit multiplication sign below: this token starts a new expression.
-                display.select(0, doc.text().length());
-                doc = display.document().value();
+                // Typing over a result: the whole line goes and the token takes its place, in ONE edit, so one
+                // Ctrl+Z brings the result back. Clearing first and inserting after works and undoes wrong --
+                // the first Ctrl+Z would leave an empty field, which is a state the user was never shown. This
+                // token also starts a new expression, so no implicit multiplication sign: there is nothing to
+                // its left to multiply.
+                put(token);
+                justEvaluated = false;
+                return;
             }
             // The character to the left of where the insert lands, which is selectionStart rather
             // than the caret: inserting over a selection replaces it.
