@@ -192,6 +192,10 @@ public final class CalculatorApp {
             // The history needs the app to open its window onto, so it is built here rather than in
             // buildUi -- and stays null under --capture, which never reaches this far.
             History history = new History(engine, app, memory);
+            // Standalone: the frame loop is this application's, and its queue drains to exhaustion at the
+            // top of each iteration - so a request that opens a window rides the same drain as the window
+            // operation it makes, and lands in one frame instead of one per step.
+            history.onFrameLoop(app::post);
             engine.history(history);
             zoomShortcuts(history.windowGui());
             // Every window the framework opens from here on gets an input backend of its own, attached at
@@ -207,6 +211,7 @@ public final class CalculatorApp {
             // is: it needs an application to open onto, and there is none until now.
             Definitions definitions = new Definitions(memory, engine::bindings);
             definitions.attach(app);
+            definitions.onFrameLoop(app::post);
             zoomShortcuts(definitions.gui());
             engine.definitions(definitions);
             if (march != null) {
@@ -1040,6 +1045,25 @@ public final class CalculatorApp {
         private final java.util.concurrent.ConcurrentLinkedQueue<Runnable> requests =
                 new java.util.concurrent.ConcurrentLinkedQueue<>();
 
+        /**
+         * How a request reaches the frame loop. Defaults to this class's own queue, drained by
+         * {@link #drain()}.
+         *
+         * <p>Injectable because this class has three hosts and they do not agree on what the frame loop
+         * is: standalone there is a {@link GuiApp} whose own queue is drained to exhaustion at the top
+         * of each iteration, hosted in MainFrame the loop belongs to somebody else, and a headless
+         * capture has no loop at all. Only the first can be handed {@code app::post}, and it is the one
+         * that should be: a request that opens a window then rides the same drain as the window
+         * operation it triggers, so a reveal takes one frame instead of one per step. The default keeps
+         * the other two working exactly as they did, which is what makes this safe to do.
+         */
+        private volatile java.util.function.Consumer<Runnable> onFrameLoop = requests::add;
+
+        /** Marshal requests through {@code sink} instead of this class's own queue. */
+        void onFrameLoop(java.util.function.Consumer<Runnable> sink) {
+            this.onFrameLoop = java.util.Objects.requireNonNull(sink, "sink");
+        }
+
         History(Engine engine, GuiApp app, WindowMemory memory) {
             this.engine = engine;
             this.app = app;
@@ -1052,12 +1076,12 @@ public final class CalculatorApp {
 
         /** Worker thread: an expression was evaluated. */
         void record(String input, String output) {
-            requests.add(() -> window.add(app, new HistoryWindow.Entry(input, output)));
+            onFrameLoop.accept(() -> window.add(app, new HistoryWindow.Entry(input, output)));
         }
 
         /** Popup handler thread: an entry was clicked. */
         private void restore(HistoryWindow.Entry e) {
-            requests.add(() -> engine.restore(e.input()));
+            onFrameLoop.accept(() -> engine.restore(e.input()));
         }
 
         /**

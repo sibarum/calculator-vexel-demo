@@ -82,6 +82,21 @@ final class Definitions {
     private final List<Node> rows = new ArrayList<>();
     private final ConcurrentLinkedQueue<Runnable> requests = new ConcurrentLinkedQueue<>();
 
+    /**
+     * How a request reaches the frame loop; this class's own queue unless a host supplies better.
+     *
+     * <p>See {@code CalculatorApp.History} for the argument. Standalone there is a {@link GuiApp} whose
+     * queue is drained to exhaustion at the top of each iteration, so a request that opens a window
+     * rides the same drain as the window operation it triggers; hosted and headless there is no such
+     * queue, and the default keeps both working unchanged.
+     */
+    private volatile java.util.function.Consumer<Runnable> onFrameLoop = requests::add;
+
+    /** Marshal requests through {@code sink} instead of this class's own queue. */
+    void onFrameLoop(java.util.function.Consumer<Runnable> sink) {
+        this.onFrameLoop = java.util.Objects.requireNonNull(sink, "sink");
+    }
+
     private volatile Bindings bindings = Bindings.EMPTY;
     private volatile GuiApp app;
     private volatile AppWindow window;
@@ -100,7 +115,7 @@ final class Definitions {
         gui.focus(entry.node());
         // Enter defines, and the entry clears only if it was accepted -- a rejected line stays put so it can be
         // corrected, which is the same rule the keypad's status line follows for a rejected expression.
-        entry.onSubmit(line -> requests.add(() -> define(line)));
+        entry.onSubmit(line -> onFrameLoop.accept(() -> define(line)));
 
         this.status = gui.text(HINT)
                 .width(Length.FILL).height(Length.rem(1.25f))
@@ -215,7 +230,7 @@ final class Definitions {
         bindings = next;
         onChange.accept(next);
         Bindings.Definition made = next.get(name(line));
-        requests.add(this::apply);
+        onFrameLoop.accept(this::apply);
         return new Made(made, null);
     }
 
@@ -291,7 +306,7 @@ final class Definitions {
             case HOVER -> Palette.BTN_BLUE_HOVER;
             case PRESSED -> Palette.BTN_BLUE_PRESSED;
         }));
-        gui.onClick(drop, () -> requests.add(() -> forget(d.name())));
+        gui.onClick(drop, () -> onFrameLoop.accept(() -> forget(d.name())));
 
         Node row = gui.row().width(Length.FILL).height(Length.AUTO)
                 .padding(Length.rem(0.5f), Length.rem(0.625f))
