@@ -378,6 +378,39 @@ windowed.
 mvn compile exec:exec
 ```
 
+### Profiling
+
+The whole stack is instrumented through one seam — `sibarum.probe.Probe`, in `atchung-probe` — and it is off
+unless asked for. Ask for it here:
+
+```bash
+mvn compile exec:exec -Pprofiler
+```
+
+That turns on every lane, prints a rollup every two seconds as well as at exit, and names any frame over
+16 ms the moment it happens. Narrow it or redirect it on the same command line:
+
+```bash
+mvn compile exec:exec -Pprofiler "-Dprobe=gpu,frame"          # two lanes
+mvn compile exec:exec -Pprofiler "-Dprobe.out=run.log"        # to a file instead of stdout
+mvn compile exec:exec -Pprofiler "-Dprobe.trace=true"         # a line per event, not just the rollup
+```
+
+Lanes: `bus state time anim input frame layout draw gpu shader app`. It works in headless capture too, though
+the `gpu` and `frame` lanes stay empty there — that path renders offscreen and never enters the frame loop.
+
+Every setting is also an environment variable, which is the form that needs no Maven and survives into the
+native binary built by the `native` profile below (there is no JVM there to pass `-D` to):
+
+```bash
+PROBE=all PROBE_OUT=run.log PROBE_SLOW=16 ./calculator.exe
+```
+
+The report has three parts: **spans** (how long, with p99, max and a self time that says which nested span the
+cost really belongs to), **counters** (how many, with the peak — mailbox depths live here), and a **resource
+ledger** of what is still open, which is how a leaked swapchain or render target gets named. Full reference:
+[`atchung/docs/probe.md`](../atchung/docs/probe.md).
+
 ### Headless capture
 
 One mode, one application, and a list of **scenes** over it (no GPU window or input backend needed, except for

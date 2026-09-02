@@ -29,6 +29,27 @@
         <!-- Program args for exec:exec (one token; empty = interactive). -->
         <!-- Diagnostics: mvn compile exec:exec "-Dwake.trace=true" traces every frame-loop wake. -->
         <wake.trace>false</wake.trace>
+
+        <!--
+          Profiling: verbose on demand, across the whole stack. See sibarum.probe.Probe.
+
+            mvn compile exec:exec -Pprofiler                       everything, rollup every 2s, slow frames named
+            mvn compile exec:exec "-Dprobe=frame,gpu"              two lanes only
+            mvn compile exec:exec -Pprofiler "-Dprobe.out=run.log" to a file instead of stdout
+
+          Lanes: bus state time anim input frame layout draw gpu shader app.
+
+          Every one of these is also an environment variable — PROBE, PROBE_OUT, PROBE_TRACE, PROBE_EVERY,
+          PROBE_SLOW, PROBE_STACKS — which is the form that works identically on every OS, survives into the
+          native-image binary built by the `native` profile below (there is no JVM there to pass -D to), and
+          does not need Maven at all.
+        -->
+        <probe>off</probe>
+        <probe.out></probe.out>
+        <probe.trace>false</probe.trace>
+        <probe.every>0</probe.every>
+        <probe.slow>0</probe.slow>
+        <probe.stacks>false</probe.stacks>
         <app.args></app.args>
         <app.args2></app.args2>
         <app.args3></app.args3>
@@ -112,6 +133,12 @@
                     <arguments>
                         <argument>--enable-native-access=ALL-UNNAMED</argument>
                         <argument>-Dvexelray.wake.trace=${wake.trace}</argument>
+                        <argument>-Dprobe=${probe}</argument>
+                        <argument>-Dprobe.out=${probe.out}</argument>
+                        <argument>-Dprobe.trace=${probe.trace}</argument>
+                        <argument>-Dprobe.every=${probe.every}</argument>
+                        <argument>-Dprobe.slow=${probe.slow}</argument>
+                        <argument>-Dprobe.stacks=${probe.stacks}</argument>
                         <argument>-classpath</argument>
                         <classpath/>
                         <argument>${app.mainClass}</argument>
@@ -125,6 +152,30 @@
     </build>
 
     <profiles>
+
+        <!--
+          Run the application profiled: mvn compile exec:exec -Pprofiler
+
+          A profile rather than six properties to remember, and the defaults are chosen to answer the first
+          question rather than every question. All lanes, so nothing is missing on the run you did not plan;
+          a rollup every two seconds, so a session that ends in a kill still left a report behind; and any
+          frame over 16 ms named the moment it happens, because a stutter you can see in the window and a
+          line you can see in the log are how a complaint becomes a measurement.
+
+          Override any of it on the same command line — -Pprofiler "-Dprobe=gpu" narrows the lanes and keeps
+          the rest, and "-Dprobe.out=run.log" sends it to a file. -Dprobe.trace=true adds a line per event,
+          which is the setting to reach for once the rollup has told you which lane to stare at.
+        -->
+        <profile>
+            <id>profiler</id>
+            <properties>
+                <probe>all</probe>
+                <probe.every>2000</probe.every>
+                <probe.slow>16</probe.slow>
+                <probe.stacks>true</probe.stacks>
+            </properties>
+        </profile>
+
         <!-- Build-time platform selection, same as vexelray-gui-demo. -->
         <profile>
             <id>platform-windows</id>
