@@ -175,6 +175,7 @@ final class Definitions {
         if (open == null) {
             open = on.window(KEY, () -> titleBar.commands(WindowSpec
                     .of(memory.config(KEY, "Definitions", W, H + BAR_H).decorations(Decorations.CLIENT)
+                            .icon(Icons.mark())
                             .minSize(CalculatorApp.smallest(gui, MIN_EM_W), CalculatorApp.smallest(gui, MIN_EM_H)),
                             gui)
                     .onCreated(this::placed)

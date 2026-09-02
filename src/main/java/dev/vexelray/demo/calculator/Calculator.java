@@ -24,14 +24,14 @@ import java.util.List;
  * The calculator, as far as MainFrame is concerned: one command and a window it can open.
  *
  * <h2>Which way round this goes</h2>
- * The calculator used to be a program with a {@code main()} that owned a frame loop, and the plot and history
- * windows were things it opened. Plugged in here it is one rung down: MainFrame is the program, {@code apps}
+ * The calculator used to be a program with a {@code main()} that owned a frame loop, and the history
+ * window was a thing it opened. Plugged in here it is one rung down: MainFrame is the program, {@code apps}
  * lists the calculator among whatever else is on the desk, and {@code calc} opens it. The
  * calculator's own windows still open out of it, so the tree is a tree rather than a list — which is what an
  * operating system's window list has always been.
  *
  * <p>Nothing in {@link CalculatorApp} had to be rewritten for that. {@link CalculatorApp.Window} is the same
- * keypad, the same engine and the same previews, opened under a name on somebody else's {@code GuiApp} instead
+ * keypad and the same engine, opened under a name on somebody else's {@code GuiApp} instead
  * of being the main window of its own.
  *
  * <h2>calc, and why the window is not the only way in</h2>
@@ -55,8 +55,7 @@ public final class Calculator implements ConsoleApp {
 
     /**
      * @param memory where the calculator's window keeps its placement and zoom — the desk's, shared with the
-     *               console and with the plot previews, because a window memory is one file with one key per
-     *               window
+     *               console, because a window memory is one file with one key per window
      */
     public Calculator(WindowMemory memory) {
         this.window = new CalculatorApp.Window(memory);
@@ -69,7 +68,7 @@ public final class Calculator implements ConsoleApp {
 
     @Override
     public String summary() {
-        return "a keypad, a tape, and a plotter for anything with a variable in it";
+        return "a keypad and a tape";
     }
 
     @Override
@@ -95,8 +94,7 @@ public final class Calculator implements ConsoleApp {
     }
 
     /**
-     * The history's queue is drained here, and the plot previews are given their frame -- a marched viewport
-     * touches the GPU only from this hook, because MainFrame's loop is the thread that presents. See
+     * The history's queue and the definitions' edits are drained here, on MainFrame's loop. See
      * {@link CalculatorApp.Window#tick}.
      */
     @Override

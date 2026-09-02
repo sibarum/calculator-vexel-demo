@@ -12,10 +12,6 @@ import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
-import sibarum.cott.Bindings;
-import sibarum.cott.Notation;
-import sibarum.cott.Parser;
-import sibarum.cott.Term;
 import sibarum.kronometer.Clock;
 import sibarum.kronometer.Driven;
 import sibarum.kronometer.Dur;
@@ -30,37 +26,31 @@ import sibarum.kronometer.Kron;
  * what they photographed. Everything else was copied between them, and the copies had drifted:
  *
  * <ul>
- *   <li><b>Three different applications.</b> {@code --capture} held an engine with no {@link Definitions} and
- *       no {@link Previews}, so defining a name on that path answered <em>there is nowhere to keep a
- *       definition here</em>. {@code --capture-names} had names but no plotter. {@code --capture-plot} and
- *       {@code --capture-sdf} went round the engine altogether. No flag ever held the keypad and a plot at
- *       once, so the arrangement the program actually <em>is</em> had never been photographed.
- *   <li><b>Two readings of an expression.</b> The engine expands the session's names before parsing; the two
- *       plot captures parsed bare. So {@code --capture-plot=f(x)} could not draw a defined name -- not because
- *       plotting cannot, but because that path had never been told the session existed.
- *   <li><b>One of them was another one.</b> {@code --capture-surface} was {@code --capture-plot} with a
- *       different default expression and different filenames.
+ *   <li><b>Three different applications.</b> {@code --capture} held an engine with no {@link Definitions},
+ *       so defining a name on that path answered <em>there is nowhere to keep a definition here</em>, while
+ *       other flags went round the engine altogether. So the arrangement the program actually <em>is</em> had
+ *       never been photographed.
+ *   <li><b>Two readings of an expression.</b> The engine expands the session's names before parsing; some of
+ *       the flags parsed bare, so a defined name meant one thing on the keypad and another under a flag.
  *   <li><b>None of them could photograph a moment.</b> Every flag returned before the frame loop, so there was
  *       no clock -- and nowhere to put one that all five would have shared.
  * </ul>
  *
  * <p>So the world is built <b>once, the way {@code main} builds it</b> -- the real tree, the real engine, the
- * names, the plotter, the tape, and a clock on every window -- and the differences between the old flags
- * become data. A scene is a name and something done to that world. Adding <em>photograph the error ring at
- * 120ms</em> is a new entry in {@link #SCENES}, not a new mode.
+ * names, the tape, and a clock on every window -- and the differences between the old flags become data. A
+ * scene is a name and something done to that world. Adding <em>photograph the error ring at 120ms</em> is a
+ * new entry in {@link #SCENES}, not a new mode.
  *
  * <h2>Running it</h2>
  *
  * <pre>{@code
  * --capture                    every scene, at its default
- * --capture=curve              one of them
- * --capture=curve=x^2-y^2      one of them, told what to draw
+ * --capture=keypad             one of them
  * --capture=keypad,names       a couple
  * }</pre>
  *
  * <p>A scene that fails is reported and the rest still run, which matters now that one command takes every
- * picture: the {@code sdf} scene wants a graphics device, and a machine without one should still get the
- * other four.
+ * picture.
  */
 final class Capture {
 
@@ -81,37 +71,16 @@ final class Capture {
      * One named picture-taking.
      *
      * @param name    what it is called on the command line
-     * @param subject what it is about when nothing is said: an expression for the plotting scenes, a filename
-     *                for the ones that photograph a window there is only one of
+     * @param subject what it is about when nothing is said -- ordinarily the filename it writes
      * @param run     what it does to the world, given that subject
      */
     record Scene(String name, String subject, BiConsumer<World, String> run) {
     }
 
-    /**
-     * The scenes, in the order {@code --capture} with nothing after it runs them.
-     *
-     * <p>Cheapest first, and deliberately: the {@code sdf} scene compiles SPIR-V and wants a device, so a run
-     * that is going to fail for want of a graphics card has already written the other four pictures by the
-     * time it gets there.
-     */
+    /** The scenes, in the order {@code --capture} with nothing after it runs them. */
     static final List<Scene> SCENES = List.of(
             new Scene("keypad", "calculator.png", Capture::keypad),
             new Scene("names", "names.png", Capture::names),
-            // A pole pair: the whole point of the technique in one picture -- two poles, found by the
-            // arithmetic rather than by a solver, drawn as painted columns instead of lines through infinity.
-            new Scene("curve", "1÷(x^2−1)", (w, e) -> plot(w, e, "plot.png", "plot-zoomed.png")),
-            // A saddle: the one picture that shows at a glance whether the projection and the painting order
-            // are both right, since it rises on one axis exactly as it falls on the other.
-            new Scene("surface", "x^2−y^2", (w, e) -> plot(w, e, "surface.png", "surface-turned.png")),
-            // The answer that never had a picture. 2÷0 is 2ω -- correct on the display since the engine
-            // arrived, and refused by every renderer above, because the real line does not hold it. On the
-            // spiral it is one turn out from 1 along the crest, and a little further out again for the second
-            // copy: the count and the grade on one axis, which is what that figure buys.
-            new Scene("spiral", "2/0", (w, e) -> plot(w, e, "spiral.png", "spiral-turned.png")),
-            // A pole ridge: the case that says whether the gradient normalisation is doing its job, since an
-            // un-normalised implicit loses the surface exactly where the height runs away.
-            new Scene("sdf", "1÷(x^2+y^2)", Capture::sdf),
             // The scene that could not have existed before: three photographs of one interface at three
             // moments, which is a thing only a world with a clock in it can be asked for.
             new Scene("cue", "cue.png", Capture::cue));
@@ -195,9 +164,8 @@ final class Capture {
      * <p>Its subject is the filename the other three are derived from.
      */
     private static void keypad(World w, String subject) {
-        // The residue vertical: 1 over 1 in an additive context keeps its winding. It also has an x in it, so
-        // pressing = here opens a preview -- which it always did in the running program, and which no capture
-        // could see until this world held a plotter.
+        // The residue vertical: 1 over 1 in an additive context keeps its winding, and an x rides along to
+        // show that a variable survives the reduction rather than being solved away.
         w.keys("x", "+", "(", "1", "÷", "1", ")", "=");
         w.shot(subject);
         // And the other pad. It shares the slot with the first, so the only way to see it is to select it --
@@ -257,90 +225,7 @@ final class Capture {
         }
     }
 
-    /**
-     * An expression plotted, through {@code =} rather than round the side of it.
-     *
-     * <p>That is the change worth naming. This used to parse the expression itself and hand the result
-     * straight to a {@link PlotWindow} it had built, which meant the picture was evidence about a path nobody
-     * uses and could not draw a defined name at all. Now the line goes into the entry, {@code =} is pressed,
-     * and whatever the engine decides -- a curve, a surface, or a refusal in its own words -- is what gets
-     * photographed. {@link Previews} chooses the slot, exactly as it does when someone presses the key.
-     *
-     * <p>Then the half that would otherwise never be exercised without a pointer, and the numbers that say
-     * whether the cache is doing what the whole design is for: a zoom lands on a scale nothing is cached at
-     * and pays for every column; the move after it stays within that scale and should pay for almost none;
-     * and going home returns to a scale already visited and should pay for nothing at all. On a surface that
-     * middle step turns the picture instead of panning it, which is the stronger claim of the two -- turning
-     * re-projects and re-sorts and must evaluate nothing whatsoever.
-     */
-    private static void plot(World w, String entry, String first, String second) {
-        w.type(entry);
-        w.press("=");
-        PlotWindow plot = w.previews().latest();
-        if (plot == null) {
-            // The engine's own words, off its own status line. This used to be a second set of refusal
-            // messages kept in step with the first by hand.
-            System.out.println("  nothing to plot: " + w.engine().reported());
-            return;
-        }
-        // Two paints' worth, and it has to be: the plot draws off a laid-out canvas, and the first capture is
-        // what gives the tree a size. settle() then paints on this thread, and the second capture is the
-        // photograph. See Previews.show, which mounts and stops for exactly this reason.
-        w.shot(plot.gui(), CalculatorApp.PLOT_W, CalculatorApp.PLOT_H, first);
-        plot.settle();
-        w.shot(plot.gui(), CalculatorApp.PLOT_W, CalculatorApp.PLOT_H, first);
-        System.out.println("  framed     " + plot.cacheReport());
-        plot.zoomTo(4);
-        System.out.println("  zoomed in  " + plot.cacheReport());
-        plot.panBy(0.4);
-        System.out.println("  moved      " + plot.cacheReport());
-        w.shot(plot.gui(), CalculatorApp.PLOT_W, CalculatorApp.PLOT_H, second);
-        plot.goHome();
-        System.out.println("  back home  " + plot.cacheReport());
-        // And the half that needs a pointer. A capture has no input backend and so no pointer, but the hover
-        // path can still be walked from its own end: point at the first marker, and photograph what it says.
-        if (plot.hoverMark()) {
-            w.shot(plot.gui(), CalculatorApp.PLOT_W, CalculatorApp.PLOT_H, suffixed(first, "-landmark"));
-            System.out.println("  landmark   named");
-        }
-    }
-
-    /**
-     * The same expression the plot would draw, drawn instead by a shader compiled from it.
-     *
-     * <p>One photograph per render style, because a style is compiled into the shader rather than switched at
-     * runtime -- so <em>does Height look right</em> is a question about a different SPIR-V module, and a
-     * capture that only ever built one of them would not be asking it.
-     *
-     * <p>Everything up to {@link Plottable} is the reading the engine does, names and all, so an expression
-     * that will not plot will not march either and says so in the same words.
-     */
-    private static void sdf(World w, String entry) {
-        Plottable plottable = w.plottable(entry);
-        if (plottable == null) {
-            System.out.println("  nothing to march: " + w.refusal());
-            return;
-        }
-        SdfSurface surface = SdfSurface.of(plottable.expr(), plottable.variables());
-        if (!surface.ok()) {
-            System.out.println("  nothing to march: " + surface.refusal());
-            return;
-        }
-        System.out.println("  marching " + entry);
-        for (MarchStyle style : MarchStyle.values()) {
-            String file = style == MarchStyle.LIT
-                    ? "sdf.png" : suffixed("sdf.png", "-" + style.label().toLowerCase());
-            System.out.println("  " + style.label());
-            try {
-                SdfPreview.capture(surface, style, file);
-            } catch (java.io.IOException e) {
-                throw new IllegalStateException("could not write " + file + ": " + e.getMessage(), e);
-            }
-            System.out.println("  captured " + new java.io.File(file).getAbsolutePath());
-        }
-    }
-
-    /** {@code plot.png} and {@code -zoomed} into {@code plot-zoomed.png}. */
+    /** {@code cue.png} and {@code -arrived} into {@code cue-arrived.png}. */
     private static String suffixed(String path, String suffix) {
         int dot = path.lastIndexOf('.');
         return dot < 0 ? path + suffix : path.substring(0, dot) + suffix + path.substring(dot);
@@ -350,18 +235,16 @@ final class Capture {
 
     /**
      * The whole application, with no windows: the tree {@code main} builds, the engine that drives it, the
-     * names, the plotter, the tape -- and a clock on every one of their trees.
+     * names, the tape -- and a clock on every one of their trees.
      *
-     * <p><b>Built the way {@code main} builds it</b>, which is the point of the class. Each of the three
-     * things that used to be missing from one capture or another is here because each was already willing to
-     * be: {@link Definitions#show} is silent with no application attached, {@link Previews} mounts a preview
-     * instead of asking for a window, and the history window fills its tape and does not pop up. None of them
-     * needed a headless variant -- they needed to be assembled together once.
+     * <p><b>Built the way {@code main} builds it</b>, which is the point of the class. Each of the things that
+     * used to be missing from one capture or another is here because each was already willing to be:
+     * {@link Definitions#show} is silent with no application attached, and the history window fills its tape
+     * and does not pop up. Neither needed a headless variant -- they needed to be assembled together once.
      *
      * <p><b>The clock is why this exists now.</b> A picture of something in motion is a picture taken at a
      * moment, and {@link #tick} is how a scene names one. It is on every tree rather than only the main one
-     * because {@code prepare} is the single answer to "what does a window in this application get", and a
-     * preview's tree is built lazily by {@link Previews} long after this has returned.
+     * because {@code prepare} is the single answer to "what does a window in this application get".
      */
     static final class World implements AutoCloseable {
 
@@ -374,20 +257,16 @@ final class Capture {
         private final CalculatorApp.Engine engine;
         private final Definitions definitions;
         private final CalculatorApp.History history;
-        private final Previews previews;
-        /** Every tree in the application, in the order it was built. Appended to as previews are claimed. */
+        /** Every tree in the application, in the order it was built. */
         private final List<Attached> windows;
-        /** Why the last {@link #plottable} came back null. */
-        private volatile String refusal = "";
 
         private World(Gui gui, CalculatorApp.Ui ui, Definitions definitions, CalculatorApp.History history,
-                      Previews previews, List<Attached> windows) {
+                      List<Attached> windows) {
             this.gui = gui;
             this.ui = ui;
             this.engine = ui.engine();
             this.definitions = definitions;
             this.history = history;
-            this.previews = previews;
             this.windows = windows;
         }
 
@@ -399,8 +278,8 @@ final class Capture {
             Gui gui = new Gui();
             gui.minSize(Length.em(CalculatorApp.MIN_EM_W), Length.em(CalculatorApp.MIN_EM_H));
 
-            // What every window in this application gets, said once. Previews calls it for each preview it
-            // builds, which is how a tree that does not exist yet still ends up with a clock and a zoom.
+            // What every window in this application gets, said once, so a tree ends up with a clock and a
+            // zoom however it came to exist.
             List<Attached> windows = new java.util.concurrent.CopyOnWriteArrayList<>();
             Consumer<Gui> prepare = tree -> prepare(tree, windows);
 
@@ -423,10 +302,7 @@ final class Capture {
             prepare.accept(history.windowGui());
             engine.history(history);
 
-            Previews previews = new Previews(null, memory, prepare);
-            engine.plotter(previews);
-
-            return new World(gui, ui, definitions, history, previews, windows);
+            return new World(gui, ui, definitions, history, windows);
         }
 
         /**
@@ -435,7 +311,7 @@ final class Capture {
          * <p><b>An unbounded clock, which a render loop must never have.</b> {@code Kron.driven()} caps how
          * far one tick may carry logical time — a second by default — and forgives the excess, so that a
          * breakpoint or a sleeping laptop costs a skipped gap rather than however many seconds of replayed
-         * simulation. Here the long jump is the whole point: a preview built on the fourth scene is handed
+         * simulation. Here the long jump is the whole point: a tree built on the fourth scene is handed
          * the world's accumulated time on its <em>first</em> tick, precisely so that it does not start again
          * from zero while everything else is at four seconds. That is a scripted jump, not a stall, and it
          * is the case {@code maxAdvance(FOREVER)} exists for.
@@ -490,7 +366,7 @@ final class Capture {
          * How far this world's clocks have been wound on. See {@link #tick} for why it has to be kept.
          *
          * <p>Every tree is wound to the same reading, including one that only came into existence part way
-         * through -- a preview built on the fourth scene is handed the world's current time on its first
+         * through -- a tree built on the fourth scene is handed the world's current time on its first
          * tick, rather than starting again from zero while everything else is at four seconds.
          */
         private Dur now = Dur.ZERO;
@@ -596,43 +472,6 @@ final class Capture {
             shotNow(gui, CalculatorApp.W, CalculatorApp.H, path);
         }
 
-        // ---- reading it -----------------------------------------------------------------------------
-
-        /**
-         * Read {@code entry} the way the engine reads it -- the session's names expanded first -- and say
-         * whether it can be drawn. Null if it cannot, with {@link #refusal} saying why.
-         *
-         * <p>One reading of the session for the whole call, for the reason {@code Engine.definitions} gives:
-         * {@link Notation#normalize} decides where a word begins and {@link Parser#parse} reads what is there,
-         * and a definition landing between the two would leave them disagreeing.
-         */
-        Plottable plottable(String entry) {
-            Bindings names = engine.bindings();
-            Term term;
-            try {
-                term = names.expand(Parser.parse(Notation.normalize(entry, names), names));
-            } catch (RuntimeException e) {
-                refusal = String.valueOf(e.getMessage());
-                return null;
-            }
-            List<String> variables = Plottable.variablesIn(term);
-            if (variables.isEmpty() || variables.size() > 2) {
-                refusal = variables.size() + " variables in " + entry + " -- the plotter takes one or two";
-                return null;
-            }
-            Plottable plottable = Plottable.read(term, variables);
-            if (!plottable.ok()) {
-                refusal = plottable.refusal();
-                return null;
-            }
-            return plottable;
-        }
-
-        /** Why the last {@link #plottable} came back null. */
-        String refusal() {
-            return refusal;
-        }
-
         Gui gui() {
             return gui;
         }
@@ -643,10 +482,6 @@ final class Capture {
 
         Definitions definitions() {
             return definitions;
-        }
-
-        Previews previews() {
-            return previews;
         }
 
         /** Clock first, then the tree it drove -- the order the windowed path shuts down in. */
@@ -670,8 +505,8 @@ final class Capture {
      * for all of them at their defaults.
      *
      * <p>A scene that throws is reported and the rest still run. That is not politeness -- it is what makes
-     * one command able to replace five: the {@code sdf} scene wants a graphics device, and a machine without
-     * one should still come away with the other four pictures rather than with nothing.
+     * one command able to replace five: a run should come away with every picture it could take rather than
+     * with nothing.
      */
     static void run(String spec) {
         List<Request> requests = parse(spec);

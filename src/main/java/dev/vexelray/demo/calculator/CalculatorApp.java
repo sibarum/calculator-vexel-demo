@@ -10,8 +10,11 @@ import dev.vexelray.gui.core.input.ClaimScope;
 import dev.vexelray.gui.core.input.InteractionState;
 import dev.vexelray.gui.core.input.Shortcut;
 import dev.vexelray.gui.core.app.AppWindow;
+import dev.vexelray.gui.automation.Automation;
+import dev.vexelray.gui.automation.AutomationServer;
 import dev.vexelray.gui.core.app.GuiApp;
 import dev.vexelray.gui.core.app.Settings;
+import dev.vexelray.gui.core.app.Standing;
 import dev.vexelray.gui.core.app.WindowMemory;
 import dev.vexelray.gui.core.app.WindowSpec;
 import dev.vexelray.gui.core.layout.Length;
@@ -26,7 +29,7 @@ import dev.vexelray.gui.widget.TitleBar;
 import dev.vexelray.os.Decorations;
 import dev.vexelray.os.WindowConfig;
 import dev.vexelray.text.TextLayout;
-import java.util.List;
+import java.io.IOException;
 import sibarum.cott.Bindings;
 import sibarum.cott.Cott;
 import sibarum.cott.Notation;
@@ -50,8 +53,8 @@ import sibarum.tactroller.clipboard.ClipboardException;
  * The tree is built once through {@link Gui}/{@link Node} handles; click handlers run on worker
  * threads and mutate the display through its handle.
  *
- * <p>Run: {@code CalculatorApp} (windowed), {@code CalculatorApp --march[=EXPRESSION]} (windowed, with that
- * expression already plotted), or {@code CalculatorApp --capture[=SCENE[=SUBJECT]]} (headless). There is one
+ * <p>Run: {@code CalculatorApp} (windowed), or {@code CalculatorApp --capture[=SCENE[=SUBJECT]]}
+ * (headless). There is one
  * capture mode and it holds one application; the scenes are listed in {@link Capture}, which also says why
  * there used to be five of these and what went wrong with having five. Needs
  * {@code --enable-native-access=ALL-UNNAMED}.
@@ -93,23 +96,32 @@ public final class CalculatorApp {
         return Math.round(em * gui.rootEmPx());
     }
 
-    /** The plot window's size, and the size the plotting scenes photograph it at. */
-    static final int PLOT_W = 720;
-    static final int PLOT_H = 560 + BAR_H;
-
     /**
-     * The multiplication key's label, and the sign it inserts. Taken from the engine rather than written
-     * here, because the keypad and the printer disagreeing about it is exactly the failure
+     * The multiplication sign the keypad inserts and the printer prints. Taken from the engine rather than
+     * written here, because the keypad and the printer disagreeing about it is exactly the failure
      * {@link Notation} exists to prevent — a display the calculator cannot read back.
+     *
+     * <p>This is the token, not the cap on the key: see {@link #cap}.
      */
     static final String TIMES = String.valueOf(Notation.TIMES);
+
+    /**
+     * What the multiplication key wears, as against what it types. The dot is right in an expression, where
+     * it sits between two operands at x-height and stays out of their way; on a key of its own it is a
+     * speck, and the one key on the pad whose cap is nearly invisible is the one the hand hunts for. The
+     * cross is the sign a keypad is expected to carry.
+     *
+     * <p>It is a cap and nothing more — {@link #TIMES} is still what the key inserts, what the display
+     * shows and what every capture prints, so nothing downstream has to know this exists.
+     */
+    private static final String CROSS = "×";
 
     /** The keys that go into the field verbatim. Everything else is an operand — see {@code insertOperand}. */
     private static final java.util.Set<String> OPERATORS =
             java.util.Set.of("+", "−", TIMES, "÷", "^", ",", ")");
 
-    // The colours live in Palette now: the plot window wears them too, and a plot drawn in its own scheme
-    // would read as a different program that happened to open. These are this file's names for them.
+    // The colours live in Palette, so every window on this desk wears the same scheme rather than reading
+    // as a different program that happened to open. These are this file's names for them.
     private static final Color BG = Palette.BG;
     private static final Color PANEL = Palette.PANEL;
     private static final Color PANEL_HOVER = Palette.PANEL_HOVER;
@@ -135,7 +147,7 @@ public final class CalculatorApp {
             } else if (flag.startsWith("--capture=")) {
                 Capture.run(flag.substring("--capture=".length()));
             } else {
-                // --capture-plot and its three siblings are scenes now rather than flags. Worth saying so
+                // The old --capture-* flags are scenes now. Worth saying so
                 // rather than silently running every scene, since the old spellings are in the README and
                 // in muscle memory.
                 System.out.println(flag + " is gone: the captures are one mode over one application now.");
@@ -144,6 +156,12 @@ public final class CalculatorApp {
             }
             return;
         }
+
+        // The mark, before anything opens a window: an icon applied afterwards is a window that appears
+        // under the wrong one and gets corrected a frame later, which on a slow start-up is not a flicker.
+        // Every window this process opens inherits it -- see Icons for which mark, and for the half of the
+        // question a running process cannot answer.
+        Icons.applyTo(dev.vexelray.os.NativePlatform.current());
 
         Gui gui = new Gui();
         // The title bar sits inside the canvas now, so the smallest layout has to hold it as well as the
@@ -158,17 +176,9 @@ public final class CalculatorApp {
         Engine engine = ui.engine();
         zoomShortcuts(gui);
 
-        // A shortcut and nothing more: open windowed with this expression already plotted, which is what typing
-        // it and pressing = does. A two-variable expression is marched either way -- that is the ordinary
-        // behaviour of the plot now, not something this flag turns on.
-        String march = args.length >= 1 && args[0].startsWith("--march")
-                ? entryOf(args[0], "1÷(x^2+y^2)") : null;
-
-        // A frame cap is the first argument ordinarily and the second after --march, so a marched launch can
-        // still be run bounded -- which is the only way anything about the windowed path gets checked.
-        int maxFrames = march != null
-                ? (args.length >= 2 ? Integer.parseInt(args[1]) : 0)
-                : (args.length > 0 ? Integer.parseInt(args[0]) : 0);
+        // A frame cap makes the windowed path scriptable, which is the only way anything about it gets
+        // checked.
+        int maxFrames = args.length > 0 ? Integer.parseInt(args[0]) : 0;
         // Placement is read before the window exists, so the calculator is created where it was left rather
         // than moved there after appearing -- and clamped on the way, because the desk may have changed shape
         // since. Every window here goes through the same three lines: config it, restore its state, watch it.
@@ -182,6 +192,9 @@ public final class CalculatorApp {
             // The window exists at last, so the chrome can be pointed at it. Until now the bar has been a
             // working bar against WindowControls.NONE -- which is also what --capture renders.
             ui.titleBar().controls(app.controls());
+            // The automation driver, behind a flag: it hands whoever reaches the socket full control of this
+            // application's input, so it is off unless asked for. Loopback only, one connection at a time.
+            AutomationServer driver = openDriver(gui, app);
             if (memory.maximized("main")) {
                 app.window().maximize();
             }
@@ -200,13 +213,8 @@ public final class CalculatorApp {
             zoomShortcuts(history.windowGui());
             // Every window the framework opens from here on gets an input backend of its own, attached at
             // creation and released with the window. The history predates this seam and still attaches its
-            // own; the plot is a named window and lets the framework do it.
+            // own.
             app.input(CalculatorApp::attachWindowInput);
-            // Each preview is built the first time its slot is used, and gets the same UI zoom shortcuts every
-            // other window here has -- which is the only thing the calculator has to say about a window it did
-            // not know it was going to open.
-            Previews previews = new Previews(app, memory, CalculatorApp::zoomShortcuts);
-            engine.plotter(previews);
             // The session's names, and the window that edits them. Built here for the same reason the history
             // is: it needs an application to open onto, and there is none until now.
             Definitions definitions = new Definitions(memory, engine::bindings);
@@ -214,11 +222,6 @@ public final class CalculatorApp {
             definitions.onFrameLoop(app::post);
             zoomShortcuts(definitions.gui());
             engine.definitions(definitions);
-            if (march != null) {
-                // Safe before the loop starts: showing a preview only posts the window request, and the window
-                // is created at the top of the first frame like any other.
-                openMarched(engine, march);
-            }
             TactrollerInputBridge bridge = input == null ? null : new TactrollerInputBridge(input, gui.bus());
             FpsProbe probe = new FpsProbe(krono.kron(), app::postWake, () -> gui.root().opacity(1f), gui.handlers());
             if (maxFrames <= 0) {
@@ -239,9 +242,6 @@ public final class CalculatorApp {
                     history.drain();
                     definitions.drain();
                     memory.poll();
-                    // A marched viewport does its GPU work here and nowhere else: this hook runs on the thread
-                    // that presents, and the device queue belongs to it.
-                    previews.pump();
                     probe.sample();
                 });
             } finally {
@@ -263,41 +263,13 @@ public final class CalculatorApp {
      * double-click-to-maximize, the system menu and the maximize clamp all stay the window manager's. The GUI
      * only supplies geometry.
      *
-     * <p><b>What is remembered, and what deliberately is not.</b> Each of the three windows remembers where it
-     * was, how big, whether it was maximized, and what it was zoomed to. None of them remembers whether it was
+     * <p><b>What is remembered, and what deliberately is not.</b> Each window remembers where it was, how
+     * big, whether it was maximized, and what it was zoomed to. Neither remembers whether it was
      * <em>open</em>, which the framework offers and the text editor uses. That is not an oversight: a history
-     * window reopened at launch would list nothing, because the tape is this session's, and a plot window
-     * reopened at launch would have no expression to draw. Restoring a window to show emptiness is worse than
-     * not restoring it -- there is nothing there to be where you left it.
+     * window reopened at launch would list nothing, because the tape is this session's. Restoring a window to
+     * show emptiness is worse than not restoring it -- there is nothing there to be where you left it.
      */
     static final String APP_NAME = "calculator";
-
-    /**
-     * Open {@code entry} in a preview, already marched — what {@code --march} does.
-     *
-     * <p>Refusals are reported and then dropped rather than aborting the launch: the calculator is opening
-     * either way, and an expression that cannot be marched is a reason to see the keypad, not to see nothing.
-     */
-    private static void openMarched(Engine engine, String entry) {
-        // Type it and press =, which is all this flag ever claimed to be. It used to parse the line itself
-        // and hand the result to Previews, which meant --march=f(x) could not open a name this session had
-        // defined -- the engine expands the session's names before parsing and this did not. That is the
-        // same divergence Capture was written to end, and it was here too.
-        engine.enter(entry);
-        engine.press("=");
-        // Refusals are reported and then dropped rather than aborting the launch: the calculator is opening
-        // either way, and an expression that cannot be drawn is a reason to see the keypad, not to see
-        // nothing. The engine has already put its own words on the status line; this is for the console.
-        String refused = engine.reported();
-        if (!refused.isEmpty()) {
-            System.out.println("nothing to march: " + refused);
-        }
-    }
-
-    /** The expression the {@code --march} flag names, or the default it stands for. */
-    private static String entryOf(String arg, String fallback) {
-        return arg.contains("=") ? arg.substring(arg.indexOf('=') + 1) : fallback;
-    }
 
     static void zoomShortcuts(Gui gui) {
         gui.zoomRange(0.5f, 3f, 1.25f);
@@ -318,6 +290,32 @@ public final class CalculatorApp {
     }
 
     /** CLIENT space, density left at 1.0 — the engine's canvas is logical; see vexelray-gui-demo's attachInput. */
+    /**
+     * The automation driver, or null. Started only when { -Dautomation} names a port (or is empty, for
+     * the default 7654), because a socket that can drive the application is a debugging instrument and not
+     * something a shipped calculator should be listening on.
+     *
+     * <p>A failure to bind is reported and then dropped: not being able to attach a debugger is a reason to
+     * carry on without one, never a reason the calculator does not open.
+     *
+     * @see <a href="file:../../../../../../../../vexelray-gui/docs/automation.md">automation.md</a>
+     */
+    private static AutomationServer openDriver(Gui gui, GuiApp app) {
+        String flag = System.getProperty("automation", "off").trim();
+        if (flag.isEmpty() || flag.equals("off")) {
+            return null;
+        }
+        int port = flag.equals("on") ? 7654 : Integer.parseInt(flag);
+        try {
+            AutomationServer server = AutomationServer.start(new Automation(gui, app.controls()), port);
+            System.out.println("automation: listening on 127.0.0.1:" + server.port());
+            return server;
+        } catch (IOException e) {
+            System.out.println("automation: could not listen -- " + e);
+            return null;
+        }
+    }
+
     private static void attachInput(Tactroller input, GuiApp app, Gui gui) {
         if (input == null) {
             return;
@@ -340,7 +338,7 @@ public final class CalculatorApp {
      * back to the window's middle on every drain using ordinary cursor calls, so it needs no raw-input pump,
      * and its one drawback — the motion passes through the OS acceleration curve — is not a drawback for a
      * gesture that is <em>meant</em> to feel like the pointer, only unbounded. RAW is the right choice for a
-     * camera in a game and the wrong one for a plot, where a drag should move the picture exactly as far as
+     * camera in a game and the wrong one here, where a drag should move exactly as far as
      * the same drag would have moved the pointer.
      *
      * <p>A backend without pointer lock simply does not lock, and the drag still works — it can just run out of
@@ -452,7 +450,7 @@ public final class CalculatorApp {
      * {@link CalculatorApp#main} is one arrangement of the calculator — the one where it is the program, owns
      * the loop, and everything else on the desk is something it opened. This is the other arrangement, where
      * MainFrame is the program and the calculator is one of the things <em>it</em> opens. Same tree, same
-     * engine, same history and the same previews; what differs is who owns the window and who is ticking.
+     * engine and same history; what differs is who owns the window and who is ticking.
      *
      * <p>So it is a nested class rather than a file of its own. Everything it needs -- {@code buildUi}, the
      * {@code Engine}, the {@code History}, the sizes -- is private to {@link CalculatorApp} and stays that way,
@@ -476,8 +474,6 @@ public final class CalculatorApp {
         private final Engine engine;
 
         private History history;
-        /** The preview windows, kept because they have per-frame GPU work -- see {@link #tick}. */
-        private Previews previews;
         /**
          * The session's names. Built with this object rather than on the first {@link #show}, because a
          * definition is a fact about the session and not about a window -- and its edits are queued, so it is
@@ -501,8 +497,8 @@ public final class CalculatorApp {
             this.ui = buildUi(gui, Motion.of(krono));
             this.engine = ui.engine();
             zoomShortcuts(gui);
-            // Built here and not on the first show(), unlike the history and the previews. Those need an
-            // application before they can do anything at all; this one only needs an application to be *seen*,
+            // Built here and not on the first show(), unlike the history. That needs an
+            // application before it can do anything at all; this one only needs an application to be *seen*,
             // and `calc "k = 3"` at a prompt is a definition whether or not the keypad has ever been opened.
             this.definitions = new Definitions(memory, engine::bindings);
             zoomShortcuts(definitions.gui());
@@ -557,29 +553,31 @@ public final class CalculatorApp {
         /**
          * Open the calculator on {@code app}, or raise it if it is already up.
          *
-         * <p>The history and the previews are wired on the first call rather than in the constructor, because
-         * both of them open windows and neither can be given an application before there is one. After that
-         * this is one {@code show()}: asking for the calculator has to mean <em>the</em> calculator.
+         * <p>The history is wired on the first call rather than in the constructor, because it opens a window
+         * and cannot be given an application before there is one. After that this is one {@code show()}:
+         * asking for the calculator has to mean <em>the</em> calculator.
          */
         public void show(GuiApp app) {
             if (history == null) {
                 history = new History(engine, app, memory);
                 engine.history(history);
                 zoomShortcuts(history.windowGui());
-                // Each preview is built the first time its slot is used, and gets the same zoom shortcuts every
-                // other window here has -- the only thing the calculator says about a window it did not know it
-                // was going to open.
-                previews = new Previews(app, memory, CalculatorApp::zoomShortcuts);
-                engine.plotter(previews);
                 // The definitions were built with this object; what they were missing is somewhere to appear.
                 definitions.attach(app);
             }
             if (handle == null) {
                 handle = app.window(KEY, () -> WindowSpec
                         .of(memory.config(KEY, "Calculator", W, H).decorations(Decorations.CLIENT)
+                                .icon(Icons.mark())
                                 .minSize(smallest(gui, MIN_EM_W), smallest(gui, MIN_EM_H)), gui)
                         .onCreated(this::onCreated)
                         .onClosed(this::onClosed));
+                // The history belongs to the keypad, not to whatever is hosting the calculator -- and here is
+                // the first moment there is a keypad window to name it against. Hosted in MainFrame the
+                // application's main window is the console, so a history left standing against the main
+                // window is created into the console's owner group: activating it raises the console along
+                // with it and leaves the keypad behind both.
+                history.belongingTo(handle);
             }
             handle.show();
         }
@@ -587,21 +585,11 @@ public final class CalculatorApp {
         /**
          * Frame loop, once per frame. The history's queue is drained here whether or not the window is open,
          * since an evaluation recorded just before a close still has to land somewhere.
-         *
-         * <p>The previews are pumped here for a stronger reason than tidiness: a marched viewport submits to the
-         * device queue and waits, so it does its GPU work on the thread that presents and nowhere else. Hosted in
-         * an application that owns the frame loop, this method <em>is</em> that hook -- the standalone entry point
-         * calls {@code previews.pump()} from its own {@code beforeFrame} and the two have to agree, or a plot
-         * opened from here comes up marched and never marches: the box view draws as ordinary canvas nodes and is
-         * fine, while the viewport beside it stays the colour of an empty box.
          */
         public void tick() {
             krono.tick();
             if (history != null) {
                 history.drain();
-            }
-            if (previews != null) {
-                previews.pump();
             }
             definitions.drain();
         }
@@ -639,11 +627,14 @@ public final class CalculatorApp {
     }
 
     /**
-     * The arithmetic pad. Beyond digits: the constants e/i/π, the wheel's ω (= 1/0), plotting variables x/y/z,
+     * The arithmetic pad. Beyond digits: the constants e/i/π, the wheel's ω (= 1/0), the variables x/y/z,
      * {@code ^} for n^x, and {@code log(x, n)} for COTT's base-0 exponent reading (via the log/comma/paren keys).
      *
      * <p>There is one engine, so there is no engine key: COTT-ONE answers every expression the keypad can build.
      * The freed slot went back to the row.
+     *
+     * <p>These are the <b>tokens</b>, not the caps. The two are the same string for every key here except
+     * multiplication, which types {@code ·} and wears {@code ×} — see {@link #cap}.
      */
     private static final String[][] NUMBER_KEYS = {
             {"C", "DEL", "(", ")", "÷"},
@@ -656,8 +647,9 @@ public final class CalculatorApp {
 
     /**
      * The circular pad. Every label is the token it types, which is why the inverses read {@code asin} rather
-     * than {@code sin⁻¹}: the atlas has no superscript minus (its charset stops at U+206F), and a label that
-     * cannot be typed back is a label that teaches the wrong thing about what is in the entry.
+     * than {@code sin⁻¹}: a label that cannot be typed back is a label that teaches the wrong thing about
+     * what is in the entry. The superscript minus is in this application's atlas now -- it was not in the
+     * framework's -- so the choice is the entry's, not the font's.
      *
      * <p><b>rad and deg construct an angle</b> rather than switching a mode — {@code sin(deg(90))} is 1 — so an
      * expression carries which measure it was written in and a tape of old results cannot be misread later. See
@@ -693,7 +685,7 @@ public final class CalculatorApp {
                 // A call is an operator in the same sense the others are: it is something done TO an operand,
                 // and reading the two apart at a glance is what the two inks are for.
                 boolean op = DIMMED.contains(label) || Real.of(label) != null;
-                Node b = key(gui, label,
+                Node b = key(gui, cap(label),
                         accent ? Color.WHITE : (op ? DIM : INK),
                         accent ? BTN_BLUE : PANEL,
                         accent ? BTN_BLUE_HOVER : PANEL_HOVER,
@@ -719,12 +711,24 @@ public final class CalculatorApp {
                 .width(Length.FILL).height(Length.rem(5))
                 .background(PANEL).corner(Length.rem(0.75f)).border(Length.rem(0.1f), LINE)
                 .lit(true).elevation(Length.rem(0.5f))
-                .padding(Length.dp(16))
+                // Vertical padding is not free here, and it was 16 for long enough to crop the entry. An
+                // editable node clips its glyphs to its text area, and that area is the box less border, less
+                // this padding, less the caret gutter the framework insets an editable node by: 80 - 2*(1.6 +
+                // 16 + 6) = 32.8px, against a line of 1.75rem text that stands 38.1px from ascender to
+                // descender. The 5.3px that did not fit were the bottom 5.3px -- vAlign MIDDLE clamps at zero
+                // rather than centring a block taller than its area, so the whole shortfall came off the
+                // descenders and "cosh(y)" lost its tail and both its parens' feet. 8 leaves 48.8px, which the
+                // line fits inside with room to sit centred. Horizontal padding is untouched.
+                .padding(Length.dp(8), Length.dp(16))
                 .textSize(Length.rem(1.75f)).textColor(INK);
 
         Engine engine = new Engine(display, motion);
         gui.focusable(display.node(), true);
         gui.focus(display.node());
+        // Clicking into the line is a declaration that the line is being EDITED, not replaced. Without this,
+        // placing the caret after an evaluation left justEvaluated set, so the next operand key took the
+        // type-over-a-result path and wiped the whole entry -- see Engine.editing.
+        gui.onClick(display.node(), engine::editing);
         display.onSubmit(s -> engine.press("="));
         // Typing w yields omega. Substituting in onChange re-enters once and then terminates,
         // since the replacement contains no w. The substitution parks the caret at the end, so put it back —
@@ -778,7 +782,7 @@ public final class CalculatorApp {
         // padding on the pages: padding is symmetric, and the copy of it under the bottom row would be height
         // the window has to find at its smallest size for the sake of a gap nothing sits in.
         pads.node().gap(Length.rem(0.5f));
-        pads.add("⁘", pad(gui, engine, NUMBER_KEYS, Length.rem(1.25f)));
+        pads.add("∷", pad(gui, engine, NUMBER_KEYS, Length.rem(1.25f)));
         pads.add("θ", pad(gui, engine, TRIG_KEYS, Length.rem(0.9375f)));
 
         // A rejection is reported here rather than in the entry, so the expression survives it and
@@ -826,11 +830,14 @@ public final class CalculatorApp {
      * The caption button that opens {@link Definitions}: {@code ℱ}, the function symbol from the letterlike
      * block, for the place functions are named.
      *
-     * <p>{@code ℱ} and the tabs' {@code ⁘} and {@code θ} come from a short list, because the text atlas carries
-     * Latin, Greek, Cyrillic, punctuation, currency and the letterlike block and <b>nothing else</b> — of the
-     * mathematical operators it has exactly one, the minus sign. So the obvious icons here (a script f, a 2x2
-     * box, a sine wave) are all missing glyphs, and a missing glyph renders as a box. Every one was checked
-     * against {@code primary.json} before it was used.
+     * <p>{@code ℱ} and the tabs' {@code ∷} and {@code θ} are all the atlas's own, and now by choice rather
+     * than by what was left. This application bakes its own atlas over STIX Two Math (see the msdf plugin
+     * block in the pom), so the whole of the mathematical operators is present -- where the framework's Noto
+     * Sans had exactly one of them, the minus sign, and a script f, a four-dot box and a sine wave were all
+     * missing glyphs rendering as boxes. {@code ∷} is the proportion sign, which is the 2x2 box the
+     * arithmetic pad wanted; U+2058, the four-dot punctuation it used to wear, is one of the few things Noto
+     * had and STIX does not. Check a new one against {@code primary.json} before using it: the charset is
+     * wide but it is not everything.
      *
      * <p>{@link WindowRegion#INTERACTIVE} is not optional and {@code TitleBar.addLeading} says so: the caption
      * is a drag surface to the window manager, so without the declaration a click here starts moving the window
@@ -911,8 +918,13 @@ public final class CalculatorApp {
             return gui;
         }
 
-        /** Append {@code e}, opening the window on the next frame if this is the first evaluation. */
-        void add(GuiApp app, Entry e) {
+        /**
+         * Append {@code e}, opening the window on the next frame if this is the first evaluation.
+         *
+         * @param anchor the keypad this history belongs to and stands above, or null for the application's
+         *               main window -- see {@link History#belongingTo}
+         */
+        void add(GuiApp app, AppWindow anchor, Entry e) {
             list.append(row(e));   // row() records the node in `rows` as it builds it
             while (rows.size() > LIMIT) {
                 rows.removeFirst().remove();
@@ -922,8 +934,16 @@ public final class CalculatorApp {
             // this window without one.
             if (!shown && app != null) {
                 shown = true;
-                app.requestPopup(memory.config("history", "History", W, H).decorations(Decorations.CLIENT),
-                        gui, this::onCreated, this::onClosed);
+                // requestWindow rather than requestPopup, which is the same thing with the standing fixed:
+                // this one is a satellite of the keypad, and requestPopup can only make it a satellite of the
+                // main window.
+                app.requestWindow(WindowSpec
+                        .of(memory.config("history", "History", W, H)
+                                .decorations(Decorations.CLIENT).icon(Icons.mark()), gui)
+                        .standing(Standing.SATELLITE)
+                        .belongingTo(anchor)
+                        .onCreated(this::onCreated)
+                        .onClosed(this::onClosed));
             }
         }
 
@@ -1062,9 +1082,28 @@ public final class CalculatorApp {
          */
         private volatile java.util.function.Consumer<Runnable> onFrameLoop = requests::add;
 
+        /**
+         * The window this history stands above, or null for the application's main window.
+         *
+         * <p>Set rather than constructed for the same reason {@code onFrameLoop} is: this class has three
+         * hosts and only one of them can answer at construction. Standalone the keypad <em>is</em> the main
+         * window, so null is already right; the capture opens nothing at all; and hosted in MainFrame the
+         * keypad is a window of its own that does not exist until the calculator is first shown -- which is
+         * also the arrangement where getting it wrong is visible, since the main window there is the console.
+         */
+        private volatile AppWindow anchor;
+
         /** Marshal requests through {@code sink} instead of this class's own queue. */
         void onFrameLoop(java.util.function.Consumer<Runnable> sink) {
             this.onFrameLoop = java.util.Objects.requireNonNull(sink, "sink");
+        }
+
+        /**
+         * Stand this history above {@code anchor} -- the keypad -- rather than above the application's main
+         * window. Read when the window is opened, so it only has to be set before the first evaluation.
+         */
+        void belongingTo(AppWindow anchor) {
+            this.anchor = anchor;
         }
 
         History(Engine engine, GuiApp app, WindowMemory memory) {
@@ -1079,7 +1118,7 @@ public final class CalculatorApp {
 
         /** Worker thread: an expression was evaluated. */
         void record(String input, String output) {
-            onFrameLoop.accept(() -> window.add(app, new HistoryWindow.Entry(input, output)));
+            onFrameLoop.accept(() -> window.add(app, anchor, new HistoryWindow.Entry(input, output)));
         }
 
         /** Popup handler thread: an entry was clicked. */
@@ -1142,6 +1181,23 @@ public final class CalculatorApp {
                 });
     }
 
+    /**
+     * The face a key wears for the token it types — the same string for every key but one.
+     *
+     * <p>The pads are arrays of <b>tokens</b>, and that is deliberate: {@code DIMMED}, {@code OPERATORS},
+     * {@code Real.of} and {@code engine.press} all read them, and a table of captions that had to be
+     * translated back before any of that could ask a question about it is a table with two meanings. So the
+     * translation happens here, at the one call that draws, and goes one way only.
+     *
+     * <p>The single exception is {@link #TIMES} → {@link #CROSS}, for the reason {@code CROSS} gives. Keeping
+     * the exception in one expression is the point: a label that is not the token it types is a label that can
+     * teach the wrong thing about what is in the entry, so there had better be exactly one and it had better
+     * be visible from the pad's own doc.
+     */
+    private static String cap(String token) {
+        return TIMES.equals(token) ? CROSS : token;
+    }
+
     /** One keypad button: lit, elevated, restyled per interaction state. */
     private static Node key(Gui gui, String label, Color fg, Color base, Color hover, Color pressed) {
         Node b = gui.text(label).width(Length.grow(1)).height(Length.FILL)
@@ -1181,8 +1237,6 @@ public final class CalculatorApp {
         private volatile Node statusLabel;
         /** Where evaluations are recorded, once there is a window loop to open onto. */
         private volatile History history;
-        /** Where a plotted expression opens a window. Null until main() has a window loop to open onto. */
-        private volatile Previews previews;
         /** The session's names, kept here because this is what reads an expression. Never null. */
         private volatile Bindings session = Bindings.EMPTY;
         /** The window that edits them. Null under {@code --capture}, which has no window loop. */
@@ -1258,11 +1312,6 @@ public final class CalculatorApp {
             this.history = history;
         }
 
-        /** Where a plottable expression goes. Null under {@code --capture}, which has no window loop. */
-        void plotter(Previews previews) {
-            this.previews = previews;
-        }
-
         /**
          * The window that names things, and the names it currently holds.
          *
@@ -1291,78 +1340,6 @@ public final class CalculatorApp {
             Definitions open = definitions;
             if (open != null) {
                 open.show();
-            }
-        }
-
-        /**
-         * An evaluated expression, offered to the plotter. <b>How many variables it has is the whole
-         * decision</b>, and it is taken on the term the user typed rather than on the reduced one — COTT
-         * leaves {@code x÷x} standing as a residue whose variable has become part of a form, and the curve
-         * being asked about is the one that was written down.
-         *
-         * <ul>
-         *   <li><b>None</b> — a number was evaluated, and the question becomes what <em>kind</em> of number.
-         *       One on the real line says nothing at all, because an arithmetic result must not come with a
-         *       notice attached; one off it — a zero, an infinity, a twist that is not a whole turn — has a
-         *       <b>place</b> rather than a curve, and the place is drawn. See {@link #offerPlace}.
-         *   <li><b>One</b> — a curve, against that variable whatever it is called. x is the usual one and
-         *       nothing here depends on it being x.
-         *   <li><b>Two</b> — a surface, in three dimensions, over the two of them in the order they are named.
-         *   <li><b>Three or more</b> — reported on the status line rather than half drawn by pinning the rest
-         *       to zero, which would be a picture of a different expression. The count is where the line
-         *       falls, and it falls there because there is no third dimension left to put a third variable on.
-         * </ul>
-         *
-         * <p>Either way it opens a <b>preview of its own</b> — see {@link Previews}.
-         *
-         * @param value the reduced term. Only the no-variable branch reads it, and it has to: what
-         *              {@code 2÷0} is cannot be seen in {@code 2÷0}, only in the {@code 2ω} it came to.
-         */
-        private void offerPlot(String entry, Term term, Term value) {
-            Previews windows = previews;
-            if (windows == null) {
-                return;
-            }
-            List<String> variables = Plottable.variablesIn(term);
-            if (variables.isEmpty()) {
-                offerPlace(entry, value, windows);
-                return;
-            }
-            if (variables.size() > 2) {
-                status(variables.size() + " variables (" + String.join(", ", variables)
-                        + ") -- the plotter takes one or two");
-                return;
-            }
-            Plottable plottable = Plottable.read(term, variables);
-            if (plottable.ok()) {
-                windows.show(entry, term, plottable);
-            } else {
-                status(plottable.refusal());
-            }
-        }
-
-        /**
-         * An expression with no variable in it, which used to be the end of the matter and is not any more.
-         *
-         * <p><b>The gate is {@link Place#offTheLine}, and it is narrow on purpose.</b> Ordinary arithmetic is
-         * still silent — {@code 2+2} answers 4, {@code 5÷2} answers 5÷2, and {@code 0^ω} answers −1, which is a
-         * real number however it was spelled. What opens a window is a value the real line cannot hold: a
-         * grade, a torsion, or a twist that is not a whole turn. Those are exactly the answers that used to be
-         * correct on the display and undrawable everywhere else, and {@link Place} is the picture of them.
-         *
-         * <p>A refusal is reported here where an ordinary result is not, and the asymmetry is the point: a
-         * value that is off the line and still has no place is a value with something to say about it, and the
-         * sentence saying it is more use than a silence that looks identical to arithmetic.
-         */
-        private void offerPlace(String entry, Term value, Previews windows) {
-            if (!Place.offTheLine(value)) {
-                return;
-            }
-            Place place = Place.read(value);
-            if (place.ok()) {
-                windows.show(entry, place);
-            } else {
-                status(place.refusal());
             }
         }
 
@@ -1459,6 +1436,24 @@ public final class CalculatorApp {
             }
         }
 
+        /**
+         * The user put the caret in the line, so the line is being edited rather than typed over.
+         *
+         * <p>This is the same fault {@link #undo()} guards against, reached the other way. After {@code =} the
+         * flag says <em>a result is on the glass</em>, and the next operand key is meant to replace the whole
+         * line — which is right when the next thing that happens is a keystroke, and wrong the moment the user
+         * has clicked somewhere in it. Placing a caret is not ambiguous: nobody positions a cursor in a line
+         * they mean to discard.
+         *
+         * <p>Without it the reported sequence — evaluate, click into the display, press a digit — replaced the
+         * whole entry with that digit, because {@code justEvaluated} had survived the click. It looked like the
+         * keypad ignoring the caret, which is why it was reported that way; the caret was being honoured
+         * exactly, and then thrown away with the line it was in.
+         */
+        synchronized void editing() {
+            justEvaluated = false;
+        }
+
         /** Redo one undone step. The same reasoning as {@link #undo()}, in the other direction. */
         synchronized void redo() {
             if (display.history().redo()) {
@@ -1498,16 +1493,13 @@ public final class CalculatorApp {
                         Bindings names = session;
                         try {
                             // Parsed here rather than through Cott.evaluate, which parses too: the term is
-                            // what the plotter reads its variables out of, and re-parsing to get it would
-                            // let the two disagree about what was typed.
+                            // read once and reduced once, so nothing downstream can disagree about what was
+                            // typed.
                             //
-                            // Expanded before either use, so a defined name is the expression it stands for
-                            // everywhere -- which is what makes plotting f(x) draw f's body rather than an
-                            // opaque symbol with no curve.
+                            // Expanded before use, so a defined name is the expression it stands for
+                            // everywhere -- which is what makes f(x) evaluate f's body rather than an
+                            // opaque symbol.
                             Term term = names.expand(Parser.parse(Notation.normalize(entry, names), names));
-                            // Both the written term and what it came to are kept, because the plotter needs
-                            // both and they answer different questions: which variables were written down,
-                            // and -- when none were -- what kind of value this turned out to be.
                             Term value = Cott.reduce(term);
                             String result = Render.show(value);
                             status("");
@@ -1521,7 +1513,6 @@ public final class CalculatorApp {
                             if (h != null) {
                                 h.record(entry, result);
                             }
-                            offerPlot(entry, term, value);
                         } catch (SyntaxException e) {
                             // A rejection is REPORTED, never written into the field: the entry stays
                             // put so the expression can be fixed and "=" pressed again without

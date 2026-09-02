@@ -50,7 +50,7 @@ The three interactions that broke, in the order they were found:
 |---|---|---|
 | A keypad key | a frame follows the click | the retained tree's mutation channel had no wake |
 | **An entry in the history window** | the expression reaches the display, and the swipe plays | the request was queued for a `beforeFrame` drain nobody woke the loop for |
-| Anything in a plot or definitions window | a frame follows | those are separate `Gui` trees; only the main one was wired |
+| Anything in a history or definitions window | a frame follows | those are separate `Gui` trees; only the main one was wired |
 
 The history one is the most valuable test this repo could have. It is also the one that needs the
 history window open first, so the test has to click the history button, wait for the window, and then

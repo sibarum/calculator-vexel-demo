@@ -583,6 +583,18 @@
       "glob": "META-INF/supirvast/shaders/canvas.vert.spv"
     },
     {
+      "glob": "dev/vexelray/demo/calculator/icon-16.png"
+    },
+    {
+      "glob": "dev/vexelray/demo/calculator/icon-256.png"
+    },
+    {
+      "glob": "dev/vexelray/demo/calculator/icon-32.png"
+    },
+    {
+      "glob": "dev/vexelray/demo/calculator/icon-48.png"
+    },
+    {
       "glob": "dev/vexelray/text/atlas/primary.json"
     },
     {
@@ -617,6 +629,43 @@
       }
     ],
     "downcalls": [
+      {
+        "returnType": "void*",
+        "parameterTypes": [
+          "void*",
+          "void*",
+          "jint",
+          "void*",
+          "void*",
+          "jint"
+        ]
+      },
+      {
+        "returnType": "void*",
+        "parameterTypes": [
+          "struct(jint,jint)"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "jint",
+          "void*",
+          "jint",
+          "jint",
+          "jint"
+        ]
+      },
+      {
+        "returnType": "void*",
+        "parameterTypes": [
+          "jint",
+          "jint",
+          "jint",
+          "jint",
+          "void*"
+        ]
+      },
       {
         "returnType": "jint",
         "parameterTypes": [

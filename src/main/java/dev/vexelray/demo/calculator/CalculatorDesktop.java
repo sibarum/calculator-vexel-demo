@@ -13,7 +13,7 @@ import java.util.List;
  * ~ > apps
  * name        launchable  summary
  * profiles    false       named sets of environment variables and binary directories
- * calculator  true        a keypad, a tape, and a plotter for anything with a variable in it
+ * calculator  true        a keypad and a tape
  *
  * ~ > launch "calculator"
  * ~ > calc "x^2−y^2"
@@ -30,7 +30,7 @@ import java.util.List;
  * one is a fork of the other, and neither has to be kept in step with the other by hand.
  *
  * <p>Settings are shared with the standalone calculator on purpose: the same {@code calculator} settings file,
- * so the plot previews come back arranged where they were left whichever way the calculator was started.
+ * so every window comes back where it was left whichever way the calculator was started.
  *
  * <p>Needs {@code --enable-native-access=ALL-UNNAMED}.
  */

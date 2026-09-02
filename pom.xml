@@ -50,12 +50,22 @@
         <probe.every>0</probe.every>
         <probe.slow>0</probe.slow>
         <probe.stacks>false</probe.stacks>
+        <probe.format>text</probe.format>
+        <!-- The automation driver: "off", "on" for the default port, or a port number. -->
+        <automation>off</automation>
         <app.args></app.args>
         <app.args2></app.args2>
         <app.args3></app.args3>
     </properties>
 
     <dependencies>
+        <!-- Driving the running app the way a person does: real window, real Vulkan, real frame loop.
+             A troubleshooting instrument, not a shipped feature - see vexelray-gui/docs/automation.md. -->
+        <dependency>
+            <groupId>dev.vexelray.gui</groupId>
+            <artifactId>vexelray-gui-automation</artifactId>
+            <version>${vexelray-gui.version}</version>
+        </dependency>
         <dependency>
             <groupId>dev.vexelray.gui</groupId>
             <artifactId>vexelray-gui-widget</artifactId>
@@ -67,21 +77,6 @@
             <groupId>dev.vexelray.gui</groupId>
             <artifactId>vexelray-gui-krono</artifactId>
             <version>${vexelray-gui.version}</version>
-        </dependency>
-        <!-- Reliable graphing: enclosures over columns of x, the frame, and the framing policy. The renderer
-             is this app - a classified column is a vertical span, and a vertical span is a box. -->
-        <dependency>
-            <groupId>dev.vexelray.gui</groupId>
-            <artifactId>vexelray-gui-plot</artifactId>
-            <version>${vexelray-gui.version}</version>
-        </dependency>
-        <!-- The other way to draw an expression: compile it to a true SDF and ray-march it. Brings
-             vexelray-surface (the Surface tree, the symbolic gradient, the Lipschitz normalisation) and
-             vexelray-ir in behind it. Only the sdf capture uses this; the plot windows do not. -->
-        <dependency>
-            <groupId>dev.vexelray</groupId>
-            <artifactId>vexelray-technique-sdf</artifactId>
-            <version>${vexelray.version}</version>
         </dependency>
         <!-- The mathematics: COTT as a direct evaluator. Pure Java, no subprocess, no natives. -->
         <dependency>
@@ -139,6 +134,8 @@
                         <argument>-Dprobe.every=${probe.every}</argument>
                         <argument>-Dprobe.slow=${probe.slow}</argument>
                         <argument>-Dprobe.stacks=${probe.stacks}</argument>
+                        <argument>-Dprobe.format=${probe.format}</argument>
+                        <argument>-Dautomation=${automation}</argument>
                         <argument>-classpath</argument>
                         <classpath/>
                         <argument>${app.mainClass}</argument>
@@ -146,6 +143,79 @@
                         <argument>${app.args2}</argument>
                         <argument>${app.args3}</argument>
                     </arguments>
+                </configuration>
+            </plugin>
+            <!--
+              This application's own glyph atlas, shadowing the one vexelray-text ships.
+
+              GuiApp loads exactly one atlas, by the fixed classpath name
+              /dev/vexelray/text/atlas/primary.{json,png}. Writing ours to that path under
+              src/main/resources puts the project's classes ahead of the dependency jar, so the
+              calculator draws with the faces below and every other app keeps the framework's.
+
+              Face 0 is STIX Two Math (OFL): a Times-cut serif — formal, and crisp at the sizes the
+              keypad uses — that carries the mathematical operators, arrows, letterlike forms and
+              bracket pieces the framework's Noto Sans does not have at all. The framework atlas asks
+              for those blocks and gets one glyph out of 0x2200-0x22FF, because the charset was
+              willing and the font was not; that is why the labels here were written around missing
+              glyphs. Face 1 stays NotoSansMono-Regular at the same index the framework put it,
+              because MainFrame's console addresses monospace as font(1) and this app is one of its
+              guests (see CalculatorDesktop).
+
+              Regenerated at generate-resources and committed, incrementally — the plugin re-runs
+              only when a font is newer than the outputs. On non-Windows build with
+              -Dmsdf.mode=prebuilt, which consumes the committed pair instead of regenerating.
+            -->
+            <plugin>
+                <groupId>dev.vexelray</groupId>
+                <artifactId>vexelray-msdf-maven-plugin</artifactId>
+                <version>${vexelray.version}</version>
+                <executions>
+                    <execution>
+                        <id>generate-atlases</id>
+                        <goals>
+                            <goal>generate-atlas</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <outputDir>${project.basedir}/src/main/resources/dev/vexelray/text/atlas</outputDir>
+                    <atlases>
+                        <atlas>
+                            <name>primary</name>
+                            <font>${project.basedir}/fonts/STIX/STIXTwoMath.ttf</font>
+                            <!--
+                              Latin through Latin Extended-A for text; Greek for the tokens the engine
+                              actually reads back (pi, omega, theta); punctuation and the super/subscript
+                              block; letterlike (script F on the caption); arrows; the whole of
+                              mathematical operators; the four floor/ceiling corners; currency, of which
+                              STIX has the eight that matter. About 990 glyphs — the framework's atlas
+                              holds 1112 at this size, so this fits 2048 with room left.
+                            -->
+                            <charset>
+[0x20, 0x7E]
+[0xA0, 0xFF]
+[0x100, 0x17F]
+[0x370, 0x3FF]
+[0x2000, 0x206F]
+[0x2070, 0x209F]
+[0x20A0, 0x20BF]
+[0x2100, 0x214F]
+[0x2190, 0x21FF]
+[0x2200, 0x22FF]
+[0x2308, 0x230B]
+                            </charset>
+                            <extraFonts>
+                                <extraFont>
+                                    <font>${project.basedir}/fonts/Noto_Sans_Mono/NotoSansMono-Regular.ttf</font>
+                                    <charset>latin-1</charset>
+                                </extraFont>
+                            </extraFonts>
+                            <atlasSize>2048</atlasSize>
+                            <fontSize>32</fontSize>
+                            <pxRange>4</pxRange>
+                        </atlas>
+                    </atlases>
                 </configuration>
             </plugin>
         </plugins>
@@ -175,7 +245,6 @@
                 <probe.stacks>true</probe.stacks>
             </properties>
         </profile>
-
         <!-- Build-time platform selection, same as vexelray-gui-demo. -->
         <profile>
             <id>platform-windows</id>
@@ -267,6 +336,29 @@
                                     </target>
                                 </configuration>
                             </execution>
+                            <!-- The executable's own icon, which is a packaging fact rather than an engine
+                                 one: what Explorer shows for calculator.exe, what a pinned shortcut shows
+                                 before the program runs, and - because VexelRay sets no AppUserModelID - what
+                                 the taskbar button shows while it does. The running window's icon is the other
+                                 half, and lives in Icons.java. Compiling .rc -> .res needs rc.exe on PATH,
+                                 which the MSVC environment native-image already requires on Windows supplies;
+                                 failonerror, because an icon that silently did not get linked looks exactly
+                                 like one that was never asked for. -->
+                            <execution>
+                                <id>compile-exe-icon</id>
+                                <phase>prepare-package</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <exec executable="rc" failonerror="true">
+                                            <arg value="/nologo"/>
+                                            <arg value="/fo"/>
+                                            <arg file="${project.build.directory}/calculator.res"/>
+                                            <arg file="${project.basedir}/src/main/native/calculator.rc"/>
+                                        </exec>
+                                    </target>
+                                </configuration>
+                            </execution>
                         </executions>
                     </plugin>
                     <plugin>
@@ -307,6 +399,10 @@
                                      main. Windows linker options; a native build elsewhere drops these two. -->
                                 <buildArg>-H:NativeLinkerOption=/SUBSYSTEM:WINDOWS</buildArg>
                                 <buildArg>-H:NativeLinkerOption=/ENTRY:mainCRTStartup</buildArg>
+                                <!-- The compiled icon resource, handed to the linker like any other object.
+                                     Built by the compile-exe-icon execution above; a Windows linker option
+                                     too, so a native build elsewhere drops this along with the two before. -->
+                                <buildArg>-H:NativeLinkerOption=${project.build.directory}/calculator.res</buildArg>
                             </buildArgs>
                         </configuration>
                     </plugin>
