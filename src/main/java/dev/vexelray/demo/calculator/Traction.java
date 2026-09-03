@@ -73,42 +73,55 @@ public sealed interface Traction {
         }
 
         /**
-         * Where this component sits: the walk that reaches it.
+         * Where this component sits, when it sits anywhere.
          *
-         * <p>{@code k·0^g} is reached by walking {@code k} along the real axis and then {@code g} rungs in the
-         * zero direction, so the multiplier <em>is</em> the real coordinate and the grade <em>is</em> the
-         * traction coordinate. Multiplying a scalar by a traction is a linear walk; in the exponent it is
-         * addition, and that duality is why one leg of the walk lands on each axis.
+         * <p>A grade-zero component is the real part: {@code k·0^0 = k}, at {@code (k, 0)}. A component of
+         * grade {@code g} with multiplier one is a pure traction value, at {@code (0, g)} — {@code 0^1} has no
+         * real part at all, which is what keeps it off the real axis and distinct from {@code 1 + 0^1}.
          *
-         * <p>Empty for a component with twist or torsion, which is a diagonal rather than a walk along the two
-         * axes and has no place in this chart.
+         * <p>Empty in the two cases the chart has no room for: a component with twist or torsion, which is a
+         * diagonal rather than a position on either axis; and a multiplier other than one on a traction rung,
+         * as {@code 2·0} has. That last one is still open — see {@link Value#point()}.
          */
         public Optional<Point> place() {
-            return isPlain() ? Optional.of(new Point(mult, grade)) : Optional.empty();
+            if (!isPlain()) {
+                return Optional.empty();
+            }
+            if (grade.isZero()) {
+                return Optional.of(new Point(mult, Rational.ZERO));
+            }
+            return mult.isOne() ? Optional.of(new Point(Rational.ZERO, grade)) : Optional.empty();
         }
     }
 
     /**
      * A point in 2D traction space: how far along the real axis, and how many rungs up the traction axis.
      *
-     * <p>The real axis is additive and the traction axis multiplicative, so these are not two lengths in the
-     * same units — the second counts powers of zero. {@code traction} of one is zero itself, of minus one is ω.
+     * <p><b>Ones add, zeros multiply.</b> The real coordinate is reached additively — {@code 1+1} is two steps
+     * out — and the traction coordinate multiplicatively, {@code 0·0 = 0^2} being one rung up. So the two
+     * numbers are not two lengths in the same units: the second counts powers of zero, and moving along it is
+     * done by multiplying rather than by adding.
      *
-     * <p>The origin is {@link #ERASURE}, {@code (0, 0)} — erasure, not the number zero, which is at
-     * {@code (1, 1)}. Erasure can only be reached linearly, and {@code (0, 0)} is the walk that goes nowhere
-     * along either axis.
+     * <p>The origin is {@link #ERASURE}, {@code (0, 0)} — erasure, and not the number zero, which is at
+     * {@code (0, 1)}, one rung up. A value never lands on the origin: having neither a real part nor a traction
+     * part is what erasure <em>is</em>, and that reads as {@link Partial} rather than as a {@link Value}.
      *
-     * @param real     the real coordinate — the multiplier {@code k} of {@code k·0^g}
-     * @param traction the traction coordinate — the grade {@code g}, a rational power of zero
+     * @param real     the real coordinate — the additive part, {@code Re}
+     * @param traction the traction coordinate — the grade of the power of zero, {@code Tr}
      */
     record Point(Rational real, Rational traction) {
 
-        /** The traction origin. Not the number zero. */
+        /** The traction origin. Not the number zero, and not any value. */
         public static final Point ERASURE = new Point(Rational.ZERO, Rational.ZERO);
 
-        /** On the real axis: no rungs climbed, so {@code k·0^0 = k}. */
+        /** On the real axis: no rungs climbed. */
         public boolean isReal() {
             return traction.isZero();
+        }
+
+        /** On the traction axis: no real part, as {@code 0^1} and ω both have none. */
+        public boolean isPureTraction() {
+            return real.isZero();
         }
     }
 
@@ -127,25 +140,44 @@ public sealed interface Traction {
         }
 
         /**
-         * This value as a single point, if it is one.
+         * This value as a point, when it is in the form {@code Re + 0^Tr}.
          *
-         * <p>Present when the value is one plain component — which is every numeral, every power of zero, and
-         * everything ordinary arithmetic produces without leaving a sum standing. Empty in two cases, and they
-         * are different in kind:
+         * <p>That form is the whole of what the chart holds, and it covers what ordinary arithmetic actually
+         * produces: a numeral is {@code (Re, 0)}, a power of zero is {@code (0, Tr)}, and the two together are
+         * {@code (Re, Tr)}. Grade-zero components are summed into the real part, since they <em>are</em> the
+         * real part.
+         *
+         * <p>Empty in three cases, different in kind:
          *
          * <ul>
-         *   <li>a component with twist or torsion, which is a diagonal and not a walk along the two axes;
-         *   <li>{@link #components()} longer than one — a sum of unlike exponents, which COTT deliberately
-         *       leaves standing. Adding two components at the <em>same</em> rung adds their multipliers and
-         *       stays one point ({@code 0+0 = 2·0}); at different rungs there is nothing to add, and the value
-         *       is a formal sum rather than a position.
+         *   <li>a component with twist or torsion — a diagonal, off both axes;
+         *   <li>more than one traction rung, as {@code 0^2 + 0^3} has. There is no single {@code Tr} to
+         *       report, and the value is a formal sum rather than a position;
+         *   <li>a multiplier other than one on a traction rung, as {@code 2·0} has. <b>This one is open.</b>
+         *       Every combination law tried so far either made zero an additive identity or sent {@code 1+0}
+         *       and {@code 2·0} to the same point, and the engine keeps them distinct, so the reading refuses
+         *       rather than picks.
          * </ul>
          *
          * The components are all still there to be read either way. What is refused is a position, not the
          * value.
          */
         public Optional<Point> point() {
-            return components.size() == 1 ? components.get(0).place() : Optional.empty();
+            Rational real = Rational.ZERO;
+            Rational traction = null;
+            for (Component component : components) {
+                if (!component.isPlain()) {
+                    return Optional.empty();
+                }
+                if (component.grade().isZero()) {
+                    real = real.add(component.mult());
+                } else if (traction != null || !component.mult().isOne()) {
+                    return Optional.empty();
+                } else {
+                    traction = component.grade();
+                }
+            }
+            return Optional.of(new Point(real, traction == null ? Rational.ZERO : traction));
         }
     }
 

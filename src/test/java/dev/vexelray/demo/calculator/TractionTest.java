@@ -6,7 +6,6 @@ import sibarum.cott.Cott;
 import sibarum.cott.Notation;
 import sibarum.cott.Parser;
 import sibarum.cott.Rational;
-import sibarum.cott.Term;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -20,9 +19,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * three steps the {@code =} key runs, so what is pinned is the reading of what COTT <em>actually</em> produces
  * rather than of a term hand-built to be convenient.
  *
- * <p>The chart being pinned throughout: {@code k·0^g} is at {@code (k, g)} — walk {@code k} along the real
- * axis, then climb {@code g} rungs in the zero direction. So {@code (0, 0)} is erasure, {@code (1, 0)} is one,
- * {@code (1, 1)} is zero, and {@code (1, -1)} is ω.
+ * <p>The chart being pinned throughout: a value is {@code Re + 0^Tr}, at {@code (Re, Tr)}. <b>Ones add</b>
+ * along the real axis, <b>zeros multiply</b> up the traction axis. So {@code (1, 0)} is one, {@code (0, 1)} is
+ * zero, {@code (0, -1)} is ω, {@code (0, 0)} is erasure — and {@code (1, 1)} is {@code 1 + 0^1}, which is the
+ * whole reason zero itself must have no real part.
  */
 class TractionTest {
 
@@ -41,74 +41,97 @@ class TractionTest {
         return Rational.of(n);
     }
 
-    /** Assert the whole walk: {@code typed} lands at {@code (real, traction)}. */
-    private static void assertAt(long real, long traction, String typed) {
+    /** Assert {@code typed} lands at {@code (Re, Tr)}. */
+    private static void assertAt(long re, long tr, String typed) {
         Traction.Value value = assertInstanceOf(Traction.Value.class, read(typed), typed);
         Traction.Point at = value.point().orElseThrow(() -> new AssertionError(typed + " has no position"));
-        assertEquals(new Traction.Point(r(real), r(traction)), at, typed);
+        assertEquals(new Traction.Point(r(re), r(tr)), at, typed);
+    }
+
+    /** Assert {@code typed} is read in full but given no position. */
+    private static Traction.Value assertUnplaced(String typed) {
+        Traction.Value value = assertInstanceOf(Traction.Value.class, read(typed), typed);
+        assertTrue(value.point().isEmpty(), typed + " should have no position");
+        return value;
     }
 
     // ---------------------------------------------------------------- the four generators
 
     /**
-     * The four generators, each one step from erasure along one of the two axes. They are the four cardinal
-     * directions, and a chart that mixed any two of them up would show here first.
+     * The four generators, each one step from erasure. The two real ones sit on the real axis with no traction
+     * part; the two traction ones sit on the traction axis with no real part. A chart that mixed any two of
+     * them up would show here first.
      */
     @Test
     void theFourGeneratorsAreOneStepFromErasure() {
-        assertAt(1, 0, "0^0");    // +1, one step along the real axis
+        assertAt(1, 0, "0^0");    // +1, one step out along the real axis
         assertAt(-1, 0, "0^w");   // -1, one step the other way
-        assertAt(1, 1, "0^1");    //  0, one rung up
-        assertAt(1, -1, "0^-1");  //  ω, one rung down
+        assertAt(0, 1, "0^1");    //  0, one rung up and no real part
+        assertAt(0, -1, "0^-1");  //  ω, one rung down
     }
 
-    /** ω is zero's reciprocal, so it is the same walk downward that zero is upward. */
+    /** ω is zero's reciprocal, so it is the same climb downward that zero is upward. */
     @Test
     void omegaIsTheRungBelow() {
-        assertAt(1, -1, "1/0");
-        assertAt(1, -2, "w^2");
-        assertAt(1, -2, "w*w");
+        assertAt(0, -1, "1/0");
+        assertAt(0, -2, "w^2");
+        assertAt(0, -2, "w*w");
     }
 
-    /** Multiplication climbs the traction axis: {@code 0*0} is a rung up, not two copies. */
+    /** Zeros multiply: {@code 0*0} is a rung up, not two copies. */
     @Test
-    void multiplicationClimbsRungs() {
-        assertAt(1, 2, "0*0");
-        assertAt(1, 3, "0*0*0");
+    void zerosMultiplyUpTheTractionAxis() {
+        assertAt(0, 2, "0*0");
+        assertAt(0, 3, "0*0*0");
     }
 
-    /** Addition at one rung adds the multipliers and stays a single point — the walk gets longer, not taller. */
+    /** Ones add: along the real axis, addition is just distance. */
     @Test
-    void additionAtOneRungLengthensTheRealLeg() {
-        assertAt(2, 1, "0+0");
-        assertAt(2, 1, "2*0");
-        assertAt(3, 1, "0+0+0");
-    }
-
-    // ---------------------------------------------------------------- the real axis, and the origin
-
-    /** An ordinary numeral is a walk along the real axis and no climb at all. */
-    @Test
-    void aNumeralIsAWalkAlongTheRealAxisAlone() {
+    void onesAddAlongTheRealAxis() {
         assertAt(2, 0, "2");
         assertAt(5, 0, "2+3");
-        Traction.Value two = assertInstanceOf(Traction.Value.class, read("2"));
-        assertTrue(two.point().orElseThrow().isReal());
+        assertAt(-3, 0, "-6/2");
+        assertTrue(((Traction.Value) read("2")).point().orElseThrow().isReal());
     }
 
-    /** Fractions are on the real axis too — the coordinate is a rational, not a rung count. */
+    /** The real coordinate is a rational, not a rung count. */
     @Test
     void theRealCoordinateIsARational() {
-        Traction.Value third = assertInstanceOf(Traction.Value.class, read("1/3"));
-        assertEquals(new Traction.Point(Rational.of(1, 3), Rational.ZERO), third.point().orElseThrow());
+        assertEquals(new Traction.Point(Rational.of(1, 3), Rational.ZERO),
+                ((Traction.Value) read("1/3")).point().orElseThrow());
     }
 
-    /** The origin is erasure, and it is the walk that goes nowhere. The number zero is a rung above it. */
+    // ---------------------------------------------------------------- the canonical form
+
+    /**
+     * The form the chart holds, and the case that forces zero off the real axis. If {@code 0^1} had a real
+     * part of one, it would sit exactly where {@code 1 + 0^1} sits.
+     */
     @Test
-    void theOriginIsErasureAndNotZero() {
+    void aRealPartAndATractionPartTogether() {
+        assertAt(1, 1, "1+0^1");
+        assertAt(2, 1, "2+0^1");
+        assertAt(3, 2, "3+0^2");
+        assertAt(1, -1, "1+w");
+    }
+
+    /** And the two really are different points, which is the whole content of the ruling. */
+    @Test
+    void zeroAndOnePlusZeroAreDifferentPoints() {
+        Traction.Point zero = ((Traction.Value) read("0^1")).point().orElseThrow();
+        Traction.Point onePlusZero = ((Traction.Value) read("1+0^1")).point().orElseThrow();
+        assertEquals(new Traction.Point(r(0), r(1)), zero);
+        assertEquals(new Traction.Point(r(1), r(1)), onePlusZero);
+        assertTrue(zero.isPureTraction());
+        assertFalse(onePlusZero.isPureTraction());
+    }
+
+    /** The origin is erasure, and no value lands there — having neither part is what erasure is. */
+    @Test
+    void theOriginIsErasureAndNoValueReachesIt() {
         assertEquals(new Traction.Point(Rational.ZERO, Rational.ZERO), Traction.Point.ERASURE);
-        assertTrue(Traction.Point.ERASURE.isReal());
-        assertAt(1, 1, "0^1");
+        assertInstanceOf(Traction.Partial.class, read("1-1"));
+        assertInstanceOf(Traction.Partial.class, read("0w"));
     }
 
     // ---------------------------------------------------------------- the three spellings of negative
@@ -124,43 +147,43 @@ class TractionTest {
         assertEquals(read("-1"), read("0^w"), "Neg and a twist of one are the same point");
         assertAt(-1, 0, "-1");
         assertAt(-1, 0, "0^w");
-        assertAt(-3, 0, "-6/2");
     }
 
-    /** A twist that is not a sign is a diagonal — off both axes, so the walk cannot reach it. */
+    /** A twist that is not a sign is a diagonal — off both axes, so the chart has no room for it. */
     @Test
     void aDiagonalIsRefusedAPosition() {
-        Traction.Value half = assertInstanceOf(Traction.Value.class, read("0^((w+1)/2)"));
+        Traction.Value half = assertUnplaced("0^((w+1)/2)");
         Traction.Component only = half.components().get(0);
         assertEquals(Rational.of(1, 2), only.twist());
         assertEquals(Rational.of(1, 2), only.grade());
         assertFalse(only.isPlain());
-        assertTrue(only.place().isEmpty(), "a diagonal is not a walk along the two axes");
-        assertTrue(half.point().isEmpty());
+        assertTrue(only.place().isEmpty());
     }
 
-    // ---------------------------------------------------------------- sums of unlike rungs
+    // ---------------------------------------------------------------- what the chart still refuses
 
     /**
-     * A sum across rungs has nothing to add, so COTT leaves it standing and it is not one point. Both
-     * components are still read in full — what is refused is a position, not the value.
+     * A multiplier on a traction rung. {@code 0+0} reduces to {@code 2·0}, which is not {@code Re + 0^Tr} for
+     * any {@code Re} and {@code Tr} — and it must not be folded onto the real axis, because that is exactly
+     * what sends it to the same place as {@code 1+0}. Still open, so still refused.
      */
     @Test
-    void aSumAcrossRungsIsReadButIsNotOnePoint() {
-        Traction.Value mixed = assertInstanceOf(Traction.Value.class, read("3+0^2"));
-        assertEquals(2, mixed.components().size());
-        assertTrue(mixed.point().isEmpty(), "3+0^2 spans two rungs");
+    void aTractionMultiplierIsReadButHasNoPositionYet() {
+        Traction.Value doubled = assertUnplaced("0+0");
+        Traction.Component only = doubled.components().get(0);
+        assertEquals(r(2), only.mult());
+        assertEquals(r(1), only.grade());
+        assertTrue(only.isPlain(), "nothing wrong with the value — only with placing it");
 
-        assertEquals(new Traction.Point(r(3), r(0)), mixed.components().get(0).place().orElseThrow());
-        assertEquals(new Traction.Point(r(1), r(2)), mixed.components().get(1).place().orElseThrow());
+        assertUnplaced("2*0");
+        assertUnplaced("3+2*0^2");
     }
 
-    /** And with a multiplier on the far rung, which changes only that component's real leg. */
+    /** More than one rung: there is no single {@code Tr} to report. */
     @Test
-    void eachComponentOfASumPlacesOnItsOwn() {
-        Traction.Value mixed = assertInstanceOf(Traction.Value.class, read("3+2*0^2"));
-        assertEquals(new Traction.Point(r(2), r(2)), mixed.components().get(1).place().orElseThrow());
-        assertTrue(mixed.point().isEmpty());
+    void aSumAcrossTwoRungsHasNoSingleTraction() {
+        assertEquals(2, assertUnplaced("0^2+0^3").components().size());
+        assertEquals(3, assertUnplaced("1+0^1+0^2").components().size());
     }
 
     // ---------------------------------------------------------------- erasure and stuck terms
@@ -197,6 +220,13 @@ class TractionTest {
         assertTrue(stuck.reason().contains("x"), stuck.reason());
     }
 
+    /** A product that never expanded is stuck too, which is where symbolic coefficients currently land. */
+    @Test
+    void anUnexpandedProductIsStuck() {
+        assertInstanceOf(Traction.Stuck.class, read("x*0^1"));
+        assertInstanceOf(Traction.Stuck.class, read("(1+0)*(1+0)"));
+    }
+
     // ---------------------------------------------------------------- sampling, which is what a plot does
 
     /** Every reading is total, so a sweep along the real line never throws — it only ever refuses. */
@@ -213,7 +243,7 @@ class TractionTest {
         }
     }
 
-    /** Away from the poles the sweep really does produce placeable points on the real axis. */
+    /** Away from the poles the sweep produces placeable points on the real axis. */
     @Test
     void anOrdinarySampleIsAPointOnTheRealAxis() {
         Bindings f = NONE.define("f(x) = 1/(x^2-1)");
@@ -223,13 +253,12 @@ class TractionTest {
         assertTrue(at.isReal());
     }
 
-    /** And a sample that lands on ω climbs off the real axis, which is the whole reason for the second one. */
+    /** And a sample that reaches ω leaves the real axis, which is the whole reason for the second one. */
     @Test
     void aSampleThatReachesOmegaLeavesTheRealAxis() {
         Bindings g = NONE.define("g(x) = 1/x");
         Traction.Value value = assertInstanceOf(Traction.Value.class, readIn(g, "g(0)"));
-        Traction.Point at = value.point().orElseThrow();
-        assertEquals(new Traction.Point(r(1), r(-1)), at, "1/0 is ω, a rung below the real axis");
-        assertFalse(at.isReal());
+        assertEquals(new Traction.Point(r(0), r(-1)), value.point().orElseThrow(), "1/0 is ω, one rung down");
+        assertFalse(value.point().orElseThrow().isReal());
     }
 }
