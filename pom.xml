@@ -23,6 +23,7 @@
         <vexelray.version>0.1.0-SNAPSHOT</vexelray.version>
         <tactroller.version>1.0-SNAPSHOT</tactroller.version>
         <cott-engine.version>0.1.0-SNAPSHOT</cott-engine.version>
+        <junit.version>5.11.4</junit.version>
         <mainframe.version>0.1.0-SNAPSHOT</mainframe.version>
 
         <app.mainClass>dev.vexelray.demo.calculator.CalculatorApp</app.mainClass>
@@ -78,6 +79,13 @@
             <artifactId>vexelray-gui-krono</artifactId>
             <version>${vexelray-gui.version}</version>
         </dependency>
+        <!-- The enclosure algebra: Expr/Interval/Cell/Frame/Volume/Camera/Framing/Landmarks. The reliable
+             plotting substrate migrated from Pontif, and the real-projection half of every plot here. -->
+        <dependency>
+            <groupId>dev.vexelray.gui</groupId>
+            <artifactId>vexelray-gui-plot</artifactId>
+            <version>${vexelray-gui.version}</version>
+        </dependency>
         <!-- The mathematics: COTT as a direct evaluator. Pure Java, no subprocess, no natives. -->
         <dependency>
             <groupId>sibarum.cott</groupId>
@@ -103,6 +111,14 @@
             <groupId>dev.mainframe</groupId>
             <artifactId>mainframe-vexel-gui</artifactId>
             <version>${mainframe.version}</version>
+        </dependency>
+        <!-- Tests. The reading of a COTT term is pure, so it is pinned in plain unit tests rather than
+             through a window: mvn test. The picture still needs a capture run; the algebra does not. -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
