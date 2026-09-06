@@ -141,15 +141,21 @@ class LookTest {
         }
     }
 
+    /**
+     * The march's colours are display components, not linear ones — pinned because it is counter-intuitive and
+     * because {@code SdfScene.Rgb}'s own javadoc says the opposite.
+     *
+     * <p>The reason is that the composed fragment never encodes its result and the attachment is
+     * {@code R8G8B8A8_UNORM}, so nothing applies an OETF between the shader and the screen. A colour converted
+     * to linear on the way in therefore renders about 2.2× too dark. This asserts <b>identity</b>, so anyone
+     * "fixing" it back to a linearisation fails here and reads the note. See framework-notes.md FN-19.
+     */
     @Test
-    @DisplayName("sRGB reaches the march as linear — the conversion that has no type to enforce it")
-    void sceneColourIsLinearised() {
-        // Mid grey is the case that shows it: 0.5 sRGB is 0.214 linear, and passing it through unconverted is
-        // the mistake this method exists to prevent. A component that came back as 0.5 would mean the call is a
-        // no-op, which is exactly how a washed-out plot happens.
-        var rgb = Look.linear(new Color(0.5f, 0.5f, 0.5f, 1f));
-        assertEquals(0.2140, rgb.r(), 0.001, "sRGB 0.5 is 0.214 in linear light");
-        assertEquals(rgb.r(), rgb.g(), 1e-9);
-        assertEquals(rgb.r(), rgb.b(), 1e-9);
+    @DisplayName("a colour reaches the march unconverted, because nothing downstream will encode it")
+    void sceneColourIsNotLinearised() {
+        var rgb = Look.scene(new Color(0.5f, 0.25f, 0.75f, 1f));
+        assertEquals(0.5, rgb.r(), 1e-6);
+        assertEquals(0.25, rgb.g(), 1e-6);
+        assertEquals(0.75, rgb.b(), 1e-6);
     }
 }

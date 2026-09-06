@@ -439,3 +439,93 @@ a different surface.
 **Framework answer:** it is genuinely unclear that per-edge borders are worth the prop-key cost. The narrower
 ask that covers most real cases is a `Node.rule(Edge, Length, Color)` — one edge, drawn like the border, no
 box model change. Noted rather than asked for.
+
+---
+
+## FN-18 · The offscreen path cannot exercise a `ConeField` 🔬
+
+`OffscreenRenderer.render(device, w, h, vertexSpirv, entry, fragmentSpirv, entry, vertexCount, clear…, push)`
+has **no descriptor-set parameter**. `ConeField` reads its geometry from a storage buffer bound at set 0, so the
+one headless render-and-read-back path in the stack cannot run it at all.
+
+That matters because of what it takes away. `StrokeMarchSmoke` exists for the *compiled-in* surface path and
+its argument is the strongest one in the repo — *"'nothing renders' is three questions a window cannot tell
+apart… it runs the first in isolation and counts the pixels that are not sky."* There is no equivalent
+available for the data-driven path, so a blank `ConeField` frame has to be diagnosed through a window, which is
+precisely the situation that argument says not to be in.
+
+**Cost:** M1 was proven by running the real application and photographing it over the automation socket. That
+worked, and it is a weaker instrument: it could not have separated "the shader draws nothing" from "the camera
+is pointed elsewhere" from "the buffer never uploaded".
+
+**Framework answer:** one more parameter — `long descriptorSet` and `long[] setLayouts` on
+`OffscreenRenderer.render` — and then a `ConeMarchSmoke` beside `StrokeMarchSmoke`. Small, and it closes
+[FN-13](#fn-13) at the same time.
+
+---
+
+## FN-19 · `SdfScene.Rgb` says linear; the pipeline never encodes 🔬
+
+`SdfScene.Rgb`'s javadoc is explicit: *"Linear, not sRGB: shading arithmetic is only correct in a linear
+space."* True of the arithmetic. But **nothing downstream applies an OETF**: there is no `pow`, gamma or
+`linearToSrgb` anywhere in `SdfComposer` or `Shadings`, and `SampledColorTarget`'s attachment is
+`VK_FORMAT_R8G8B8A8_UNORM` rather than `_SRGB`, so the format does not apply one either. Whatever the fragment
+writes lands in the texel verbatim, and the GUI's canvas samples it verbatim.
+
+So a colour dutifully converted to linear on the way in renders **about 2.2× too dark**, uniformly. The first
+marched frame of this application is the evidence: the sky was near-black where `#161826` should have been, and
+the curve sat two shades under its own accent. Neither reads as a colour-space bug; it reads as "the plot is
+dim", which is a much longer hunt.
+
+**What the calculator does:** passes display components straight through (`Look.scene`), and pins it with a test
+that asserts *identity*, so anyone "fixing" it back to a linearisation fails the build and reads the note.
+
+**Framework answer:** pick one and make the other true. Either the composed fragment encodes on the way out
+(and the doc is right), or the doc says these are display-space values and shading is approximate. The present
+state — a documented contract the pipeline does not honour — is the one option that costs every consumer the
+same afternoon.
+
+---
+
+## FN-20 · What the march actually costs, measured 🔬
+
+The number [FN-11](#fn-11) is about. Measured on this machine with the Probe (`-Dprobe=all`, lane `gpu`, span
+`plot.march`), auto-orbiting so the camera changes every frame, one canned 420-point helix (419 cones):
+
+| target | steps | march, mean |
+|---|---|---|
+| 1024×640 | 128 | 34.50 ms |
+| 1024×640 | 48 | 28.68 ms |
+| 768×480 | 48 | 18.32 ms |
+| **640×400** | **64** | **14.21 ms** |
+| **640×400** | **48** | **13.39 ms** |
+| 512×320 | 48 | 9.02 ms |
+| 512×320 | 48, 140 pts | 4.14 ms |
+| 256×160 | 48 | 3.45 ms |
+
+Three readings, and the third is the one that matters:
+
+1. **Pixels dominate.** Quartering the pixel count is a 3.8× speedup; cutting the step budget from 128 to 48 is
+   17%. The march is bandwidth- and occupancy-bound rather than step-bound, at least at this cone count.
+2. **Cones matter at low resolution and not at high.** At 512×320, cutting 419 cones to 139 nearly halves the
+   time; at 1024×640 the per-pixel cost swamps it. `ConeField`'s group culling is doing real work — 419 cones
+   is 53 groups and the loop is over groups — but there is no spatial hierarchy above that.
+3. **The shipped default is 640×400 at 48 steps: 13.39 ms.** That is **80% of a 60 Hz frame spent on the plot
+   alone**, serially, on the GUI thread, because `renderInto` blocks. The plot is a quarter of the window's
+   linear resolution and upscaled by the sampler — which, at this tube thickness, still looks clean.
+
+**The point of FN-11 in one line:** 13 ms of GPU work is not the problem — 13 ms of *stalled GUI thread* is.
+Were `renderInto` asynchronous, the same work would overlap the tree's own draw and present and cost latency
+instead of frame rate, and 1024×640 would be affordable. The fix named in `SampledColorTarget`'s own source
+comment is worth roughly a doubling of the plot's resolution.
+
+*(An app-side mitigation exists and is not yet taken: march at 30 Hz while orbiting and let the GUI run at 60.
+Recorded so it is a decision rather than an oversight.)*
+
+### And one integration trap, found by a measurement that lied
+
+A `-D` on the `mvn` command line sets a **Maven** property. `exec:exec`'s `commandlineArgs` is a fixed string,
+so it reaches the forked JVM only if the pom names it. The first sweep run here changed resolution, step budget
+and cone count across seven configurations and reported the same number every time — because all seven runs
+were byte-identical. Fixed with an `${app.jvmArgs}` pass-through in the pom, and worth knowing before trusting
+any measurement taken through `exec:exec`.

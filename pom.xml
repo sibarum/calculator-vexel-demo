@@ -47,6 +47,14 @@
 
         <!-- The automation driver: "off", "on" for the default port, or a port number. -->
         <automation>off</automation>
+
+        <!--
+          Extra JVM flags for exec:exec, split on whitespace. Needed because a -D on the mvn command line sets a
+          MAVEN property, which reaches the forked JVM only if the command line below names it: without this,
+          "mvn exec:exec -Dplot.steps=48" runs the app with the default and reports a measurement of nothing.
+          Found the hard way, by a performance sweep in which all seven configurations returned the same number.
+        -->
+        <app.jvmArgs></app.jvmArgs>
     </properties>
 
     <dependencies>
@@ -149,7 +157,7 @@
                 <configuration>
                     <executable>${java.home}/bin/java</executable>
                     <classpathScope>runtime</classpathScope>
-                    <commandlineArgs>--enable-native-access=ALL-UNNAMED -Dstdout.encoding=UTF-8 -Dprobe=${probe} -Dprobe.out=${probe.out} -Dprobe.trace=${probe.trace} -Dprobe.every=${probe.every} -Dprobe.slow=${probe.slow} -Dprobe.stacks=${probe.stacks} -Dprobe.format=${probe.format} -Dautomation=${automation} -classpath %classpath ${app.mainClass} ${app.args}</commandlineArgs>
+                    <commandlineArgs>--enable-native-access=ALL-UNNAMED -Dstdout.encoding=UTF-8 -Dprobe=${probe} -Dprobe.out=${probe.out} -Dprobe.trace=${probe.trace} -Dprobe.every=${probe.every} -Dprobe.slow=${probe.slow} -Dprobe.stacks=${probe.stacks} -Dprobe.format=${probe.format} -Dautomation=${automation} ${app.jvmArgs} -classpath %classpath ${app.mainClass} ${app.args}</commandlineArgs>
                 </configuration>
             </plugin>
         </plugins>

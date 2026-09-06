@@ -90,6 +90,20 @@ public final class Calculator {
 
             attachInput(input, gui, app);
             ui.titleBar().controls(app.controls());   // the window exists now; point the chrome at it
+
+            // The plot. Built here rather than in Ui because a render target and a storage buffer come from the
+            // application's device, and the device does not exist until GuiApp does -- which is also the whole
+            // reason GuiApp.viewport and GuiApp.storage exist rather than the device being public.
+            March march = new March(app);
+            march.showIn(ui.viewport());
+            var reading = Canned.read(Canned.DEFAULT_EXPRESSION);
+            march.geometry(Geometry.of(reading, 4, -6, 6, Integer.getInteger("plot.samples", 420)));
+
+            // Auto-orbit. A GLOBAL claim rather than a handler, which is how this framework does preemption:
+            // the focused expression field outranks it by claiming Space at FOCUSED scope, so typing a space
+            // into an expression types a space. Nothing here has to know the field exists.
+            java.util.concurrent.atomic.AtomicBoolean spin = new java.util.concurrent.atomic.AtomicBoolean();
+            gui.shortcut(Key.SPACE, () -> spin.set(!spin.get()));
             if (memory.maximized("main")) {
                 app.window().maximize();
             }
@@ -121,6 +135,14 @@ public final class Calculator {
                 app.run(gui, maxFrames, () -> {
                     pump(bridge);
                     krono.tick();
+                    if (spin.get()) {
+                        march.turn(Math.toRadians(0.6), 0);
+                    }
+                    // After the clock, because a camera animation settles on the tick and the frame that
+                    // presents a value should be the frame that computed it. Before the tree is drawn, because
+                    // renderInto's contract is that the image is ready when it returns.
+                    march.frame();
+                    ui.readout().show(march.yaw(), march.pitch(), 1.0, march.cones());
                     memory.poll();
                 });
             } finally {

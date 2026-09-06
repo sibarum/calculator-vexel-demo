@@ -128,20 +128,28 @@ final class Look {
     // ------------------------------------------------------------- into the scene
 
     /**
-     * A colour as the march sees it.
+     * A colour as the march sees it — <b>display components, passed straight through</b>.
      *
-     * <p><b>{@link SdfScene.Rgb} is linear and a {@link Color} is sRGB</b>, and nothing in the type system says
-     * so — a component passed straight through arrives washed out, uniformly, in a way that reads as "the plot
-     * is a slightly different purple from the UI" rather than as a missing conversion. This is the one place
-     * the two colour spaces meet, so it is the only place that has to know.
+     * <p>{@link SdfScene.Rgb} documents itself as linear, and for its <em>arithmetic</em> it is: shading
+     * multiplies albedo by light, which is only correct in a linear space. But the composed fragment
+     * <b>never encodes its result</b> — there is no OETF anywhere in {@code SdfComposer} or {@code Shadings},
+     * and {@code SampledColorTarget}'s attachment is {@code R8G8B8A8_UNORM} rather than {@code _SRGB}, so
+     * neither the shader nor the format applies one. Whatever the fragment writes lands in the texel verbatim
+     * and the canvas samples it verbatim.
+     *
+     * <p>So a colour converted to linear on the way in comes out about 2.2× too dark, uniformly — which is
+     * exactly what the first marched frame looked like: a near-black sky where the page should have been and a
+     * curve two shades under its own accent. Passing display components makes the picture the colour it was
+     * named, at the cost of shading that is not physically linear — a trade a plot can make without noticing
+     * and a lit sphere could not. See {@code docs/framework-notes.md}, FN-19.
      */
-    static SdfScene.Rgb linear(Color c) {
-        return new SdfScene.Rgb(Oklab.srgbToLinear(c.r()), Oklab.srgbToLinear(c.g()), Oklab.srgbToLinear(c.b()));
+    static SdfScene.Rgb scene(Color c) {
+        return new SdfScene.Rgb(c.r(), c.g(), c.b());
     }
 
     /** {@code role}, as the march sees it. */
-    static SdfScene.Rgb linear(Role role) {
-        return linear(role.of(PALETTE));
+    static SdfScene.Rgb scene(Role role) {
+        return scene(role.of(PALETTE));
     }
 
     private Look() {
