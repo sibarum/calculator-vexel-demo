@@ -529,3 +529,52 @@ so it reaches the forked JVM only if the pom names it. The first sweep run here 
 and cone count across seven configurations and reported the same number every time — because all seven runs
 were byte-identical. Fixed with an `${app.jvmArgs}` pass-through in the pom, and worth knowing before trusting
 any measurement taken through `exec:exec`.
+
+---
+
+## FN-21 · Shading is per scene, so a plot cannot have both lit tubes and flat lines 🔬
+
+`SdfScene` carries one `Shading` for everything in it. `Shadings.defaultKeyLight()` is
+`albedo × (max(0, N·L) × 0.92 + 0.08)`, so a round tube always reaches roughly full albedo somewhere along its
+lit side, whatever its albedo is.
+
+That is right for the curve — the shading is what makes it read as a tube in space rather than a flat ribbon,
+and it is most of why the marched plot looks better than a drawn one. It is wrong for the furniture: a grid
+line wants to be a faint, even mark, and a lit one has a bright edge and a dark edge and reads as another
+object in the scene rather than as a scale behind it.
+
+`SdfScene.albedo`'s own javadoc already names the gap — *"Giving any surface its own material still waits on
+the material matrix of docs/vexel-world.md §2"* — so this is a known future rather than a surprise.
+
+**Cost:** the grid's albedo had to be pushed most of the way down to the page (`surface(1)`) to stop it
+competing with the curve, and even then every grid line carries a highlight. The first version of the scene had
+three grid planes at `LINE` and looked like a cage with a curve inside it. What shipped is one floor plane at a
+near-page albedo.
+
+**Framework answer:** the material matrix, when it comes. The narrow version that would have solved this is a
+per-`Surface` unlit flag — the shading model already has an `unlit()` and the composer already branches on
+`usesLights()`, so the machinery mostly exists one level up from where it is needed.
+
+---
+
+## FN-22 · The aspect ratio belongs to the node, not to the render target 🔬
+
+`SdfComposer.cameraBytes(…, aspect)` corrects the ray fan for a non-square image, and the obvious value to pass
+is the target's own `width / height`. **That is wrong whenever the target is not displayed at its own aspect** —
+which is the normal case, because `GuiApp.viewport(w, h)` has fixed pixels and the node showing it is laid out
+by flex.
+
+`Node.image` draws the image across the whole border box, so a 640×400 target in a 1180×675 node is *stretched*.
+The shader maps its `uv` square onto whatever that box turns out to be, so the aspect it must correct for is the
+**box's**. Pass the target's and every circle in the plot comes out about 9% wide, uniformly — which does not
+read as a bug at all, it reads as a slightly odd camera.
+
+The fix is small (`March.aspect()` reads `viewport.layout().rect()`) and it has a consequence worth stating: a
+**resize now has to re-march** even though nothing about the camera moved, because the aspect the shader was
+given is stale. That is a dirty-flag case that is easy to miss, and missing it leaves the plot holding whatever
+proportions the window had when it was last turned.
+
+**Framework answer:** none required — this is an application getting its own arithmetic right. Worth recording
+because the trap is entirely invisible: nothing errors, nothing looks broken, and the one symptom is a shape
+that is subtly not the shape it should be. A line in `GuiApp.viewport`'s javadoc would save the next consumer
+the hunt, since that method is where the fixed-size-target-in-a-flexed-box arrangement is introduced.

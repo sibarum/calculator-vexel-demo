@@ -2,6 +2,7 @@ package dev.vexelray.demo.calculator;
 
 import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.app.GuiApp;
+import dev.vexelray.gui.core.layout.NodeLayout;
 import dev.vexelray.shader.ComposedShader;
 import dev.supirvast.vastir.core.ShaderStage;
 import dev.vexelray.surface.Cones;
@@ -116,6 +117,12 @@ final class March {
     private volatile double pitch = Math.toRadians(26);
     private volatile int coneCount;
 
+    /** The node showing the image. Held for its measured box, which is where the aspect comes from. */
+    private volatile Node viewport;
+
+    /** The aspect the last march used, so a resize re-marches even though the camera did not move. */
+    private volatile double lastAspect;
+
     March(GuiApp app) {
         this.sky = Look.scene(Calculator.page());
 
@@ -149,7 +156,38 @@ final class March {
 
     /** Point a node at the marched image. Called once; the handle never changes, so nothing rebinds per frame. */
     void showIn(Node node) {
+        this.viewport = node;
         node.image(target);
+    }
+
+    /**
+     * The aspect ratio the shader is given — <b>the node's, not the target's</b>.
+     *
+     * <p>This is the trap in showing a fixed-size render target in a flexed box, and it is invisible until
+     * something in the picture is supposed to be round. The image is drawn across the node's whole border box,
+     * so a 640×400 target in a 1180×675 node is <em>stretched</em>. The shader maps its {@code uv} square onto
+     * whatever that box turns out to be, so the aspect it must correct for is the box's — hand it the target's
+     * and every circle in the plot comes out 9% wide, uniformly, which reads as a slightly odd camera rather
+     * than as a bug.
+     *
+     * <p>Falls back to the target's own ratio before the first layout, when there is no box to ask.
+     */
+    private double aspect() {
+        NodeLayout box = viewport == null ? null : viewport.layout();
+        if (box == null || box.rect().w() <= 0 || box.rect().h() <= 0) {
+            return MARCH_W / (double) MARCH_H;
+        }
+        return box.rect().w() / (double) box.rect().h();
+    }
+
+    /**
+     * The camera, as something that can project.
+     *
+     * <p>The one place the march's own parameters are handed out, so anything drawn over the image is using the
+     * same six numbers the shader was given rather than its own idea of them.
+     */
+    Lens lens() {
+        return new Lens(eyeX(), eyeY(), eyeZ(), yaw, pitch, aspect(), FOCAL_LENGTH);
     }
 
     /**
@@ -205,14 +243,18 @@ final class March {
             pending = null;
             cones.update(fresh, fresh.length);
         }
-        if (!dirty) {
+        double aspect = aspect();
+        // A resize moves nothing about the camera and still changes the picture, because the aspect the shader
+        // corrects for is the box it is stretched into. Without this the plot keeps whatever proportions the
+        // window had when it was last turned.
+        if (!dirty && aspect == lastAspect) {
             return;
         }
         dirty = false;
+        lastAspect = aspect;
         try (var zone = Probe.zone(Lane.GPU, "plot.march")) {
             target.renderInto(pipeline, 0, cones.descriptorSet(), 3,
-                    SdfComposer.cameraBytes(eyeX(), eyeY(), eyeZ(), yaw, pitch,
-                            MARCH_W / (double) MARCH_H),
+                    SdfComposer.cameraBytes(eyeX(), eyeY(), eyeZ(), yaw, pitch, aspect),
                     (float) sky.r(), (float) sky.g(), (float) sky.b(), 1f);
         }
     }

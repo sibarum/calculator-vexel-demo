@@ -97,7 +97,8 @@ public final class Calculator {
             March march = new March(app);
             march.showIn(ui.viewport());
             var reading = Canned.read(Canned.DEFAULT_EXPRESSION);
-            march.geometry(Geometry.of(reading, 4, -6, 6, Integer.getInteger("plot.samples", 420)));
+            march.geometry(Geometry.of(reading, 4, -6, 6, Integer.getInteger("plot.samples", 420),
+                    Geometry.Furniture.DEFAULT));
 
             // Auto-orbit. A GLOBAL claim rather than a handler, which is how this framework does preemption:
             // the focused expression field outranks it by claiming Space at FOCUSED scope, so typing a space
@@ -142,6 +143,10 @@ public final class Calculator {
                     // presents a value should be the frame that computed it. Before the tree is drawn, because
                     // renderInto's contract is that the image is ready when it returns.
                     march.frame();
+                    // The labels are authored against the same camera the march was just given and against the
+                    // node's measured box, in the same frame, on the GUI thread. A frame's lag would be visible
+                    // as text sliding across the plot behind the geometry it names.
+                    Labels.show(ui.viewport(), Labels.of(march.lens(), ui.viewport().layout(), -6, 6, true));
                     ui.readout().show(march.yaw(), march.pitch(), 1.0, march.cones());
                     memory.poll();
                 });

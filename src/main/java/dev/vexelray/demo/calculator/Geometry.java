@@ -9,7 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The scene, as strokes: sampled points in, {@link Surface.Stroke}s out.
+ * The scene, as strokes: sampled points and a few settings in, {@link Surface.Stroke}s out.
  *
  * <p>Pure, and pure on purpose — this is the expensive half of the renderer and it runs on a worker. Nothing
  * about the camera reaches it, which is the property that makes an orbit cost six floats.
@@ -25,6 +25,13 @@ import java.util.List;
  * handle. A rounded polyline that merely passes <em>near</em> its vertices would put the curve somewhere other
  * than where the samples say it is, which is the one thing a plot may not do.
  *
+ * <h2>The furniture is geometry too, and that is the payoff</h2>
+ *
+ * <p>The axes, the ticks and the grid planes are strokes in the same union as the curve, so they are marched
+ * together and <b>occlusion is correct without being managed</b>: a grid line behind the curve is behind it
+ * because the ray hit the curve first. No depth sort, no painter's order, no per-cell bounding box. A drawn
+ * plot has to solve that; a marched one never has it.
+ *
  * <h2>Joints are sharp, and that is a cost decision</h2>
  *
  * <p>A stroke costs about {@code vertices × (1 + segmentsPerCorner)} cones, and corners at zero curvature emit
@@ -34,31 +41,61 @@ import java.util.List;
  */
 final class Geometry {
 
-    /** Half-extent of the world box the plot is built into, along x. */
-    private static final double BOX = 1.8;
+    /** Half-extent of the world box the plot is built into, along the input axis. */
+    static final double BOX = 1.8;
 
     /** And along the two output axes. Flatter than it is wide, which is what a curve in a box looks like. */
-    private static final double BOX_H = 1.0;
+    static final double BOX_H = 1.0;
 
     /**
      * The curve's radius in <b>world units</b>.
      *
      * <p>The prototype's Width control is in pixels, and a marched tube has no pixels — its apparent thickness
      * is a consequence of the camera. So the control maps onto a world radius, and "3px" becomes a number that
-     * looks like the design at the default zoom rather than a promise about screen measurement. Worth knowing
-     * before the Width slider is wired: it will not be a pixel width and should not claim to be.
+     * looks like the design at the default framing rather than a promise about screen measurement. Worth
+     * knowing before the Width slider is wired: it will not be a pixel width and should not claim to be.
      */
-    private static final double RADIUS = 0.035;
+    private static final double RADIUS = 0.045;
+
+    /** An axis is thinner than the curve and thicker than the grid, which is the whole of its visual job. */
+    private static final double AXIS_RADIUS = 0.014;
 
     /**
-     * The scene for a reading.
+     * A grid line.
+     *
+     * <p>Not much thinner than an axis, and it cannot usefully be: the march's hit threshold is
+     * {@code hitEpsilon + hitEpsilonSlope × distance}, about {@code 0.015} at seven units, so a tube much below
+     * that is found by the <em>threshold</em> rather than by its own surface and stops getting thinner. Grid
+     * lines are separated from axes by colour instead, which is what the prototype does anyway.
+     */
+    private static final double GRID_RADIUS = 0.008;
+
+    /** How far a tick sticks out from its axis. */
+    private static final double TICK = 0.06;
+
+    /** What a scene is made of, beyond the curve. */
+    record Furniture(boolean axes, boolean ticks, boolean gridXY, boolean gridXZ, boolean gridYZ, int divisions) {
+
+        static final Furniture DEFAULT = new Furniture(true, true, false, true, false, 6);
+    }
+
+    /**
+     * The whole scene for a reading.
      *
      * @param samples how many points to sample the curve at; the caller clamps this against the buffer ceiling
      */
-    static List<Surface.Stroke> of(Canned.Reading reading, double omega, double x0, double x1, int samples) {
-        double[] xyz = Canned.curve(reading, omega, x0, x1, samples);
-        return List.of(curve(xyz, x0, x1));
+    static List<Surface.Stroke> of(Canned.Reading reading, double omega, double x0, double x1, int samples,
+                                   Furniture furniture) {
+        List<Surface.Stroke> scene = new ArrayList<>();
+        grid(scene, furniture);
+        if (furniture.axes()) {
+            axes(scene, furniture.ticks(), x0, x1);
+        }
+        scene.add(curve(Canned.curve(reading, omega, x0, x1, samples), x0, x1));
+        return List.copyOf(scene);
     }
+
+    // ------------------------------------------------------------------ curve
 
     /**
      * One stroke through the sampled points, coloured along its length.
@@ -85,16 +122,94 @@ final class Geometry {
     }
 
     /**
-     * The colour ramp along the curve: the accent, walked from its surface tint to its brightest.
+     * The colour ramp along the curve: the accent, walked to its brightest.
+     *
+     * <p>It starts at the accent rather than at the accent's darkest tint, which was the first thing the
+     * marched picture showed: a ramp beginning in the surface tint makes the start of the curve almost the
+     * colour of the page it is drawn on, so the curve appears to begin somewhere in its own middle.
      *
      * <p>Interpolated in Oklab rather than in sRGB, which is the rule that comes with the framework's colour
      * type: a blend through raw sRGB passes through a muddy middle, and a ramp is exactly where that shows.
      */
     private static Surface.Rgb ramp(double t) {
-        Color c = Oklab.of(Look.ACCENT_SURFACE.of(Look.PALETTE))
+        Color c = Oklab.of(Role.ACCENT.of(Look.PALETTE))
                 .mix(Oklab.of(Look.ACCENT_BRIGHT.of(Look.PALETTE)), t)
                 .toColor();
         var rgb = Look.scene(c);
+        return new Surface.Rgb(rgb.r(), rgb.g(), rgb.b());
+    }
+
+    // -------------------------------------------------------------- furniture
+
+    /**
+     * Three axes through the origin, each reaching the faces of the box, with ticks along them.
+     *
+     * <p>Tick positions come from {@link Ticks}, which is also what {@link Labels} reads -- so a mark and the
+     * number beside it cannot describe different places. Two lists of positions that have to agree is exactly
+     * the kind of duplication that survives review and then drifts one refactor later.
+     */
+    private static void axes(List<Surface.Stroke> into, boolean ticks, double domainLo, double domainHi) {
+        Surface.Rgb colour = colour(Look.QUIET);
+        into.add(line(-BOX, 0, 0, BOX, 0, 0, AXIS_RADIUS, colour));
+        into.add(line(0, -BOX_H, 0, 0, BOX_H, 0, AXIS_RADIUS, colour));
+        into.add(line(0, 0, -BOX_H, 0, 0, BOX_H, AXIS_RADIUS, colour));
+        if (!ticks) {
+            return;
+        }
+        for (double v : Ticks.between(domainLo, domainHi)) {
+            double at = map(v, domainLo, domainHi, -BOX, BOX);
+            into.add(line(at, -TICK, 0, at, TICK, 0, GRID_RADIUS, colour));
+        }
+        // The output axes are the box, not the domain, so they are ticked over their own range.
+        for (double v : Ticks.between(-1, 1)) {
+            double at = v * BOX_H;
+            into.add(line(-TICK, at, 0, TICK, at, 0, GRID_RADIUS, colour));
+            into.add(line(0, -TICK, at, 0, TICK, at, GRID_RADIUS, colour));
+        }
+    }
+
+    /**
+     * Grid planes on the far faces of the box.
+     *
+     * <p>On the faces rather than through the origin, because a plane through the middle of the volume is
+     * something the curve has to be read <em>through</em>, and one on the back wall is something it is read
+     * <em>against</em>. Which face is "far" does not change with the camera here — that would be a per-frame
+     * decision, and the geometry is deliberately camera-independent.
+     */
+    private static void grid(List<Surface.Stroke> into, Furniture f) {
+        Surface.Rgb colour = colour(p -> p.surface(1));
+        int n = Math.max(2, f.divisions());
+        for (int i = 0; i <= n; i++) {
+            double t = i / (double) n;
+            double x = -BOX + 2 * BOX * t;
+            double y = -BOX_H + 2 * BOX_H * t;
+            double z = -BOX_H + 2 * BOX_H * t;
+            if (f.gridXY()) {          // the back wall: constant z
+                into.add(line(x, -BOX_H, -BOX_H, x, BOX_H, -BOX_H, GRID_RADIUS, colour));
+                into.add(line(-BOX, y, -BOX_H, BOX, y, -BOX_H, GRID_RADIUS, colour));
+            }
+            if (f.gridXZ()) {          // the floor: constant y
+                into.add(line(x, -BOX_H, -BOX_H, x, -BOX_H, BOX_H, GRID_RADIUS, colour));
+                into.add(line(-BOX, -BOX_H, z, BOX, -BOX_H, z, GRID_RADIUS, colour));
+            }
+            if (f.gridYZ()) {          // the side wall: constant x
+                into.add(line(-BOX, y, -BOX_H, -BOX, y, BOX_H, GRID_RADIUS, colour));
+                into.add(line(-BOX, -BOX_H, z, -BOX, BOX_H, z, GRID_RADIUS, colour));
+            }
+        }
+    }
+
+    // ----------------------------------------------------------------- shared
+
+    private static Surface.Stroke line(double ax, double ay, double az,
+                                       double bx, double by, double bz, double radius, Surface.Rgb colour) {
+        return new Surface.Stroke(List.of(
+                new Surface.Stroke.Vertex(ax, ay, az, radius, 0).painted(colour),
+                new Surface.Stroke.Vertex(bx, by, bz, radius, 0).painted(colour)), 2);
+    }
+
+    private static Surface.Rgb colour(Role role) {
+        var rgb = Look.scene(role);
         return new Surface.Rgb(rgb.r(), rgb.g(), rgb.b());
     }
 

@@ -84,6 +84,18 @@ final class Type {
     /** 1px — a border. Not scaled by zoom; a hairline is a hairline. */
     static final Length RULE = Length.dp(1);
 
+    // ------------------------------------------------------------- in pixels
+
+    // A Picture is authored in the pixels of the box that was measured -- the renderer resolves no units of its
+    // own, because a picture scaled in the renderer would make it the one place that did. So anything drawn as
+    // marks needs its sizes as numbers, and these are the same values as above at zoom 1.
+
+    /** 11px, as a number: an axis name in the plot overlay. */
+    static final double SMALL_PX = 11;
+
+    /** 10px, as a number: a tick figure. */
+    static final double FIGURE_PX = 10;
+
     private Type() {
     }
 }

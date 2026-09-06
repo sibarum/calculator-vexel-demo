@@ -240,28 +240,30 @@ three handles the framework hands it (`SampledColorTarget`, `StorageBuffer`, `Gr
 
 ### 5.2 Packages
 
+**One package, `dev.vexelray.demo.calculator`.** Rev 1 proposed `model/`, `march/` and `view/` subpackages;
+that was the wrong call for a fifteen-class application and it is worth saying why rather than quietly changing
+it. Java's default access is *package*-private, and it is the right default here — nothing in this app is API.
+Splitting into subpackages would have forced `public` onto every type and method that crosses a boundary, which
+is a worse outcome than a flat package: it turns "internal" into "published" for the sake of directory tidiness.
+
 ```
-dev.vexelray.demo.calculator
-├─ Calculator.java        main: the application edge, per Demo.java
-├─ Ui.java                builds the tree; owns nothing
-├─ Look.java              the Palette, the Theme, and the few app-specific Roles
-├─ Icons.java             eight Pictures
-├─ model/
-│   ├─ Scene.java         immutable: expression, mode, layers, domain, colour, sampling, camera
-│   ├─ Edit.java          a relative change to a Scene (see 5.3)
-│   └─ Model.java         State<Scene> + the reducer + the derived-mode reading
-├─ march/
-│   ├─ Geometry.java      Scene → List<Surface.Stroke> → packed float[]   (worker)
-│   ├─ March.java         pipeline, target, storage buffer, one renderInto per frame  (GUI thread)
-│   ├─ Lens.java          the Java twin of the shader's camera — project(world) → uv     ★ FN-12
-│   └─ Canned.java        ★ the whole of the fake. Deleting this is the integration.
-├─ view/
-│   ├─ Viewport.java      the node that carries the image, the gestures, the label picture
-│   ├─ Bar.java           expression, AUTO badge, error, subtitle
-│   ├─ Panels.java        the Rail and the six Inspectors
-│   ├─ Readout.java       az / el / zoom / samples
-│   └─ Probe.java         the follow-the-pointer bubble
-└─ Landmarks.java         every automation landmark, in one place
+Calculator.java     main: the application edge, per Demo.java
+Ui.java             builds the tree; owns nothing
+Look.java           the Palette, the Theme, and the app's own Roles           [M0]
+Type.java           the two faces and the type scale, read off the prototype  [M0]
+Bar.java            expression, AUTO badge, subtitle, error, crop notice      [M0]
+Readout.java        az / el / zoom / cones — hit-inert, name carries state    [M0]
+Capture.java        headless PNGs of the chrome (never of the plot: FN-14)    [M0]
+Landmarks.java      every automation landmark, in one place                   [M0]
+March.java          target, storage buffer, pipeline, one renderInto a frame  [M1]
+Geometry.java       Scene → List<Surface.Stroke> → cones          (worker)    [M1]
+Canned.java         ★ the whole of the fake. Deleting this is the integration [M1]
+Lens.java           the Java twin of the shader's camera            ★ FN-12   [M2]
+Labels.java         axis names and tick numbers, as a Picture over the image  [M2]
+Ticks.java          round numbers on an axis, shared by Geometry and Labels   [M2]
+
+still to come:   Model.java + Edit.java (State<Scene> and its reducer), Panels.java (Rail + six
+                 Inspectors), Icons.java (eight Pictures), Probe.java (the pointer-following bubble)
 ```
 
 ### 5.3 State: one `State<Scene>`, changed by relative edits
