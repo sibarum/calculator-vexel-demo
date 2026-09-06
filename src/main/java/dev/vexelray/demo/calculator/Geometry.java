@@ -14,6 +14,14 @@ import java.util.List;
  * <p>Pure, and pure on purpose — this is the expensive half of the renderer and it runs on a worker. Nothing
  * about the camera reaches it, which is the property that makes an orbit cost six floats.
  *
+ * <h2>The per-vertex colour here is currently inert, and deliberately kept</h2>
+ *
+ * <p><b>{@code ConeField} carries no colour.</b> A cone in the buffer is eight floats of geometry and
+ * {@code compose} passes no albedo function, so every hit is shaded with the scene's single albedo and the
+ * {@code .painted(...)} calls below reach nothing. They are left in because they are correct, cost one call
+ * each, and the day the buffer carries colour the whole plot lights up with no change here. The colour that
+ * <em>is</em> visible today is set in {@link March#recolour}. See {@code docs/framework-notes.md} FN-25.
+ *
  * <h2>A stroke is the right node, not a polyline substitute</h2>
  *
  * <p>{@link Surface.Stroke} carries per-vertex radius, per-vertex curvature and <b>per-vertex colour that
@@ -55,7 +63,6 @@ final class Geometry {
      * looks like the design at the default framing rather than a promise about screen measurement. Worth
      * knowing before the Width slider is wired: it will not be a pixel width and should not claim to be.
      */
-    private static final double RADIUS = 0.045;
 
     /** An axis is thinner than the curve and thicker than the grid, which is the whole of its visual job. */
     private static final double AXIS_RADIUS = 0.014;
@@ -85,13 +92,13 @@ final class Geometry {
      * @param samples how many points to sample the curve at; the caller clamps this against the buffer ceiling
      */
     static List<Surface.Stroke> of(Canned.Reading reading, double omega, double x0, double x1, int samples,
-                                   Furniture furniture) {
+                                   Furniture furniture, double radius, Ramp ramp) {
         List<Surface.Stroke> scene = new ArrayList<>();
         grid(scene, furniture);
         if (furniture.axes()) {
             axes(scene, furniture.ticks(), x0, x1);
         }
-        scene.add(curve(Canned.curve(reading, omega, x0, x1, samples), x0, x1));
+        scene.add(curve(Canned.curve(reading, omega, x0, x1, samples), x0, x1, radius, ramp));
         return List.copyOf(scene);
     }
 
@@ -104,7 +111,7 @@ final class Geometry {
      * colour and an absence has no meaning — so every vertex is painted here rather than only the ones that
      * matter.
      */
-    private static Surface.Stroke curve(double[] xyz, double x0, double x1) {
+    private static Surface.Stroke curve(double[] xyz, double x0, double x1, double radius, Ramp ramp) {
         int n = xyz.length / 3;
         List<Surface.Stroke.Vertex> vs = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
@@ -114,30 +121,15 @@ final class Geometry {
             double z = xyz[i * 3 + 2] * BOX_H;
             // Sharp: see the class note. The two ends have nothing to turn through, so their curvature is
             // ignored either way.
-            vs.add(new Surface.Stroke.Vertex(x, y, z, RADIUS, 0).painted(ramp(t)));
+            vs.add(new Surface.Stroke.Vertex(x, y, z, radius, 0).painted(ramp.scene(t)));
         }
         // segmentsPerCorner must be even and at least 2 even when every corner is sharp -- the record validates
         // it regardless of whether any corner will use it.
         return new Surface.Stroke(vs, 2);
     }
 
-    /**
-     * The colour ramp along the curve: the accent, walked to its brightest.
-     *
-     * <p>It starts at the accent rather than at the accent's darkest tint, which was the first thing the
-     * marched picture showed: a ramp beginning in the surface tint makes the start of the curve almost the
-     * colour of the page it is drawn on, so the curve appears to begin somewhere in its own middle.
-     *
-     * <p>Interpolated in Oklab rather than in sRGB, which is the rule that comes with the framework's colour
-     * type: a blend through raw sRGB passes through a muddy middle, and a ramp is exactly where that shows.
-     */
-    private static Surface.Rgb ramp(double t) {
-        Color c = Oklab.of(Role.ACCENT.of(Look.PALETTE))
-                .mix(Oklab.of(Look.ACCENT_BRIGHT.of(Look.PALETTE)), t)
-                .toColor();
-        var rgb = Look.scene(c);
-        return new Surface.Rgb(rgb.r(), rgb.g(), rgb.b());
-    }
+    // The colour ramp moved to Ramp, because the COLOR panel picks between four of them and a ramp is now a
+    // value rather than a function. Its Oklab interpolation and the reason for it went with it.
 
     // -------------------------------------------------------------- furniture
 

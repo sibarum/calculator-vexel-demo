@@ -104,7 +104,17 @@ final class March {
 
     private final SampledColorTarget target;
     private final StorageBuffer cones;
-    private final GraphicsPipeline pipeline;
+    /**
+     * Rebuilt when the colour changes, because the colour is compiled in.
+     *
+     * <p>{@link ConeField} carries no colour in its buffer -- a cone is eight floats of geometry -- and
+     * {@code compose} passes no albedo function, so the whole scene is drawn in {@code SdfScene.albedo()}, which
+     * the fragment bakes as a constant. A new colour is therefore a new module and a new pipeline. That is only
+     * affordable because this module is a <em>fixed size</em>: it is the same few kilobytes whatever the buffer
+     * holds, so the build is milliseconds rather than the five seconds an unrolled scene cost. Measured on the
+     * gpu lane as {@code plot.repipeline}.
+     */
+    private volatile GraphicsPipeline pipeline;
     private final SdfScene.Rgb sky;
 
     /** Set by the worker when new geometry is ready; taken by the frame loop. */
@@ -123,23 +133,42 @@ final class March {
     /** The aspect the last march used, so a resize re-marches even though the camera did not move. */
     private volatile double lastAspect;
 
+    /** The colour the current pipeline was built for. */
+    private volatile Ramp currentRamp = Ramp.BLURPLE;
+
+    /** A colour the GUI thread owes a pipeline for; taken in frame(), because a build is not a worker's to do. */
+    private volatile Ramp repipeline;
+
     March(GuiApp app) {
         this.sky = Look.scene(Calculator.page());
 
         target = app.viewport(MARCH_W, MARCH_H);
         cones = app.storage(ConeField.floatsFor(MAX_CONES), ConeField.BINDING);
 
-        // The scene handed to compose() is a *placeholder*: ConeField does not compile scene.surface() at all,
-        // because the field comes from the buffer. Everything else about the picture -- shading, march budget,
-        // albedo, sky, focal length -- is read from it, so those are compile-time properties of this pipeline
-        // and not live controls.
+        pipeline = build(Ramp.BLURPLE);
+    }
+
+    /**
+     * Compose and build the pipeline for one colour.
+     *
+     * <p>The surface handed to {@code compose} is a <b>placeholder</b>: {@link ConeField} does not compile
+     * {@code scene.surface()} at all, because the field comes from the buffer. Everything <em>else</em> about
+     * the picture is read from the scene and baked as a constant — shading, march budget, albedo, sky, focal
+     * length — so each of those is a property of this pipeline rather than a live control.
+     *
+     * <p>Which is why the colour is here. See {@link #recolour}.
+     */
+    private GraphicsPipeline build(Ramp ramp) {
         SdfScene scene = new SdfScene(
                 new Surface.Sphere(0, 0, 0, 1),      // never compiled; ConeField replaces the field
                 dev.vexelray.shader.Shadings.defaultKeyLight(),
                 new MarchSettings(MARCH_STEPS, MarchSettings.DEFAULT.maxStep(), FAR_PLANE,
                         MarchSettings.DEFAULT.hitEpsilon(), MarchSettings.DEFAULT.hitEpsilonSlope(),
                         MarchSettings.DEFAULT.normalEpsilon(), MarchSettings.DEFAULT.normalEpsilonSlope()),
-                Look.scene(dev.vexelray.gui.core.style.Role.ACCENT),
+                // The whole scene's colour, because a cone in the buffer carries none of its own -- see
+                // recolour(). Taken from the middle of the ramp, which is what a single sample of a gradient has
+                // to be if it is going to stand for the whole of it.
+                Look.scene(ramp.at(0.6)),
                 sky,
                 FOCAL_LENGTH);
 
@@ -147,11 +176,38 @@ final class March {
         ComposedShader vertex = stage(composed, ShaderStage.VERTEX);
         ComposedShader fragment = stage(composed, ShaderStage.FRAGMENT);
 
-        pipeline = target.pipelineFor(
+        return target.pipelineFor(
                 vertex.spirv(), vertex.entryPoint(),
                 fragment.spirv(), fragment.entryPoint(),
                 SdfComposer.CAMERA_BYTES,
                 new long[]{cones.descriptorSetLayout()});
+    }
+
+    /**
+     * Change the plot's colour.
+     *
+     * <p><b>A {@code ConeField} cone is eight floats of geometry and nothing else</b> — {@code ax, ay, az, ar,
+     * bx, by, bz, br} — and {@code ConeField.compose} passes no albedo function, so the fragment shades every
+     * hit with {@code scene.albedo()}. {@link Surface.Stroke}'s per-vertex colour, which its own javadoc
+     * advertises and which the compiled-in path honours, <em>does not survive the trip through the buffer</em>.
+     * It is dropped in silence: the picture still draws, in one colour, and nothing anywhere says so.
+     *
+     * <p>So a colour ramp cannot be a property of the geometry here, and a colour change is a new module and a
+     * new pipeline. That is affordable only because {@code ConeField}'s module is a fixed size — the same few
+     * kilobytes whatever the buffer holds — which is the whole point of it. Measured rather than assumed:
+     * {@code plot.repipeline} on the gpu lane.
+     *
+     * <p>The old pipeline is <b>not</b> closed here. A frame may still be in flight against it, and there is no
+     * fence this side to wait on; they are a handful of kilobytes each and there are four ramps, so leaking at
+     * most four is the cheaper mistake to make. See {@code docs/framework-notes.md} FN-25.
+     */
+    void recolour(Ramp ramp) {
+        if (ramp == currentRamp) {
+            return;
+        }
+        currentRamp = ramp;
+        repipeline = ramp;
+        dirty = true;
     }
 
     /** Point a node at the marched image. Called once; the handle never changes, so nothing rebinds per frame. */
@@ -210,6 +266,13 @@ final class March {
         dirty = true;
     }
 
+    /** Point the camera somewhere, absolutely. What a preset button does. */
+    void look(double newYaw, double newPitch) {
+        yaw = newYaw;
+        pitch = Math.clamp(newPitch, Math.toRadians(-75), Math.toRadians(75));
+        dirty = true;
+    }
+
     /** Turn the camera. Six floats next frame; no geometry is touched. */
     void turn(double dYaw, double dPitch) {
         yaw += dYaw;
@@ -242,6 +305,13 @@ final class March {
         if (fresh != null) {
             pending = null;
             cones.update(fresh, fresh.length);
+        }
+        Ramp wanted = repipeline;
+        if (wanted != null) {
+            repipeline = null;
+            try (var z = Probe.zone(Lane.GPU, "plot.repipeline")) {
+                pipeline = build(wanted);
+            }
         }
         double aspect = aspect();
         // A resize moves nothing about the camera and still changes the picture, because the aspect the shader

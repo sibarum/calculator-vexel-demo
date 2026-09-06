@@ -72,7 +72,13 @@ public final class Calculator {
         // at construction. Ticked once per presented frame from the run loop below.
         KronoGui krono = KronoGui.attach(gui);
 
-        Ui ui = new Ui(gui, krono);
+        // The one authoritative Scene. Built before the tree, because every control is a view onto it.
+        Model model = new Model();
+        // The camera is not in the Scene (see Scene's note), so the presets reach it through a seam narrow
+        // enough that the VIEW panel cannot get at anything else. Filled in once March exists.
+        Camera camera = new Camera();
+
+        Ui ui = new Ui(gui, krono, model, camera);
         zoomShortcuts(gui);
 
         // Placement is read before the window exists, so the window is *created* where it was left rather than
@@ -96,15 +102,23 @@ public final class Calculator {
             // reason GuiApp.viewport and GuiApp.storage exist rather than the device being public.
             March march = new March(app);
             march.showIn(ui.viewport());
-            var reading = Canned.read(Canned.DEFAULT_EXPRESSION);
-            march.geometry(Geometry.of(reading, 4, -6, 6, Integer.getInteger("plot.samples", 420),
-                    Geometry.Furniture.DEFAULT));
+            camera.on(march);
 
-            // Auto-orbit. A GLOBAL claim rather than a handler, which is how this framework does preemption:
-            // the focused expression field outranks it by claiming Space at FOCUSED scope, so typing a space
-            // into an expression types a space. Nothing here has to know the field exists.
-            java.util.concurrent.atomic.AtomicBoolean spin = new java.util.concurrent.atomic.AtomicBoolean();
-            gui.shortcut(Key.SPACE, () -> spin.set(!spin.get()));
+            // Geometry is rebuilt whenever the scene changes, on the committing thread -- which is a worker,
+            // because every control's handler is. The GUI thread never samples anything; it takes a float[].
+            model.onChange(s -> {
+                march.geometry(Geometry.of(s.reading(), s.omega(), s.x0(), s.x1(),
+                        s.samples(), s.effectiveFurniture(), s.lineWidth(), s.ramp()));
+                march.recolour(s.ramp());
+                ui.bar().show(s.reading());
+                ui.bar().cropping(s.cropping());
+            });
+            // And once at startup, for the scene nobody has changed yet.
+            Scene start = model.scene();
+            march.geometry(Geometry.of(start.reading(), start.omega(), start.x0(), start.x1(),
+                    start.samples(), start.effectiveFurniture(), start.lineWidth(), start.ramp()));
+
+            keys(gui, model, camera, ui);
             if (memory.maximized("main")) {
                 app.window().maximize();
             }
@@ -136,7 +150,8 @@ public final class Calculator {
                 app.run(gui, maxFrames, () -> {
                     pump(bridge);
                     krono.tick();
-                    if (spin.get()) {
+                    Scene now = model.scene();
+                    if (now.spinning()) {
                         march.turn(Math.toRadians(0.6), 0);
                     }
                     // After the clock, because a camera animation settles on the tick and the frame that
@@ -146,7 +161,8 @@ public final class Calculator {
                     // The labels are authored against the same camera the march was just given and against the
                     // node's measured box, in the same frame, on the GUI thread. A frame's lag would be visible
                     // as text sliding across the plot behind the geometry it names.
-                    Labels.show(ui.viewport(), Labels.of(march.lens(), ui.viewport().layout(), -6, 6, true));
+                    Labels.show(ui.viewport(), Labels.of(march.lens(), ui.viewport().layout(),
+                            now.x0(), now.x1(), now.effectiveFurniture().ticks()));
                     ui.readout().show(march.yaw(), march.pitch(), 1.0, march.cones());
                     memory.poll();
                 });
@@ -158,6 +174,51 @@ public final class Calculator {
         }
         krono.close();   // the clock outlives the window but not the process
         gui.close();
+    }
+
+    /**
+     * The camera's presets, as the VIEW panel and the rail's crosshair see them.
+     *
+     * <p>Late-bound because {@link March} cannot exist until {@link GuiApp} does — a render target comes from
+     * the application's device — while the tree that names these buttons is built before the window. A seam
+     * rather than a forward reference, and narrow enough that a panel cannot reach past it into the renderer.
+     */
+    private static final class Camera implements Panels.Viewpoint {
+
+        private volatile March march;
+
+        void on(March march) {
+            this.march = march;
+        }
+
+        @Override
+        public void look(double yawDegrees, double pitchDegrees) {
+            March m = march;
+            if (m != null) {
+                m.look(Math.toRadians(yawDegrees), Math.toRadians(pitchDegrees));
+            }
+        }
+
+        @Override
+        public void reset() {
+            look(38, 26);
+        }
+    }
+
+    /**
+     * Every single-key control, as a {@code GLOBAL} claim.
+     *
+     * <p>Claims rather than handlers, which is how this framework does preemption: the expression field
+     * outranks these by claiming the same key at {@code FOCUSED} scope, so typing {@code r} into an expression
+     * types an {@code r} rather than resetting the view. Nothing here has to know the field exists, and the
+     * field needs no list of keys to avoid.
+     */
+    private static void keys(Gui gui, Model model, Camera camera, Ui ui) {
+        gui.shortcut(Key.SPACE, () -> model.change(s -> Panels.spinning(s, !s.spinning())));
+        gui.shortcut(Key.R, camera::reset);
+        gui.shortcut(Key.T, () -> camera.look(0, 75));
+        gui.shortcut(Key.S, () -> camera.look(0, 0));
+        gui.shortcut(Key.C, () -> model.change(s -> Panels.cropping(s, !s.cropping())));
     }
 
     /**

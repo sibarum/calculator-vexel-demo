@@ -41,8 +41,9 @@ final class Ui {
     private final Node viewport;
     private final Bar bar;
     private final Readout readout;
+    private final Panels panels;
 
-    Ui(Gui gui, KronoGui krono) {
+    Ui(Gui gui, KronoGui krono, Model model, Panels.Viewpoint camera) {
         this.gui = gui;
 
         // The window's own chrome. Handed no controls yet -- the window does not exist until GuiApp is
@@ -57,6 +58,18 @@ final class Ui {
 
         bar = new Bar(gui);
         readout = new Readout(gui);
+        panels = new Panels(gui, model, camera);
+
+        // The rail and its panel float against the left edge, vertically centred. A FILL float is the parent box
+        // out of flow, so its padding is the inset and its alignment does the centring -- the same layer trick
+        // the readout's corner uses, minus the hit-inert, because everything in here is meant to be clicked.
+        Node railLayer = gui.row()
+                .width(Length.FILL).height(Length.FILL)
+                .padding(Type.EDGE_Y, Type.EDGE_Y)
+                .alignItems(AlignItems.CENTER)
+                .floatAt(Length.dp(0), Length.dp(0))
+                .children(panels.node());
+        viewport.append(railLayer);
 
         // Top-left is the float's own origin, so this is just the prototype's two insets. A floating child
         // takes no space from its siblings, adds nothing to the parent's overflow, and is hit before every
@@ -69,8 +82,8 @@ final class Ui {
         gui.root().direction(Direction.COLUMN).background(gui.theme().color(Role.PAGE))
                 .children(titleBar.node(), viewport);
 
-        bar.show(Canned.read(Canned.DEFAULT_EXPRESSION));
-        readout.show(Math.toRadians(38), Math.toRadians(26), 1.0, 46);
+        bar.show(model.scene().reading());
+        readout.show(Math.toRadians(38), Math.toRadians(26), 1.0, 0);
     }
 
     /**
@@ -112,5 +125,9 @@ final class Ui {
 
     Readout readout() {
         return readout;
+    }
+
+    Panels panels() {
+        return panels;
     }
 }

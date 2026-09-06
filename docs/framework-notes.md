@@ -578,3 +578,83 @@ proportions the window had when it was last turned.
 because the trap is entirely invisible: nothing errors, nothing looks broken, and the one symptom is a shape
 that is subtly not the shape it should be. A line in `GuiApp.viewport`'s javadoc would save the next consumer
 the hunt, since that method is where the fixed-size-target-in-a-flexed-box arrangement is introduced.
+
+---
+
+## FN-25 · `ConeField` silently discards `Surface.Stroke`'s per-vertex colour 🔬
+
+**The most valuable finding so far, because nothing tells you.**
+
+`Surface.Stroke` advertises per-vertex colour as a feature, and its javadoc is specific: *"This vertex,
+coloured. The stroke's colour gradients between neighbouring vertices."* The record even validates that colour
+is all-or-nothing across a stroke, *"because a colour gradient between a colour and an absence has no
+meaning"* — which is a strong signal that colour is carried.
+
+Through `ConeField` it is not:
+
+- `Cones.Cone` is `(ax, ay, az, ar, bx, by, bz, br)` and `Cones.FLOATS` is **8**. The flattened buffer has no
+  colour channel at all.
+- `ConeField.compose` calls `SdfComposer.fragmentSpirv(scene, sdfFunction(...), **null**)` — no albedo
+  function — so the fragment shades every hit with the scene's single `albedo()`.
+
+So a plot built from painted strokes renders in **one flat colour**, and the only variation is lighting. There
+is no error, no warning, and — this is the part that cost the time — the picture looks *plausible*: thin tubes
+at grazing angles come out paler than fat ones, so a grid drawn in one colour and a curve drawn in another
+still look like two different things. I built a colour ramp, a four-way ramp picker and per-vertex painting for
+the curve, the axes, the ticks and the grid, watched all of it render, and only found out when a deliberate
+switch to an achromatic ramp changed nothing.
+
+**What the calculator does instead:** the colour is the scene's `albedo`, which is compiled in, so a colour
+change is a new module and a new pipeline. Affordable *only* because `ConeField`'s module is a fixed size —
+**measured at 55–67 ms**, against the five seconds an unrolled scene costs. Acceptable for a control clicked
+occasionally; not for anything continuous. The `.painted(...)` calls are left in `Geometry` deliberately: they
+are correct, they cost one call each, and the day the buffer carries colour the plot lights up with no change
+here.
+
+**Framework answer, and this is the one request that would most improve the picture:** carry colour in the
+buffer. `Cones.FLOATS` 8 → 12 (`ar`/`br` already pad each half to four), an albedo function in
+`ConeField.compose` that reads it, and `Cones.of` propagating what `Spine` already interpolates. Until then,
+**`Surface.Stroke`'s colour contract should say it is honoured by `SurfaceCompiler` and dropped by
+`ConeField`** — a doc line is worth an afternoon to every consumer.
+
+---
+
+## FN-23 · `Rail` exposes no handle to a tile, so its buttons are unaddressable 🔬
+
+`Rail` hands out `node()` (the icon column) and `panel()`, and keeps its per-item tiles private. There is no
+way to landmark "the layers button", and the tiles carry `role("rail-item")` with **no accessible name** —
+their content is an application-supplied icon, which for this framework means a `Picture`, which has no text.
+So `find layers` matches nothing and a driver cannot click a rail item by name.
+
+**Workaround, and it only works by luck:** the icon *is* the application's node, so a landmark on it resolves
+to a box inside the tile whose centre is the tile's. That is what `Panels.tile` does. A rail whose tiles were
+built by the widget rather than handed to it would be undrivable.
+
+**Framework answer:** `Rail.tile(String key)` returning the `Node`, the same way `Tabs` hands out `bar()` and
+`pages()` "to style, not restructure". Or — better, and consistent with `Rail`'s own title/tooltip handling —
+give the tile the item's `title` as its accessible name, so `find Layers` works with nothing added.
+
+---
+
+## FN-24 · `settle` cannot see a lazily-built panel 🔬
+
+Documented rather than broken — `automation.md` §5 says outright that `settle` *"cannot see a handler still
+running on a worker: that handler has published nothing yet, so nothing reports it owed."* Worth recording
+because the shape it takes in practice is a trap a script author will hit on their first rail:
+
+```
+click rail.color      # Rail builds the page inside the click handler, on a worker
+settle                # returns: no frame is owed *yet*
+find Ash              # "nothing matches" -- and it is intermittent
+```
+
+The page is built the first time it is shown (`Rail`, `Tabs` and `Popout` all do this, for the good reason
+that a rebuilt page comes back inert). So the first `find` inside any lazily-built panel races, and it races
+*intermittently*, which is the worst kind. Two `settle`s usually work and are not a guarantee.
+
+**What works:** retry the `find` until it matches, or `await` on a landmark inside the page — which is the
+framework's own answer and needs the page to carry one.
+
+**Framework answer:** `Rail`/`Tabs`/`Popout` could build the page on the GUI thread from the drain rather than
+in the handler, which would put it inside the frame `settle` waits for. Failing that, one line in
+`automation.md` naming lazily-built pages as the case where `settle` is not enough.

@@ -44,6 +44,9 @@ final class Capture {
      * that holds its pixel size while the rest grow is still pinned to the device grid, which is the one thing
      * {@code Length} exists to prevent and the one thing a still picture can prove.
      */
+    /** The rail of the tree most recently built, so a scene can open one of its panels. */
+    private static Panels panels;
+
     private static final float[] ZOOM_STEPS = {0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 3f};
 
     static void run(String[] args) throws IOException {
@@ -53,17 +56,33 @@ final class Capture {
         switch (scene) {
             case "zoom" -> zoomLadder();
             case "smallest" -> smallest(out);
-            default -> one(scene, out == null ? "chrome-" + scene + ".png" : out);
+            case "panels" -> everyPanel();
+            default -> one(scene, out == null ? "chrome-" + scene + ".png" : out, scene);
         }
     }
 
-    /** One picture of the tree at the design size. */
-    private static void one(String scene, String out) throws IOException {
+    /** One picture of the tree at the design size, with {@code panel} showing if it names one. */
+    private static void one(String scene, String out, String panel) throws IOException {
         Gui gui = build();
+        open(panel);
         Color page = Calculator.page();
         GuiApp.capture(gui, W, H, page.r(), page.g(), page.b(), out);
         System.out.println("captured " + out);
         gui.close();
+    }
+
+    /** Every panel, one file each -- the visual record of the whole rail in one run. */
+    private static void everyPanel() throws IOException {
+        for (String key : new String[]{"layers", "domain", "crop", "color", "sample", "view", "help"}) {
+            one(key, "chrome-panel-" + key + ".png", key);
+        }
+    }
+
+    /** Select a rail panel, if the name is one. An unknown name is a plain capture rather than an error. */
+    private static void open(String key) {
+        if (panels != null) {
+            panels.rail().select(key);
+        }
     }
 
     /**
@@ -109,9 +128,24 @@ final class Capture {
         gui.theme(Look.THEME);
         gui.minSize(Length.em(46), Length.em(30));
         KronoGui krono = KronoGui.attach(gui);
-        new Ui(gui, krono);
+        // A capture drives no camera, so the presets go nowhere -- which is right: a still picture of a panel
+        // should not depend on a renderer that a headless run does not have (FN-14).
+        Ui ui = new Ui(gui, krono, new Model(), NO_CAMERA);
+        panels = ui.panels();
         return gui;
     }
+
+    /** A camera that goes nowhere, for the headless path. */
+    private static final Panels.Viewpoint NO_CAMERA = new Panels.Viewpoint() {
+
+        @Override
+        public void look(double yawDegrees, double pitchDegrees) {
+        }
+
+        @Override
+        public void reset() {
+        }
+    };
 
     private Capture() {
     }
