@@ -66,6 +66,35 @@ record Lens(double eyeX, double eyeY, double eyeZ, double yaw, double pitch, dou
     }
 
     /**
+     * The world direction that is <b>right</b> on screen.
+     *
+     * <p>Read straight off the forward transform above: {@code sx} — which is horizontal screen position —
+     * contributes {@code (sx·cosYaw, 0, -sx·sinYaw)} to the ray and nothing else, so that vector <em>is</em>
+     * screen right. It is here rather than in {@link March} for the same reason {@link #project} is: it is a
+     * fact about the shader's camera, and a second place deriving it is a second place to get it wrong.
+     *
+     * <p>Note it has no vertical component at any pitch, which is what makes a horizontal pan stay horizontal
+     * however far the camera is tipped.
+     */
+    double[] screenRight() {
+        return new double[]{Math.cos(yaw), 0, -Math.sin(yaw)};
+    }
+
+    /**
+     * The world direction that is <b>up</b> on screen.
+     *
+     * <p>Likewise: {@code sy} contributes {@code py = sy·cosPitch} and {@code pz = sy·sinPitch}, and {@code pz}
+     * then rotates by yaw into {@code (pz·sinYaw, ·, pz·cosYaw)} — so screen up is
+     * {@code (sinPitch·sinYaw, cosPitch, sinPitch·cosYaw)}. Unlike right, it tips with the camera, which is
+     * exactly what a vertical pan should do.
+     */
+    double[] screenUp() {
+        double cp = Math.cos(pitch);
+        double sp = Math.sin(pitch);
+        return new double[]{sp * Math.sin(yaw), cp, sp * Math.cos(yaw)};
+    }
+
+    /**
      * A projected point.
      *
      * @param u     across the image, {@code 0} at the left edge and {@code 1} at the right

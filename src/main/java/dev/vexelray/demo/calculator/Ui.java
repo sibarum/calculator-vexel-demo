@@ -42,6 +42,7 @@ final class Ui {
     private final Bar bar;
     private final Readout readout;
     private final Panels panels;
+    private final Probe probe;
 
     Ui(Gui gui, KronoGui krono, Model model, Panels.Viewpoint camera) {
         this.gui = gui;
@@ -78,6 +79,11 @@ final class Ui {
         viewport.append(bar.node());
 
         viewport.append(corner(readout.node()));
+
+        // Last, so it floats over everything else in the viewport -- a float is hit and painted in child order,
+        // and the probe should be on top of the chrome it may cross.
+        probe = new Probe(gui);
+        viewport.append(probe.node());
 
         gui.root().direction(Direction.COLUMN).background(gui.theme().color(Role.PAGE))
                 .children(titleBar.node(), viewport);
@@ -129,5 +135,9 @@ final class Ui {
 
     Panels panels() {
         return panels;
+    }
+
+    Probe probe() {
+        return probe;
     }
 }

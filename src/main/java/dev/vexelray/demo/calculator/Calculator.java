@@ -107,17 +107,23 @@ public final class Calculator {
             // Geometry is rebuilt whenever the scene changes, on the committing thread -- which is a worker,
             // because every control's handler is. The GUI thread never samples anything; it takes a float[].
             model.onChange(s -> {
-                march.geometry(Geometry.of(s.reading(), s.omega(), s.x0(), s.x1(),
-                        s.samples(), s.effectiveFurniture(), s.lineWidth(), s.ramp()));
+                Geometry.Built built = Geometry.of(s.reading(), s.omega(), s.x0(), s.x1(),
+                        s.samples(), s.effectiveFurniture(), s.lineWidth(), s.ramp());
+                march.geometry(built);
+                ui.probe().samples(built.curve(), s.x0(), s.x1());
                 march.recolour(s.ramp());
                 ui.bar().show(s.reading());
                 ui.bar().cropping(s.cropping());
             });
             // And once at startup, for the scene nobody has changed yet.
             Scene start = model.scene();
-            march.geometry(Geometry.of(start.reading(), start.omega(), start.x0(), start.x1(),
-                    start.samples(), start.effectiveFurniture(), start.lineWidth(), start.ramp()));
+            Geometry.Built first = Geometry.of(start.reading(), start.omega(), start.x0(), start.x1(),
+                    start.samples(), start.effectiveFurniture(), start.lineWidth(), start.ramp());
+            march.geometry(first);
+            ui.probe().samples(first.curve(), start.x0(), start.x1());
+            ui.probe().install(ui.viewport(), march::lens);
 
+            Gestures.install(gui, ui.viewport(), march);
             keys(gui, model, camera, ui);
             if (memory.maximized("main")) {
                 app.window().maximize();
@@ -163,7 +169,7 @@ public final class Calculator {
                     // as text sliding across the plot behind the geometry it names.
                     Labels.show(ui.viewport(), Labels.of(march.lens(), ui.viewport().layout(),
                             now.x0(), now.x1(), now.effectiveFurniture().ticks()));
-                    ui.readout().show(march.yaw(), march.pitch(), 1.0, march.cones());
+                    ui.readout().show(march.yaw(), march.pitch(), march.zoom(), march.cones());
                     memory.poll();
                 });
             } finally {

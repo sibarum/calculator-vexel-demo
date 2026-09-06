@@ -44,10 +44,10 @@ final class Capture {
      * that holds its pixel size while the rest grow is still pinned to the device grid, which is the one thing
      * {@code Length} exists to prevent and the one thing a still picture can prove.
      */
+    private static final float[] ZOOM_STEPS = {0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 3f};
+
     /** The rail of the tree most recently built, so a scene can open one of its panels. */
     private static Panels panels;
-
-    private static final float[] ZOOM_STEPS = {0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 3f};
 
     static void run(String[] args) throws IOException {
         String scene = args.length >= 2 ? args[1] : "default";

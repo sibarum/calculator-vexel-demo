@@ -99,8 +99,19 @@ final class March {
      */
     private static final double FOCAL_LENGTH = 2.5;
 
-    /** How far the eye orbits the origin. The world box the geometry is built into is about two units. */
+    /** How far the eye orbits its target on a fresh view. The world box is about two units across. */
     private static final double DISTANCE = 7.0;
+
+    /**
+     * How close and how far a wheel may take the camera.
+     *
+     * <p>The near limit is the box's own half-diagonal and a little: inside it the eye is <em>within</em> the
+     * plot, which is not a zoomed-in plot but a different and confusing picture. The far limit is where the
+     * geometry stops being legible, and both exist so a wheel cannot lose the plot — recovering from that costs
+     * the user a trip to Reset, which is a bad outcome for a scroll.
+     */
+    private static final double NEAR = 3.0;
+    private static final double FAR = 24.0;
 
     private final SampledColorTarget target;
     private final StorageBuffer cones;
@@ -125,6 +136,14 @@ final class March {
 
     private volatile double yaw = Math.toRadians(38);
     private volatile double pitch = Math.toRadians(26);
+
+    /** What the camera looks at. The origin until something pans. */
+    private volatile double targetX;
+    private volatile double targetY;
+    private volatile double targetZ;
+
+    /** How far the eye stands from that target. */
+    private volatile double distance = DISTANCE;
     private volatile int coneCount;
 
     /** The node showing the image. Held for its measured box, which is where the aspect comes from. */
@@ -253,8 +272,8 @@ final class March {
      * of eight cones, which is the culling the march depends on, and it is CPU work that has no business on the
      * GUI thread.
      */
-    void geometry(List<Surface.Stroke> strokes) {
-        List<Cones.Cone> flat = Cones.of(strokes);
+    void geometry(Geometry.Built built) {
+        List<Cones.Cone> flat = Cones.of(built.strokes());
         if (flat.size() > MAX_CONES) {
             System.out.println("plot refused: " + flat.size() + " cones exceeds the buffer's "
                     + MAX_CONES + "; nothing was drawn rather than part of it");
@@ -266,11 +285,59 @@ final class March {
         dirty = true;
     }
 
-    /** Point the camera somewhere, absolutely. What a preset button does. */
+    /** Point the camera somewhere, absolutely, and put it back where it started. What a preset button does. */
     void look(double newYaw, double newPitch) {
         yaw = newYaw;
         pitch = Math.clamp(newPitch, Math.toRadians(-75), Math.toRadians(75));
+        targetX = 0;
+        targetY = 0;
+        targetZ = 0;
+        distance = DISTANCE;
         dirty = true;
+    }
+
+    /**
+     * Slide the camera across its own view.
+     *
+     * <p>Panning moves what the camera is <em>looking at</em> rather than turning it, so the ray directions are
+     * untouched and the whole of it is a shift of the eye. The two directions come out of the shader's own ray
+     * construction rather than being guessed: {@code sx} contributes {@code (cosYaw, 0, -sinYaw)} and
+     * {@code sy} contributes {@code (sinPitch·sinYaw, cosPitch, sinPitch·cosYaw)}, so those are exactly screen
+     * right and screen up in world space.
+     *
+     * <p>Scaled by {@link #distance}, which is what makes a drag move the picture by the same amount on screen
+     * however far out the camera is. Without it, panning is unusably slow zoomed in and wild zoomed out.
+     */
+    void pan(double screenDx, double screenDy) {
+        Lens lens = lens();
+        double[] right = lens.screenRight();
+        double[] up = lens.screenUp();
+        double scale = distance / MARCH_H;
+        // Dragging moves the plot with the pointer, so the camera goes the other way on both axes -- and the
+        // screen's y runs down while the world's up runs up, which is the second negation.
+        double dx = -screenDx * scale;
+        double dy = screenDy * scale;
+        targetX += dx * right[0] + dy * up[0];
+        targetY += dx * right[1] + dy * up[1];
+        targetZ += dx * right[2] + dy * up[2];
+        dirty = true;
+    }
+
+    /**
+     * Move the eye along its own view direction.
+     *
+     * <p>Multiplicative rather than additive, so one notch is the same proportion of the way in at every
+     * distance — which is what a wheel feels like it should do, and what an additive step conspicuously does
+     * not once you are close.
+     */
+    void zoom(double notches) {
+        distance = Math.clamp(distance * Math.pow(0.88, notches), NEAR, FAR);
+        dirty = true;
+    }
+
+    /** How far out the camera is, for the readout. */
+    double zoom() {
+        return DISTANCE / distance;
     }
 
     /** Turn the camera. Six floats next frame; no geometry is touched. */
@@ -336,15 +403,15 @@ final class March {
     // this convention, because there is no Java-side projection to read it off (framework-notes.md FN-12).
 
     private double eyeX() {
-        return -DISTANCE * Math.cos(pitch) * Math.sin(yaw);
+        return targetX - distance * Math.cos(pitch) * Math.sin(yaw);
     }
 
     private double eyeY() {
-        return DISTANCE * Math.sin(pitch);
+        return targetY + distance * Math.sin(pitch);
     }
 
     private double eyeZ() {
-        return -DISTANCE * Math.cos(pitch) * Math.cos(yaw);
+        return targetZ - distance * Math.cos(pitch) * Math.cos(yaw);
     }
 
     private static ComposedShader stage(List<ComposedShader> composed, ShaderStage want) {

@@ -658,3 +658,31 @@ framework's own answer and needs the page to carry one.
 **Framework answer:** `Rail`/`Tabs`/`Popout` could build the page on the GUI thread from the drain rather than
 in the handler, which would put it inside the frame `settle` waits for. Failing that, one line in
 `automation.md` naming lazily-built pages as the case where `settle` is not enough.
+
+---
+
+## FN-26 · The automation protocol cannot hold a modifier during a gesture 🔬
+
+`Automation`'s verbs are `move`, `click`, `rightclick`, `drag`, `scroll`, `type` and `key`. `key <NAME>` presses
+and releases, so there is no way to express **shift + drag**, ctrl + click, or any other chorded gesture: the
+modifier is down and up before the drag starts.
+
+That matters more than it looks, because a modifier is how a canvas gets a second gesture out of one button —
+this application's pan is shift + drag, which is what the prototype specifies and what every 3D viewport does.
+So the one gesture in the plot that a person uses constantly is the one gesture a driver cannot perform, and
+therefore cannot regression-test or photograph.
+
+**Cost here:** orbit, zoom, the probe and every key claim are driven and shot over the socket; **pan is
+verified only by unit test** (`LensTest.panDirectionsAreWhatTheySay`, which pins the direction vectors against
+the projection at every camera) plus a hand on the keyboard. The wiring between "shift is held" and "call pan"
+is the part no test covers.
+
+**Framework answer:** either `key down <NAME>` / `key up <NAME>` as separate verbs — which composes with
+everything and costs two lines — or an optional modifier argument on the gesture verbs (`drag a b shift`). The
+first is more general and matches how the input path already models a chord: modifiers are held state, not an
+attribute of a click.
+
+*(Related, and smaller: `Gui.modifiers()` is the right way to read them from a handler, because `DragEvent`
+carries none. Reading the coalesced `State` rather than latching a flag on key-down is what stops a modifier
+sticking when the key-up is delivered to another window mid-capture — a real failure mode when a drag has
+pointer capture.)*

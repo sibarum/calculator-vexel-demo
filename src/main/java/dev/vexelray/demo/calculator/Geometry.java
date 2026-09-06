@@ -14,6 +14,11 @@ import java.util.List;
  * <p>Pure, and pure on purpose — this is the expensive half of the renderer and it runs on a worker. Nothing
  * about the camera reaches it, which is the property that makes an orbit cost six floats.
  *
+ * <p><b>The curve's radius is in world units, not pixels.</b> The prototype's Width control says "px" and a
+ * marched tube has none — its apparent thickness is a consequence of the camera. So the control maps onto a
+ * world radius that looks like the design at the default framing, and it is not a promise about screen
+ * measurement.
+ *
  * <h2>The per-vertex colour here is currently inert, and deliberately kept</h2>
  *
  * <p><b>{@code ConeField} carries no colour.</b> A cone in the buffer is eight floats of geometry and
@@ -87,19 +92,45 @@ final class Geometry {
     }
 
     /**
+     * A built scene: what to march, and where the curve's samples ended up.
+     *
+     * <p>The points come back because two things want them and neither should re-derive them. The march wants
+     * strokes; the {@link Probe} wants to snap to a sample, in the same world coordinates the picture was built
+     * in. Recomputing the mapping in the probe would be three lines and one refactor away from disagreeing with
+     * the plot it is pointing at.
+     *
+     * @param strokes what goes in the buffer
+     * @param curve   the curve's points, interleaved xyz, already mapped into the world box
+     */
+    record Built(List<Surface.Stroke> strokes, double[] curve) {
+    }
+
+    /**
      * The whole scene for a reading.
      *
      * @param samples how many points to sample the curve at; the caller clamps this against the buffer ceiling
      */
-    static List<Surface.Stroke> of(Canned.Reading reading, double omega, double x0, double x1, int samples,
-                                   Furniture furniture, double radius, Ramp ramp) {
+    static Built of(Canned.Reading reading, double omega, double x0, double x1, int samples,
+                    Furniture furniture, double radius, Ramp ramp) {
         List<Surface.Stroke> scene = new ArrayList<>();
         grid(scene, furniture);
         if (furniture.axes()) {
             axes(scene, furniture.ticks(), x0, x1);
         }
-        scene.add(curve(Canned.curve(reading, omega, x0, x1, samples), x0, x1, radius, ramp));
-        return List.copyOf(scene);
+        double[] world = world(Canned.curve(reading, omega, x0, x1, samples), x0, x1);
+        scene.add(curve(world, radius, ramp));
+        return new Built(List.copyOf(scene), world);
+    }
+
+    /** The sampled points mapped from the domain into the world box, which is where everything else reads them. */
+    private static double[] world(double[] xyz, double x0, double x1) {
+        double[] out = new double[xyz.length];
+        for (int i = 0; i < xyz.length / 3; i++) {
+            out[i * 3] = map(xyz[i * 3], x0, x1, -BOX, BOX);
+            out[i * 3 + 1] = xyz[i * 3 + 1] * BOX_H;
+            out[i * 3 + 2] = xyz[i * 3 + 2] * BOX_H;
+        }
+        return out;
     }
 
     // ------------------------------------------------------------------ curve
@@ -111,14 +142,14 @@ final class Geometry {
      * colour and an absence has no meaning — so every vertex is painted here rather than only the ones that
      * matter.
      */
-    private static Surface.Stroke curve(double[] xyz, double x0, double x1, double radius, Ramp ramp) {
-        int n = xyz.length / 3;
+    private static Surface.Stroke curve(double[] world, double radius, Ramp ramp) {
+        int n = world.length / 3;
         List<Surface.Stroke.Vertex> vs = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
             double t = n == 1 ? 0 : i / (double) (n - 1);
-            double x = map(xyz[i * 3], x0, x1, -BOX, BOX);
-            double y = xyz[i * 3 + 1] * BOX_H;
-            double z = xyz[i * 3 + 2] * BOX_H;
+            double x = world[i * 3];
+            double y = world[i * 3 + 1];
+            double z = world[i * 3 + 2];
             // Sharp: see the class note. The two ends have nothing to turn through, so their curvature is
             // ignored either way.
             vs.add(new Surface.Stroke.Vertex(x, y, z, radius, 0).painted(ramp.scene(t)));

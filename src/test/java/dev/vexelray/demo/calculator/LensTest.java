@@ -124,6 +124,54 @@ class LensTest {
         assertNotNull(lens.project(0, 0, 0), "but the point it is looking at must have one");
     }
 
+    /**
+     * The pan directions, checked against the projection rather than against their own derivation.
+     *
+     * <p>Moving the eye along {@code screenRight} must move the picture horizontally and <em>not</em> vertically,
+     * at every camera. That is the property a pan needs and the one a sign error breaks — and it is checkable
+     * without knowing how either vector was worked out, which is what makes this a test rather than a
+     * restatement.
+     */
+    @Test
+    @DisplayName("screen right and screen up move the picture along the axes they are named for")
+    void panDirectionsAreWhatTheySay() {
+        for (double yaw = -180; yaw <= 180; yaw += 41) {
+            for (double pitch : new double[]{-75, -30, 0, 26, 75}) {
+                Lens lens = orbiting(yaw, pitch);
+                Lens.Point at = lens.project(0, 0, 0);
+                assertNotNull(at);
+
+                double[] right = lens.screenRight();
+                Lens shifted = new Lens(lens.eyeX() + right[0] * 0.4, lens.eyeY() + right[1] * 0.4,
+                        lens.eyeZ() + right[2] * 0.4, lens.yaw(), lens.pitch(), lens.aspect(), lens.focal());
+                Lens.Point movedRight = shifted.project(0, 0, 0);
+                assertNotNull(movedRight);
+                assertTrue(movedRight.u() < at.u(),
+                        "moving the eye right must move the picture left, at yaw " + yaw + " pitch " + pitch);
+                assertEquals(at.v(), movedRight.v(), 1e-9,
+                        "a horizontal pan moved the picture vertically at pitch " + pitch);
+
+                double[] up = lens.screenUp();
+                Lens lifted = new Lens(lens.eyeX() + up[0] * 0.4, lens.eyeY() + up[1] * 0.4,
+                        lens.eyeZ() + up[2] * 0.4, lens.yaw(), lens.pitch(), lens.aspect(), lens.focal());
+                Lens.Point movedUp = lifted.project(0, 0, 0);
+                assertNotNull(movedUp);
+                assertTrue(movedUp.v() > at.v(),
+                        "lifting the eye must move the picture down, at yaw " + yaw + " pitch " + pitch);
+                assertEquals(at.u(), movedUp.u(), 1e-9,
+                        "a vertical pan moved the picture sideways at yaw " + yaw);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("screen right is level at every pitch, which is what keeps a horizontal pan horizontal")
+    void screenRightIsLevel() {
+        for (double pitch : new double[]{-75, -30, 0, 26, 75}) {
+            assertEquals(0, orbiting(38, pitch).screenRight()[1], 1e-12);
+        }
+    }
+
     @Test
     @DisplayName("the world box the plot is built into is inside the frame at rest")
     void thePlotBoxFitsTheFrame() {
