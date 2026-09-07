@@ -8,10 +8,13 @@ import dev.vexelray.gui.core.input.InteractionState;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.style.Role;
+import dev.vexelray.gui.krono.KronoGui;
 import dev.vexelray.gui.widget.Inspector;
 import dev.vexelray.gui.widget.Property;
 import dev.vexelray.gui.widget.Rail;
 import dev.vexelray.gui.widget.Tooltip;
+import sibarum.kronometer.Dur;
+import sibarum.kronometer.anim.Ease;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -57,6 +60,15 @@ final class Panels {
         void reset();
     }
 
+    /**
+     * The prototype's own rate for a moving part: {@code transition:left .14s} on each of its three switches.
+     *
+     * <p>Reused for the panel, which the prototype does not animate at all — but a rate is a house style rather
+     * than a per-widget measurement, and inventing a second one for the only other thing that moves here would
+     * be the more arbitrary choice.
+     */
+    private static final Dur TRAVEL = Dur.ms(140);
+
     private final Gui gui;
     private final Model model;
     private final Rail rail;
@@ -64,12 +76,30 @@ final class Panels {
     private final List<Inspector> inspectors = new ArrayList<>();
     private final Node row;
 
-    Panels(Gui gui, Model model, Viewpoint camera) {
+    /**
+     * The knob's time.
+     *
+     * <p>Eased, because §11's rule is <em>fade linear, travel eased</em> and a knob crossing a track is travel:
+     * it has a place to arrive at, and decelerating into it is what reads as weight.
+     *
+     * <p>Written out in full because this application already has a {@link Ramp} — a colour map — and importing
+     * the widget module's timing seam under the same simple name silently rebinds every mention of the other one
+     * in this file, which is how the colour picker stopped compiling the first time.
+     */
+    private final dev.vexelray.gui.widget.Ramp knob;
+
+    Panels(Gui gui, KronoGui krono, Model model, Viewpoint camera) {
         this.gui = gui;
         this.model = model;
         this.tips = new Tooltip(gui);
+        this.knob = (progress, done) -> krono.ramp(TRAVEL, Ease.OUT_CUBIC, progress, done);
         this.rail = new Rail(gui)
                 .panelWidth(Length.dp(284))
+                // Opening and closing a panel, and swapping one for another. A fade rather than a slide: a slide
+                // needs the panel's parent to clip or a panel mid-travel draws over the rail beside it, and that
+                // parent is this application's row rather than the widget's. Linear, because this one is opacity
+                // -- an eased fade is 87% done at its own halfway point and reads as a jump and then a stall.
+                .transition(Rail.fade((progress, done) -> krono.ramp(TRAVEL, Ease.LINEAR, progress, done)))
                 .titles(tips);
 
         rail.item("layers", tile("layers", Icons::layers), "LAYERS", this::layers);
@@ -289,6 +319,11 @@ final class Panels {
 
     private Inspector inspector(Node into) {
         Inspector panel = new Inspector(gui);
+        // Every switch this panel builds -- a card head's, a flag row's, and any added after this call --
+        // crosses its track rather than jumping. One line, because Inspector owns the switches it made and
+        // routes the ramp to them; before that seam existed the motion could only have been had by replacing
+        // the widget.
+        panel.motion(knob);
         inspectors.add(panel);
         into.append(panel.node());
         return panel;

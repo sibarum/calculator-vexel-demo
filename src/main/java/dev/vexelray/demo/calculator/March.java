@@ -6,6 +6,7 @@ import dev.vexelray.gui.core.layout.NodeLayout;
 import dev.vexelray.shader.ComposedShader;
 import dev.supirvast.vastir.core.ShaderStage;
 import dev.vexelray.surface.Cones;
+import dev.vexelray.surface.ParamBlock;
 import dev.vexelray.surface.Surface;
 import dev.vexelray.technique.sdf.ConeField;
 import dev.vexelray.technique.sdf.MarchSettings;
@@ -51,7 +52,7 @@ import java.util.List;
  * ({@code -Dprobe=all}, lane {@code gpu}, {@code plot.march}) rather than assumed. See
  * {@code docs/framework-notes.md} FN-11.
  */
-final class March {
+final class March implements Motion.Eye {
 
     /**
      * The marched image's pixels.
@@ -99,20 +100,6 @@ final class March {
      */
     private static final double FOCAL_LENGTH = 2.5;
 
-    /** How far the eye orbits its target on a fresh view. The world box is about two units across. */
-    private static final double DISTANCE = 7.0;
-
-    /**
-     * How close and how far a wheel may take the camera.
-     *
-     * <p>The near limit is the box's own half-diagonal and a little: inside it the eye is <em>within</em> the
-     * plot, which is not a zoomed-in plot but a different and confusing picture. The far limit is where the
-     * geometry stops being legible, and both exist so a wheel cannot lose the plot — recovering from that costs
-     * the user a trip to Reset, which is a bad outcome for a scroll.
-     */
-    private static final double NEAR = 3.0;
-    private static final double FAR = 24.0;
-
     private final SampledColorTarget target;
     private final StorageBuffer cones;
     /**
@@ -126,6 +113,19 @@ final class March {
      * gpu lane as {@code plot.repipeline}.
      */
     private volatile GraphicsPipeline pipeline;
+
+    /**
+     * The scene the current pipeline was composed from, and that scene's parameter block.
+     *
+     * <p>Kept because <b>the push constant is no longer the camera's six floats</b>: the block is the camera,
+     * then the lens, then one float per scene parameter. A frame that pushes only the first six leaves the focal
+     * length as whatever was last in the command buffer — a garbage lens, on a picture that still draws and says
+     * nothing. That is why {@code SdfComposer.cameraBytes} is deprecated, and this pair is what its replacement
+     * needs: the scene to read the lens from, the block to read the parameters from.
+     */
+    private volatile SdfScene scene;
+    private volatile ParamBlock params;
+
     private final SdfScene.Rgb sky;
 
     /** Set by the worker when new geometry is ready; taken by the frame loop. */
@@ -134,16 +134,21 @@ final class March {
     /** Whether anything the picture depends on has changed since the last march. */
     private volatile boolean dirty = true;
 
-    private volatile double yaw = Math.toRadians(38);
-    private volatile double pitch = Math.toRadians(26);
-
-    /** What the camera looks at. The origin until something pans. */
+    /**
+     * The camera the next march will use, as {@link Motion} last landed it.
+     *
+     * <p><b>Not the camera's state — a copy of it.</b> {@link Motion} owns the camera, because a camera has a
+     * future (a preset is travelling to it, the spin is winding it) and this class only ever needs the six
+     * numbers it is about to hand the shader. Written once a frame from the timeline, read by {@link #frame}
+     * and {@link #lens} on the same thread in the same frame; volatile because the automation server's thread
+     * also reads them through {@code lens()}.
+     */
+    private volatile double yaw;
+    private volatile double pitch;
     private volatile double targetX;
     private volatile double targetY;
     private volatile double targetZ;
-
-    /** How far the eye stands from that target. */
-    private volatile double distance = DISTANCE;
+    private volatile double distance;
     private volatile int coneCount;
 
     /** The node showing the image. Held for its measured box, which is where the aspect comes from. */
@@ -195,10 +200,18 @@ final class March {
         ComposedShader vertex = stage(composed, ShaderStage.VERTEX);
         ComposedShader fragment = stage(composed, ShaderStage.FRAGMENT);
 
+        // Held for the push constant, which is no longer the camera's six floats: the block carries the lens
+        // and the scene's parameters after them, and the writer needs the scene to read the first and the block
+        // to read the second. Assigned before the pipeline so a frame can never see one without the other.
+        this.scene = scene;
+        this.params = SdfComposer.paramBlock(scene);
+
         return target.pipelineFor(
                 vertex.spirv(), vertex.entryPoint(),
                 fragment.spirv(), fragment.entryPoint(),
-                SdfComposer.CAMERA_BYTES,
+                // The range the pipeline declares has to be the range the frame pushes. Sized from the scene
+                // rather than from a constant, because the constant is the camera alone and the block outgrew it.
+                SdfComposer.pushBytes(scene),
                 new long[]{cones.descriptorSetLayout()});
     }
 
@@ -285,19 +298,35 @@ final class March {
         dirty = true;
     }
 
-    /** Point the camera somewhere, absolutely, and put it back where it started. What a preset button does. */
-    void look(double newYaw, double newPitch) {
+    /**
+     * Take the camera {@link Motion} has arrived at.
+     *
+     * <p><b>Compares before it dirties, and that comparison is load-bearing.</b> This is called once a frame
+     * for the life of the window, whether or not the camera moved, because it is the landing point of a bound
+     * cell. Setting {@code dirty} unconditionally here would mark every frame dirty, and a marched frame costs
+     * a synchronous GPU round-trip on the GUI thread (FN-11) — so the window would pay for an orbit it is not
+     * doing, forever, and the whole "a still plot is not marched at all" property would quietly be gone.
+     */
+    @Override
+    public void view(double newYaw, double newPitch, double newDistance, double tx, double ty, double tz) {
+        if (newYaw == yaw && newPitch == pitch && newDistance == distance
+                && tx == targetX && ty == targetY && tz == targetZ) {
+            return;
+        }
         yaw = newYaw;
-        pitch = Math.clamp(newPitch, Math.toRadians(-75), Math.toRadians(75));
-        targetX = 0;
-        targetY = 0;
-        targetZ = 0;
-        distance = DISTANCE;
+        // The application's clamp is Motion's; this one is a backstop, and wider on purpose -- the march's own
+        // limit is 4..86 degrees, and a value that reached here outside it would be a bug in the caller rather
+        // than something to silently correct into a plausible picture.
+        pitch = Math.clamp(newPitch, Math.toRadians(-86), Math.toRadians(86));
+        distance = newDistance;
+        targetX = tx;
+        targetY = ty;
+        targetZ = tz;
         dirty = true;
     }
 
     /**
-     * Slide the camera across its own view.
+     * The world-space shift that dragging the picture by this many screen pixels amounts to.
      *
      * <p>Panning moves what the camera is <em>looking at</em> rather than turning it, so the ray directions are
      * untouched and the whole of it is a shift of the eye. The two directions come out of the shader's own ray
@@ -305,10 +334,14 @@ final class March {
      * {@code sy} contributes {@code (sinPitch·sinYaw, cosPitch, sinPitch·cosYaw)}, so those are exactly screen
      * right and screen up in world space.
      *
-     * <p>Scaled by {@link #distance}, which is what makes a drag move the picture by the same amount on screen
-     * however far out the camera is. Without it, panning is unusably slow zoomed in and wild zoomed out.
+     * <p>Scaled by {@code distance}, which is what makes a drag move the picture by the same amount on screen
+     * however far out the camera is. Without it, panning is unusably slow zoomed in and wild zoomed out. The
+     * distance is passed in rather than read off the field because the caller may be a gesture ahead of the
+     * last landing; the <em>directions</em> may safely come from the field, since a pan does not turn the
+     * camera and so cannot invalidate them.
      */
-    void pan(double screenDx, double screenDy) {
+    @Override
+    public double[] panDelta(double screenDx, double screenDy, double distance) {
         Lens lens = lens();
         double[] right = lens.screenRight();
         double[] up = lens.screenUp();
@@ -317,44 +350,10 @@ final class March {
         // screen's y runs down while the world's up runs up, which is the second negation.
         double dx = -screenDx * scale;
         double dy = screenDy * scale;
-        targetX += dx * right[0] + dy * up[0];
-        targetY += dx * right[1] + dy * up[1];
-        targetZ += dx * right[2] + dy * up[2];
-        dirty = true;
-    }
-
-    /**
-     * Move the eye along its own view direction.
-     *
-     * <p>Multiplicative rather than additive, so one notch is the same proportion of the way in at every
-     * distance — which is what a wheel feels like it should do, and what an additive step conspicuously does
-     * not once you are close.
-     */
-    void zoom(double notches) {
-        distance = Math.clamp(distance * Math.pow(0.88, notches), NEAR, FAR);
-        dirty = true;
-    }
-
-    /** How far out the camera is, for the readout. */
-    double zoom() {
-        return DISTANCE / distance;
-    }
-
-    /** Turn the camera. Six floats next frame; no geometry is touched. */
-    void turn(double dYaw, double dPitch) {
-        yaw += dYaw;
-        // The prototype clamps elevation to +/-75 degrees. The march's own clamp is wider (4..86), so this is
-        // the application's rule and the framework's is a backstop rather than the thing being relied on.
-        pitch = Math.clamp(pitch + dPitch, Math.toRadians(-75), Math.toRadians(75));
-        dirty = true;
-    }
-
-    double yaw() {
-        return yaw;
-    }
-
-    double pitch() {
-        return pitch;
+        return new double[]{
+                dx * right[0] + dy * up[0],
+                dx * right[1] + dy * up[1],
+                dx * right[2] + dy * up[2]};
     }
 
     int cones() {
@@ -391,7 +390,7 @@ final class March {
         lastAspect = aspect;
         try (var zone = Probe.zone(Lane.GPU, "plot.march")) {
             target.renderInto(pipeline, 0, cones.descriptorSet(), 3,
-                    SdfComposer.cameraBytes(eyeX(), eyeY(), eyeZ(), yaw, pitch, aspect),
+                    SdfComposer.pushConstantBytes(scene, eyeX(), eyeY(), eyeZ(), yaw, pitch, aspect, params),
                     (float) sky.r(), (float) sky.g(), (float) sky.b(), 1f);
         }
     }

@@ -59,7 +59,7 @@ final class Ui {
 
         bar = new Bar(gui);
         readout = new Readout(gui);
-        panels = new Panels(gui, model, camera);
+        panels = new Panels(gui, krono, model, camera);
 
         // The rail and its panel float against the left edge, vertically centred. A FILL float is the parent box
         // out of flow, so its padding is the inset and its alignment does the centring -- the same layer trick
@@ -82,7 +82,7 @@ final class Ui {
 
         // Last, so it floats over everything else in the viewport -- a float is hit and painted in child order,
         // and the probe should be on top of the chrome it may cross.
-        probe = new Probe(gui);
+        probe = new Probe(gui, krono);
         viewport.append(probe.node());
 
         gui.root().direction(Direction.COLUMN).background(gui.theme().color(Role.PAGE))

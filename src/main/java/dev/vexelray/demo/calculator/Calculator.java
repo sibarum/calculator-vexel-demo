@@ -23,6 +23,8 @@ import sibarum.tactroller.atchung.TactrollerInputBridge;
 import sibarum.tactroller.clipboard.Clipboard;
 import sibarum.tactroller.clipboard.ClipboardException;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
  * The plot viewport: type an expression, look at it.
  *
@@ -102,7 +104,17 @@ public final class Calculator {
             // reason GuiApp.viewport and GuiApp.storage exist rather than the device being public.
             March march = new March(app);
             march.showIn(ui.viewport());
-            camera.on(march);
+            // The camera, and everything that moves it. Built here because it needs the March that has just
+            // been built, and needed by the panels that were built before the window existed -- which is what
+            // the Camera seam below is for.
+            Motion motion = new Motion(krono.kron(), krono.frames(), krono.animator(), march);
+            camera.on(motion);
+
+            // Auto-orbit is a flag in the Scene and a curve on the camera, and this is the one place the two
+            // meet. An edge rather than a level: the spin is *started* by switching it on, and re-anchoring the
+            // curve on every unrelated scene change -- a keystroke in the expression, a slider -- would be
+            // harmless to look at and wrong to write, because it says the spin depends on the sample count.
+            AtomicBoolean spinning = new AtomicBoolean(model.scene().spinning());
 
             // Geometry is rebuilt whenever the scene changes, on the committing thread -- which is a worker,
             // because every control's handler is. The GUI thread never samples anything; it takes a float[].
@@ -114,6 +126,9 @@ public final class Calculator {
                 march.recolour(s.ramp());
                 ui.bar().show(s.reading());
                 ui.bar().cropping(s.cropping());
+                if (spinning.getAndSet(s.spinning()) != s.spinning()) {
+                    motion.spinning(s.spinning());
+                }
             });
             // And once at startup, for the scene nobody has changed yet.
             Scene start = model.scene();
@@ -123,7 +138,7 @@ public final class Calculator {
             ui.probe().samples(first.curve(), start.x0(), start.x1());
             ui.probe().install(ui.viewport(), march::lens);
 
-            Gestures.install(gui, ui.viewport(), march);
+            Gestures.install(gui, ui.viewport(), motion);
             keys(gui, model, camera, ui);
             if (memory.maximized("main")) {
                 app.window().maximize();
@@ -157,9 +172,6 @@ public final class Calculator {
                     pump(bridge);
                     krono.tick();
                     Scene now = model.scene();
-                    if (now.spinning()) {
-                        march.turn(Math.toRadians(0.6), 0);
-                    }
                     // After the clock, because a camera animation settles on the tick and the frame that
                     // presents a value should be the frame that computed it. Before the tree is drawn, because
                     // renderInto's contract is that the image is ready when it returns.
@@ -169,7 +181,8 @@ public final class Calculator {
                     // as text sliding across the plot behind the geometry it names.
                     Labels.show(ui.viewport(), Labels.of(march.lens(), ui.viewport().layout(),
                             now.x0(), now.x1(), now.effectiveFurniture().ticks()));
-                    ui.readout().show(march.yaw(), march.pitch(), march.zoom(), march.cones());
+                    Motion.View eye = motion.now();
+                    ui.readout().show(eye.yaw(), eye.pitch(), eye.zoom(), march.cones());
                     memory.poll();
                 });
             } finally {
@@ -191,23 +204,26 @@ public final class Calculator {
      */
     private static final class Camera implements Panels.Viewpoint {
 
-        private volatile March march;
+        private volatile Motion motion;
 
-        void on(March march) {
-            this.march = march;
+        void on(Motion motion) {
+            this.motion = motion;
         }
 
         @Override
         public void look(double yawDegrees, double pitchDegrees) {
-            March m = march;
+            Motion m = motion;
             if (m != null) {
-                m.look(Math.toRadians(yawDegrees), Math.toRadians(pitchDegrees));
+                m.look(yawDegrees, pitchDegrees);
             }
         }
 
         @Override
         public void reset() {
-            look(38, 26);
+            Motion m = motion;
+            if (m != null) {
+                m.reset();
+            }
         }
     }
 
