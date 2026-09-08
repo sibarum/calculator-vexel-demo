@@ -4,7 +4,9 @@ import dev.vexelray.canvas.Color;
 import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.app.GuiApp;
 import dev.vexelray.gui.core.layout.Length;
+import dev.vexelray.gui.core.WindowControls;
 import dev.vexelray.gui.krono.KronoGui;
+import dev.vexelray.gui.widget.TitleBar;
 
 import java.io.IOException;
 
@@ -130,7 +132,10 @@ final class Capture {
         KronoGui krono = KronoGui.attach(gui);
         // A capture drives no camera, so the presets go nowhere -- which is right: a still picture of a panel
         // should not depend on a renderer that a headless run does not have (FN-14).
-        Ui ui = new Ui(gui, krono, new Model(), NO_CAMERA);
+        // A bar against NONE, which is what a headless still has always rendered: there is no window here for
+        // real controls to command, and the framework is not running to hand any down.
+        Ui ui = new Ui(gui, krono, new Model(), NO_CAMERA,
+                new TitleBar(gui, WindowControls.NONE, "Calculator"));
         panels = ui.panels();
         return gui;
     }

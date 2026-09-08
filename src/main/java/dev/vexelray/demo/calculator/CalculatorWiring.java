@@ -1,14 +1,12 @@
 package dev.vexelray.demo.calculator;
 
 import dev.vexelray.framework.api.FrameStage;
+import dev.vexelray.framework.automation.Driver;
 import dev.vexelray.framework.shell.AppInfo;
 import dev.vexelray.framework.shell.Appearance;
 import dev.vexelray.framework.shell.Shell;
 import dev.vexelray.framework.shell.Wiring;
-import dev.vexelray.gui.automation.Automation;
-import dev.vexelray.gui.automation.AutomationServer;
 import dev.vexelray.gui.core.Gui;
-import dev.vexelray.gui.core.app.GuiApp;
 import dev.vexelray.gui.core.layout.Length;
 import sibarum.tactroller.api.Key;
 import sibarum.tactroller.api.Modifier;
@@ -39,7 +37,6 @@ final class CalculatorWiring implements Wiring {
     private Ui ui;
     private March march;
     private Motion motion;
-    private AutomationServer driver;
 
     @Override
     public AppInfo info() {
@@ -75,10 +72,16 @@ final class CalculatorWiring implements Wiring {
         camera = new Camera();
     }
 
-    /** The tree. Needs the {@code Gui} and the clock, both of which exist by now, and no window. */
+    /**
+     * The tree. Needs the {@code Gui} and the clock, both of which exist by now, and no window.
+     *
+     * <p>The title bar is the framework's — chrome placement belongs to whoever owns the window, so that the
+     * screenshot instrument in it means the same thing in every window. This application places the node and
+     * supplies every colour in it, and no longer constructs it or hands it controls.
+     */
     @Override
     public void tree(Shell shell) {
-        ui = new Ui(shell.gui(), shell.krono(), model, camera);
+        ui = new Ui(shell.gui(), shell.krono(), model, camera, shell.titleBar());
         zoomShortcuts(shell.gui());
         keys(shell.gui(), model, camera, ui);
     }
@@ -99,15 +102,12 @@ final class CalculatorWiring implements Wiring {
     }
 
     /**
-     * Everything that needed the window: the chrome pointed at real controls, the geometry pipeline, the
-     * gestures, the per-frame work, and the driving socket.
+     * Everything that needed the window: the geometry pipeline, the
+     * gestures, the per-frame work, and the driving socket. The chrome is the framework's to point at controls.
      */
     @Override
     public void attach(Shell shell) {
         Gui gui = shell.gui();
-        // The window exists now; point the chrome at it. Until this line the bar has been a working bar
-        // against WindowControls.NONE -- which is also what a capture renders.
-        ui.titleBar().controls(shell.app().controls());
 
         // Auto-orbit is a flag in the Scene and a curve on the camera, and this is the one place the two meet.
         // An edge rather than a level: the spin is *started* by switching it on, and re-anchoring the curve on
@@ -145,8 +145,10 @@ final class CalculatorWiring implements Wiring {
         // before the tree is drawn, because renderInto's contract is that the image is ready when it returns.
         shell.hooks().add(FrameStage.APP, this::frame);
 
-        driver = automation(gui, shell.app());
-        shell.disposer().register(driver);
+        // The driving socket, off unless -Dautomation or --automation asks for it. Was thirty lines here,
+        // near-identically to three other applications; now it is the framework's, in a module of its own so a
+        // binary that never wants to be driven does not link a listening socket.
+        shell.disposer().register(Driver.open(shell));
     }
 
     /**
@@ -229,36 +231,4 @@ final class CalculatorWiring implements Wiring {
         gui.shortcut(Key.NUMPAD_0, gui::resetZoom, Modifier.CONTROL);
     }
 
-    /**
-     * The driving socket, when {@code -Dautomation} asks for it.
-     *
-     * <p>Off unless requested, and loopback-only when it is: this hands anyone who can reach it full control of
-     * the application's input, so it is a debugging instrument and not a service (automation.md §5). Returns
-     * {@code null} — which the framework's disposer accepts — when it is off or cannot bind, because a
-     * calculator that will not start because a debugging port was busy is a worse outcome than one nobody can
-     * drive.
-     *
-     * <p><b>Still here rather than in the framework, and that is a deliberate half-measure.</b> This method is
-     * near-identical in three applications and the scaffold, so it belongs in the framework — but absorbing it
-     * would put {@code vexelray-gui-automation} on every application's compile path, and a debugging socket
-     * linked into every native binary is the wrong trade. It wants {@code @ConditionalOnType}, which needs the
-     * processor, so it is the first thing that should become a conditional starter once that exists.
-     */
-    private static AutomationServer automation(Gui gui, GuiApp app) {
-        String want = System.getProperty("automation", "off");
-        if (want.isBlank() || want.equals("off") || want.equals("false")) {
-            return null;
-        }
-        try {
-            int port = want.equals("on") || want.equals("true")
-                    ? AutomationServer.DEFAULT_PORT
-                    : Integer.parseInt(want);
-            AutomationServer server = AutomationServer.start(new Automation(gui, app.controls()), port);
-            System.out.println("automation: localhost:" + server.port());
-            return server;
-        } catch (java.io.IOException | NumberFormatException e) {
-            System.out.println("automation unavailable (" + e.getMessage() + "); running undriven");
-            return null;
-        }
-    }
 }

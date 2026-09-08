@@ -2,7 +2,6 @@ package dev.vexelray.demo.calculator;
 
 import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.Node;
-import dev.vexelray.gui.core.WindowControls;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
 import dev.vexelray.gui.core.layout.LayoutEnums.Direction;
 import dev.vexelray.gui.core.layout.LayoutEnums.Justify;
@@ -44,12 +43,14 @@ final class Ui {
     private final Panels panels;
     private final Probe probe;
 
-    Ui(Gui gui, KronoGui krono, Model model, Panels.Viewpoint camera) {
+    Ui(Gui gui, KronoGui krono, Model model, Panels.Viewpoint camera, TitleBar titleBar) {
         this.gui = gui;
 
-        // The window's own chrome. Handed no controls yet -- the window does not exist until GuiApp is
-        // constructed, and a bar bound to a window that is not there would be a set of buttons that do nothing.
-        titleBar = new TitleBar(gui, WindowControls.NONE, "Calculator");
+        // The window's own chrome, built by the framework: chrome placement is the framework's so that its
+        // instrument strip means the same thing in every window (vexelray-gui/docs/automation.md 7). It arrives
+        // against WindowControls.NONE and is handed real ones once GuiApp exists; every colour in it is still
+        // this application's, read from the theme.
+        this.titleBar = titleBar;
 
         viewport = gui.box()
                 .width(Length.FILL).height(Length.grow(1f))
