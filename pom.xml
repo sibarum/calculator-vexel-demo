@@ -19,6 +19,7 @@
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
+        <vexelray-framework.version>0.1.0-SNAPSHOT</vexelray-framework.version>
         <vexelray-gui.version>0.1.0-SNAPSHOT</vexelray-gui.version>
         <vexelray.version>0.1.0-SNAPSHOT</vexelray.version>
         <tactroller.version>1.0-SNAPSHOT</tactroller.version>
@@ -58,6 +59,15 @@
     </properties>
 
     <dependencies>
+        <!-- The application framework: the edge this demo used to write for itself. Its -shell module
+             owns the input backend, the clipboard, window memory, the frame loop and its pacing and
+             wakes, the command line, and the ordered shutdown; what is left of this application's own
+             wiring is in CalculatorWiring. -->
+        <dependency>
+            <groupId>dev.vexelray.framework</groupId>
+            <artifactId>vexelray-framework-shell</artifactId>
+            <version>${vexelray-framework.version}</version>
+        </dependency>
         <!-- The widget shelf, and the framework core and draw modules behind it. -->
         <dependency>
             <groupId>dev.vexelray.gui</groupId>
