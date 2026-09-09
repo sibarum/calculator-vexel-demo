@@ -218,11 +218,15 @@ final class CalculatorWiring implements Wiring {
     }
 
     /**
-     * Ctrl+= / Ctrl+- / Ctrl+0. An application decision rather than the framework's: which chord zooms, or
-     * whether zooming exists at all, is not something a framework should be choosing.
+     * Ctrl+= / Ctrl+- / Ctrl+0, and the numpad's three as well.
+     *
+     * <p>An application decision rather than the framework's: which chord zooms, or whether zooming exists at
+     * all, is not something a framework should be choosing. <b>How far the zoom goes is</b>, and it no longer
+     * says so here — this method used to open with {@code gui.zoomRange(0.5f, 3f, 1.25f)}, which was the same
+     * three numbers as four other places on this stack and is now {@code Appearance.ZoomRange}, applied by the
+     * framework before the first widget. What is left below is only the part that was ever a decision.
      */
     private static void zoomShortcuts(Gui gui) {
-        gui.zoomRange(0.5f, 3f, 1.25f);
         gui.shortcut(Key.EQUAL, gui::zoomIn, Modifier.CONTROL);
         gui.shortcut(Key.MINUS, gui::zoomOut, Modifier.CONTROL);
         gui.shortcut(Key.DIGIT_0, gui::resetZoom, Modifier.CONTROL);
