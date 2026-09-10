@@ -7,7 +7,7 @@ import dev.vexelray.gui.core.style.Relief;
 import dev.vexelray.gui.core.style.Role;
 import dev.vexelray.gui.core.style.Shading;
 import dev.vexelray.gui.core.style.Theme;
-import dev.vexelray.technique.sdf.SdfScene;
+import dev.vexelray.surface.Surface;
 
 /**
  * The prototype's palette, as anchors — and the roles the framework does not already name.
@@ -130,7 +130,7 @@ final class Look {
     /**
      * A colour as the march sees it — <b>display components, passed straight through</b>.
      *
-     * <p>{@link SdfScene.Rgb} documents itself as linear, and for its <em>arithmetic</em> it is: shading
+     * <p>{@link Surface.Rgb} documents itself as linear, and for its <em>arithmetic</em> it is: shading
      * multiplies albedo by light, which is only correct in a linear space. But the composed fragment
      * <b>never encodes its result</b> — there is no OETF anywhere in {@code SdfComposer} or {@code Shadings},
      * and {@code SampledColorTarget}'s attachment is {@code R8G8B8A8_UNORM} rather than {@code _SRGB}, so
@@ -143,12 +143,12 @@ final class Look {
      * named, at the cost of shading that is not physically linear — a trade a plot can make without noticing
      * and a lit sphere could not. See {@code docs/framework-notes.md}, FN-19.
      */
-    static SdfScene.Rgb scene(Color c) {
-        return new SdfScene.Rgb(c.r(), c.g(), c.b());
+    static Surface.Rgb scene(Color c) {
+        return new Surface.Rgb(c.r(), c.g(), c.b());
     }
 
     /** {@code role}, as the march sees it. */
-    static SdfScene.Rgb scene(Role role) {
+    static Surface.Rgb scene(Role role) {
         return scene(role.of(PALETTE));
     }
 

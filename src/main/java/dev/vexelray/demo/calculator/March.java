@@ -3,6 +3,7 @@ package dev.vexelray.demo.calculator;
 import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.app.GuiApp;
 import dev.vexelray.gui.core.layout.NodeLayout;
+import dev.vexelray.shader.ClipDepth;
 import dev.vexelray.shader.ComposedShader;
 import dev.supirvast.vastir.core.ShaderStage;
 import dev.vexelray.surface.Cones;
@@ -100,6 +101,23 @@ final class March implements Motion.Eye {
      */
     private static final double FOCAL_LENGTH = 2.5;
 
+    /**
+     * The near plane of the depth this scene writes.
+     *
+     * <p>Nothing here reads that depth. The march owns its target outright — one technique, its own
+     * {@link SampledColorTarget}, no second pass rasterising into the same attachment — so the clip depth this
+     * number parameterises is written every frame and compared against never. It is a required part of a scene
+     * regardless, because a scene that <em>does</em> share an attachment must not be able to leave the
+     * convention unstated: see {@link ClipDepth}.
+     *
+     * <p>Which is why the framework default is taken as it comes rather than tuned to a plot's scale. The
+     * hyperbolic curve spends its precision near the eye and this scene is a two-unit box seen from seven
+     * units away, so a larger near plane would genuinely suit it — but it would be buying precision in a
+     * buffer nothing reads, and would then need explaining to everyone who came looking for the second
+     * technique that justified it.
+     */
+    private static final double NEAR_PLANE = ClipDepth.DEFAULT.near();
+
     private final SampledColorTarget target;
     private final StorageBuffer cones;
     /**
@@ -126,7 +144,7 @@ final class March implements Motion.Eye {
     private volatile SdfScene scene;
     private volatile ParamBlock params;
 
-    private final SdfScene.Rgb sky;
+    private final Surface.Rgb sky;
 
     /** Set by the worker when new geometry is ready; taken by the frame loop. */
     private volatile float[] pending;
@@ -194,7 +212,8 @@ final class March implements Motion.Eye {
                 // to be if it is going to stand for the whole of it.
                 Look.scene(ramp.at(0.6)),
                 sky,
-                FOCAL_LENGTH);
+                FOCAL_LENGTH,
+                NEAR_PLANE);
 
         List<ComposedShader> composed = ConeField.compose(scene);
         ComposedShader vertex = stage(composed, ShaderStage.VERTEX);
