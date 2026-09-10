@@ -88,11 +88,13 @@ final class CalculatorWiring extends Wiring {
     }
 
     /**
-     * The rail, for the one caller that builds this wiring without running it.
+     * The rail, for a caller that builds this wiring without running it.
      *
-     * <p>{@link Capture} photographs a named panel open, which means reaching past the tree into the thing that
-     * opens one. Exposed rather than duplicated: a capture that assembled its own {@code Ui} to get at a rail
-     * would be photographing a second application, which is what it used to do.
+     * <p><b>That caller is now a test.</b> This was exposed for the retired capture, which opened a named
+     * panel before photographing it and would otherwise have had to assemble its own {@code Ui} to reach the
+     * rail — that is, to photograph a second application. The reason survives the caller: reaching the real
+     * rail through the real wiring is the only way to assert on it without building a parallel tree, and
+     * {@code WiringTreeTest} does exactly that with the panel names a driving script has to use.
      *
      * <p>Null before {@link #tree}, which is the only honest answer — there is no rail until the tree is built.
      */

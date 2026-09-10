@@ -4,8 +4,6 @@ import dev.vexelray.canvas.Color;
 import dev.vexelray.framework.shell.VexelApplication;
 import dev.vexelray.gui.core.style.Role;
 
-import java.io.IOException;
-
 /**
  * The plot viewport: type an expression, look at it.
  *
@@ -18,8 +16,17 @@ import java.io.IOException;
  * <pre>
  * Calculator                      the window, interactively
  * Calculator &lt;frames&gt;             run a fixed number of frames and quit (a script, not a session)
- * Calculator --capture &lt;scene&gt; [out.png]   headless PNG; see {@link Capture}
+ * Calculator --automation=on      the window, driveable over the socket
  * </pre>
+ *
+ * <p><b>There was a {@code --capture} and it is gone.</b> It rendered the tree to a PNG with no window, and
+ * for this application that picture was a lie: {@code GuiApp.capture} builds its own device, a
+ * {@code SampledColorTarget} belongs to the application's, and so the marched plot -- the thing this window is
+ * for -- photographed as the framework's placeholder while the chrome around it came out perfect. The
+ * framework removed its own {@code RunMode.CAPTURE} for that reason and this was the last copy on the stack.
+ * A still now comes from the running window, on the application's own device, either by hand from the title
+ * bar's screenshot instrument or through the automation socket's {@code shot}. See
+ * {@code vexelray-gui/docs/automation-cli.md}.
  *
  * <p>Needs {@code --enable-native-access=ALL-UNNAMED}.
  */
@@ -36,31 +43,31 @@ public final class Calculator {
      * The smallest this UI is still coherent at, in root ems — a floor, not the design size. Below it the rail
      * plus a 284px panel leaves nothing for the plot, which is the thing the window is for.
      *
-     * <p>Named here rather than written at each use because it is read from two places that must agree:
-     * {@link CalculatorWiring#config} declares it to the framework, and {@link Capture} photographs the tree at
-     * exactly it. Two literals would be a picture of a minimum the application does not have.
+     * <p>Named here rather than written at each use because it is read from more than one place and they must
+     * agree: {@link CalculatorWiring#config} declares it to the framework, and anything photographing the tree
+     * at exactly its minimum has to ask for the same number. Two literals would be a picture of a minimum the
+     * application does not have.
+     *
+     * <p><b>Nothing photographs it today</b>, and that is a gap rather than a decision -- the retired capture
+     * had a {@code smallest} scene and the automation socket has no {@code resize} verb to replace it. It is
+     * recorded as V2 in {@code vexelray-gui/docs/automation-cli.md}; this constant is what that verb will need
+     * to be handed. The last two defects at minimum size were both clipped bottom rows found by looking at
+     * that picture.
      */
     static final float MIN_W_EM = 46;
     static final float MIN_H_EM = 30;
 
     /**
-     * Entry point.
+     * Entry point, and <b>nothing but</b> one.
      *
-     * <p>{@code --capture} is handled before the framework sees the arguments, and that is not an oversight.
-     * The framework has a capture mode of its own -- one frame, one file, no window, no input backend -- but
-     * {@link Capture} is a richer, application-specific instrument: a zoom ladder, every rail panel, the tree
-     * at exactly {@code minSize}, each on a tree deliberately built with a camera that goes nowhere. Routing
-     * {@code --capture zoom} through the framework would read {@code zoom} as an output filename. Generalising
-     * the framework's capture to cover this is an open question; pretending it already does would break a
-     * documented tool.
+     * <p>This method used to pick {@code --capture} out of {@code args} ahead of the framework, because a
+     * scene name is not an output filename and {@code Launch} would have read it as one. With that instrument
+     * retired there is no argument this application understands better than the framework does, so there is no
+     * pre-parse left: {@code Launch} owns the whole command line, including {@code --automation} and
+     * {@code --profile}, and an unrecognised flag gets its usage message rather than a stack trace.
      */
-    public static void main(String[] args) throws IOException {
-        String[] cleaned = java.util.Arrays.stream(args).filter(s -> !s.isBlank()).toArray(String[]::new);
-        if (cleaned.length >= 1 && cleaned[0].equals("--capture")) {
-            Capture.run(cleaned);
-            return;
-        }
-        VexelApplication.run(new CalculatorWiring(), cleaned);
+    public static void main(String[] args) {
+        VexelApplication.run(new CalculatorWiring(), args);
     }
 
     /** The clear colour behind the tree: the same role the root paints, so the frame is never a second opinion. */

@@ -208,6 +208,10 @@ rather than with the switch column.
 cost 8 dp under the bottom row, which the window then had to find at its minimum size, and the
 minimum-size capture is what caught it.
 
+⚠ **That capture no longer exists** — retired with the rest of `--capture` (FN-14). Nothing photographs the
+minimum size today, so this class of defect is currently uncaught; a `resize` verb on the automation socket is
+what would restore it (V2 in `vexelray-gui/docs/automation-cli.md`).
+
 **Workaround:** a spacer child, or `margin` on the inner node, or an outer box. All three work; all three are
 noise at the call site.
 
@@ -303,6 +307,18 @@ the one thing this application is *about* has no CI-shaped proof.
 `WindowControls.capture` already almost is (it photographs the window, so it captures the viewport correctly;
 what it needs is to work without the window being mapped). Worth noting that `HarnessApp` creates real windows
 and never shows them, so most of that machinery exists.
+
+**Resolved, 2026-09-10, by deletion rather than by fix.** The framework removed its own `RunMode.CAPTURE` on
+this reasoning and pointed at `WindowInstrument.screenshot()`; this application has now removed the last copy
+on the stack (`Capture.java`, the `--capture` pre-dispatch, the scene ladder). The split this note calls a cost
+is gone because one half of it is gone: every still comes from the running window on the application's own
+device.
+
+The *ask* above is unwithdrawn and still the right one — an instance-scoped capture that works unmapped is what
+would give the marched plot a CI-shaped proof, and nothing here provides that yet. What actually replaced the
+chrome half is thinner than it should be: the socket has no `zoom` or `resize` verb, so the em ladder and the
+minimum-size still (FN-11's catch) cannot be taken at all today. Tracked as V1/V2 in
+`vexelray-gui/docs/automation-cli.md`.
 
 ---
 

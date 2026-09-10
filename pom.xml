@@ -29,8 +29,11 @@
 
         <!--
           Program args for exec:exec, split on whitespace by the commandlineArgs form below. Empty is the
-          interactive run; a multi-word value is several arguments rather than one, which is what lets
-          "-Dapp.args=capture panels out.png" mean what it says.
+          interactive run; a multi-word value is several arguments rather than one, which is what lets a run
+          pass a frame count and a framework flag together rather than as one nonsense token.
+
+          (No example here spells a framework flag out: a literal double dash cannot appear inside an XML
+          comment, and writing one here is how this pom has been made non-parseable before.)
         -->
         <app.args></app.args>
 
@@ -163,9 +166,9 @@
 
               One command line split on whitespace, rather than a list of argument elements. An argument
               element is exactly one token and a property cannot expand into several, so a multi-word
-              app.args would arrive as a single argument and every documented capture form would be
-              unrunnable as written. %classpath is substituted after the split, so it stays one argument
-              even where a path contains a space.
+              app.args would arrive as a single argument and any two-argument run would be unrunnable as
+              written. %classpath is substituted after the split, so it stays one argument even where a path
+              contains a space.
             -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>

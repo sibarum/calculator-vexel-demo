@@ -695,16 +695,25 @@ around that:
    question no unit test can ask: *after this gesture, does a frame arrive on its own?* Needs a GPU, so local
    rather than CI.
 
-**Visual record**, split by what each medium can actually show:
+**Visual record.** One medium, since the split below collapsed: `shot` over the automation socket, against the
+real window on the application's own device.
 
-| | Medium | Shows |
-|---|---|---|
-| `panel-<name>` × 6, `bar`, `smallest`, `zoom-<n>` ladder | `GuiApp.capture` | all the chrome — and the viewport as a placeholder, which is expected and must be stated in the file name so nobody reads it as a broken plot |
-| `plot-<scene>` | `shot` over the automation socket, on the real window | the marched picture |
+**The `--capture` half is retired.** It photographed the chrome perfectly and the viewport as a placeholder
+(FN-14), which is a picture *correct about the chrome and silently wrong about the content* — and the framework
+had already deleted its own `RunMode.CAPTURE` for that reason, leaving this application the last copy on the
+stack. `Capture.java`, its `--capture` pre-dispatch and its scene ladder are gone; `WiringTreeTest` is what
+survived, because its assertions were about the tree rather than the photograph.
 
-The `smallest` capture earns its keep: *photograph the minimum, not just the ordinary size*, because a minimum
-chosen by eye stops being right the first time a row is added. The zoom ladder is the em check — every step
-should be the previous one scaled, and anything holding its pixel size is still pinned to the device grid.
+> ⚠ **Two checks lapsed with it, and are not yet replaced.** The socket has no `zoom` verb and no `resize`
+> verb, so neither the em ladder nor the minimum-size still can be taken today:
+>
+> - **`smallest`** — *photograph the minimum, not just the ordinary size*, because a minimum chosen by eye
+>   stops being right the first time a row is added. It caught a clipped bottom key row twice.
+> - **the `zoom-<n>` ladder** — the em check: every step should be the previous one scaled, and anything
+>   holding its pixel size is still pinned to the device grid.
+>
+> Both are tracked as V1/V2 in `vexelray-gui/docs/automation-cli.md`. Until they land, a change to a minimum
+> size or to anything length-bearing has no picture to fail.
 
 > ⚠ **Always `mvn clean test`, never `mvn test`, when checking that a new test catches the bug it was written
 > for.** Incremental compilation in this toolchain does not reliably pick up a main-source edit, which produces
@@ -716,7 +725,7 @@ should be the previous one scaled, and anything holding its pixel size is still 
 
 ```bash
 mvn compile exec:exec                                  # windowed
-mvn compile exec:exec "-Dapp.args=--capture panels"    # headless PNG (chrome only)
+mvn compile exec:exec -Dautomation=on                  # windowed + driving socket on :7654
 mvn -Pprofiler compile exec:exec                       # + probe=all, csv
 printf 'find expr\ntype sin(x)\nkey ENTER\nsettle\nshot plot.png\nquit\n' | nc localhost 7654
 ```
@@ -724,6 +733,12 @@ printf 'find expr\ntype sin(x)\nkey ENTER\nsettle\nshot plot.png\nquit\n' | nc l
 > ⚠ `app.args` is split on whitespace only with the `commandlineArgs` pom form (as in `vexelray-gui-demo`); the
 > older argument-element form makes a multi-word value one token. And a Unicode `−`, `÷` or `π` in
 > `-Dapp.args` is mangled by the console codepage before it reaches `main` — pass ASCII, or hardcode the case.
+
+> ⚠ **`nc` is not on the Windows dev box, and no client for the socket ships yet** — the last line above is the
+> protocol's documentation, not a command that runs here. Until the client of
+> `vexelray-gui/docs/automation-cli.md` lands, driving the app means a hand-rolled socket client (a PowerShell
+> `TcpClient` works: read replies until a line containing only `.`, and note the port `Driver` prints on
+> startup).
 
 ---
 
