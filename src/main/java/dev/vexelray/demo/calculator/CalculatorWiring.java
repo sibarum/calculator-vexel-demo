@@ -53,7 +53,8 @@ final class CalculatorWiring extends Wiring {
      */
     @Override
     public void config(Shell shell) {
-        shell.appearance(Appearance.of(Look.THEME, Length.em(46), Length.em(30)));
+        shell.appearance(Appearance.of(Look.THEME,
+                Length.em(Calculator.MIN_W_EM), Length.em(Calculator.MIN_H_EM)));
     }
 
     /**
@@ -84,6 +85,19 @@ final class CalculatorWiring extends Wiring {
         ui = new Ui(shell.gui(), shell.krono(), model, camera, shell.titleBar());
         zoomShortcuts(shell.gui());
         keys(shell.gui(), model, camera, ui);
+    }
+
+    /**
+     * The rail, for the one caller that builds this wiring without running it.
+     *
+     * <p>{@link Capture} photographs a named panel open, which means reaching past the tree into the thing that
+     * opens one. Exposed rather than duplicated: a capture that assembled its own {@code Ui} to get at a rail
+     * would be photographing a second application, which is what it used to do.
+     *
+     * <p>Null before {@link #tree}, which is the only honest answer — there is no rail until the tree is built.
+     */
+    Panels panels() {
+        return ui == null ? null : ui.panels();
     }
 
     /**

@@ -33,6 +33,17 @@ public final class Calculator {
     static final int H = 720;
 
     /**
+     * The smallest this UI is still coherent at, in root ems — a floor, not the design size. Below it the rail
+     * plus a 284px panel leaves nothing for the plot, which is the thing the window is for.
+     *
+     * <p>Named here rather than written at each use because it is read from two places that must agree:
+     * {@link CalculatorWiring#config} declares it to the framework, and {@link Capture} photographs the tree at
+     * exactly it. Two literals would be a picture of a minimum the application does not have.
+     */
+    static final float MIN_W_EM = 46;
+    static final float MIN_H_EM = 30;
+
+    /**
      * Entry point.
      *
      * <p>{@code --capture} is handled before the framework sees the arguments, and that is not an oversight.

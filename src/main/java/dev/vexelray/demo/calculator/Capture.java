@@ -1,17 +1,39 @@
 package dev.vexelray.demo.calculator;
 
 import dev.vexelray.canvas.Color;
+import dev.vexelray.framework.shell.Shell;
+import dev.vexelray.framework.shell.VexelApplication;
 import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.app.GuiApp;
-import dev.vexelray.gui.core.layout.Length;
-import dev.vexelray.gui.core.WindowControls;
-import dev.vexelray.gui.krono.KronoGui;
-import dev.vexelray.gui.widget.TitleBar;
+import dev.vexelray.gui.core.style.Role;
 
 import java.io.IOException;
 
 /**
  * Headless PNGs of the chrome.
+ *
+ * <h2>The real tree, through the real wiring</h2>
+ *
+ * <p>Every scene here builds this application by calling {@link VexelApplication#tree}, which runs
+ * {@code CONFIG} through {@code TREE} and stops — no window, no input backend and no window memory, so nothing
+ * reached from here can write a placement. <b>This class used to build its own.</b> It did {@code new Gui()},
+ * {@code gui.theme(Look.THEME)}, {@code gui.minSize(46em, 30em)} and its own {@code TitleBar} against
+ * {@code WindowControls.NONE} — a second copy of what {@link CalculatorWiring#config} says, and exactly the
+ * hazard {@code VexelApplication.toTree} records from the text editor: <i>"a capture that built its tree by a
+ * second route would be a capture of a different application."</i>
+ *
+ * <p>Nothing was visibly wrong with the pictures, and that is the point rather than a reason not to have fixed
+ * it. What the second route left out was the <b>zoom range</b>: the framework applies
+ * {@code Appearance.ZoomRange} before the first widget, and a {@code Gui} built by hand keeps the library
+ * default of {@code [0.25, 4]} instead of this application's {@code [0.5, 3]}. The ladder below fits inside
+ * both, so today the two agree by coincidence. Narrow the application's range and the old code would have gone
+ * on photographing zoom levels the application clamps away — a picture of a state no user can reach, with
+ * nothing failing.
+ *
+ * <p>The clock is attached and never ticked, which is what a still picture wants: every animation sits at its
+ * start value rather than somewhere arbitrary. The camera seam is the wiring's own
+ * {@link CalculatorWiring.Camera}, which is already a no-op until {@code WINDOW} binds a {@code Motion} to it —
+ * so the headless path needs no stand-in of its own, and the one that used to be here is gone.
  *
  * <h2>What a capture can and cannot show, which is not a choice</h2>
  *
@@ -40,16 +62,22 @@ final class Capture {
     private static final int H = Calculator.H;
 
     /**
+     * What the wiring is handed. Nothing: a still frame has nothing a setting override could change, and this
+     * application's flags all describe a session.
+     */
+    private static final String[] NO_ARGS = new String[0];
+
+    /**
      * Zoom levels the {@code zoom} scene walks.
      *
      * <p>Every length in this UI resolves through zoom, so each file should be the previous one scaled. Anything
      * that holds its pixel size while the rest grow is still pinned to the device grid, which is the one thing
      * {@code Length} exists to prevent and the one thing a still picture can prove.
+     *
+     * <p>Clamped by the application's own {@code Appearance.ZoomRange} now that the tree comes from the wiring,
+     * so a step outside it photographs the edge of the range rather than a level the application would refuse.
      */
     private static final float[] ZOOM_STEPS = {0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 3f};
-
-    /** The rail of the tree most recently built, so a scene can open one of its panels. */
-    private static Panels panels;
 
     static void run(String[] args) throws IOException {
         String scene = args.length >= 2 ? args[1] : "default";
@@ -59,31 +87,25 @@ final class Capture {
             case "zoom" -> zoomLadder();
             case "smallest" -> smallest(out);
             case "panels" -> everyPanel();
-            default -> one(scene, out == null ? "chrome-" + scene + ".png" : out, scene);
+            default -> one(out == null ? "chrome-" + scene + ".png" : out, scene);
         }
     }
 
     /** One picture of the tree at the design size, with {@code panel} showing if it names one. */
-    private static void one(String scene, String out, String panel) throws IOException {
-        Gui gui = build();
-        open(panel);
-        Color page = Calculator.page();
-        GuiApp.capture(gui, W, H, page.r(), page.g(), page.b(), out);
-        System.out.println("captured " + out);
-        gui.close();
+    private static void one(String out, String panel) throws IOException {
+        on((shell, wiring) -> {
+            // A key naming no panel shuts it, which is Rail's documented answer and what makes an unrecognised
+            // scene name a plain capture rather than an error.
+            wiring.panels().rail().select(panel);
+            shoot(shell, W, H, out);
+            System.out.println("captured " + out);
+        });
     }
 
     /** Every panel, one file each -- the visual record of the whole rail in one run. */
     private static void everyPanel() throws IOException {
         for (String key : new String[]{"layers", "domain", "crop", "color", "sample", "view", "help"}) {
-            one(key, "chrome-panel-" + key + ".png", key);
-        }
-    }
-
-    /** Select a rail panel, if the name is one. An unknown name is a plain capture rather than an error. */
-    private static void open(String key) {
-        if (panels != null) {
-            panels.rail().select(key);
+            one("chrome-panel-" + key + ".png", key);
         }
     }
 
@@ -95,62 +117,64 @@ final class Capture {
      * failure is a clipped bottom row in a window nobody thought to open that small.
      */
     private static void smallest(String out) throws IOException {
-        Gui gui = build();
-        // Resolved against the same root em the layout uses, so this is the minimum the application actually
-        // declared rather than a number repeated here and left to drift.
-        int w = Math.round(46 * gui.rootEmPx());
-        int h = Math.round(30 * gui.rootEmPx());
-        Color page = Calculator.page();
-        GuiApp.capture(gui, w, h, page.r(), page.g(), page.b(), out == null ? "chrome-smallest.png" : out);
-        System.out.println("captured the minimum, " + w + "x" + h);
-        gui.close();
+        on((shell, wiring) -> {
+            // Resolved against the same root em the layout uses, from the same two numbers the wiring declares
+            // to the framework -- so this is the minimum the application actually has rather than a third copy
+            // of it. See Calculator.MIN_W_EM.
+            float em = shell.gui().rootEmPx();
+            int w = Math.round(Calculator.MIN_W_EM * em);
+            int h = Math.round(Calculator.MIN_H_EM * em);
+            shoot(shell, w, h, out == null ? "chrome-smallest.png" : out);
+            System.out.println("captured the minimum, " + w + "x" + h);
+        });
     }
 
     /** One run, the same tree at each step of the ladder: the em check, as a strip of images. */
     private static void zoomLadder() throws IOException {
-        Gui gui = build();
-        Color page = Calculator.page();
-        for (float z : ZOOM_STEPS) {
-            gui.zoom(z);
-            GuiApp.capture(gui, W, H, page.r(), page.g(), page.b(), "chrome-zoom-" + z + "x.png");
-        }
-        System.out.println("captured " + ZOOM_STEPS.length + " zoom levels");
-        gui.close();
+        on((shell, wiring) -> {
+            for (float z : ZOOM_STEPS) {
+                shell.gui().zoom(z);
+                shoot(shell, W, H, "chrome-zoom-" + z + "x.png");
+            }
+            System.out.println("captured " + ZOOM_STEPS.length + " zoom levels");
+        });
     }
 
     /**
-     * The same tree the windowed run builds, on the same code path.
+     * Photograph {@code shell}'s tree at {@code w} by {@code h}.
      *
-     * <p>A capture that assembled its own approximation of the UI would photograph something nobody ships. The
-     * clock is attached and never ticked, which is exactly what a still picture wants: every animation sits at
-     * its start value rather than somewhere arbitrary.
+     * <p>The clear colour is read off the theme the framework applied rather than from a second reading of
+     * {@code Look}: the editor's port records what two spellings of one colour cost, and one of them is always
+     * the one that stops being right.
      */
-    private static Gui build() {
-        Gui gui = new Gui();
-        gui.theme(Look.THEME);
-        gui.minSize(Length.em(46), Length.em(30));
-        KronoGui krono = KronoGui.attach(gui);
-        // A capture drives no camera, so the presets go nowhere -- which is right: a still picture of a panel
-        // should not depend on a renderer that a headless run does not have (FN-14).
-        // A bar against NONE, which is what a headless still has always rendered: there is no window here for
-        // real controls to command, and the framework is not running to hand any down.
-        Ui ui = new Ui(gui, krono, new Model(), NO_CAMERA,
-                new TitleBar(gui, WindowControls.NONE, "Calculator"));
-        panels = ui.panels();
-        return gui;
+    private static void shoot(Shell shell, int w, int h, String out) throws IOException {
+        Gui gui = shell.gui();
+        Color page = gui.theme().color(Role.PAGE);
+        GuiApp.capture(gui, w, h, page.r(), page.g(), page.b(), out);
     }
 
-    /** A camera that goes nowhere, for the headless path. */
-    private static final Panels.Viewpoint NO_CAMERA = new Panels.Viewpoint() {
-
-        @Override
-        public void look(double yawDegrees, double pitchDegrees) {
+    /**
+     * Build this application as far as its tree, hand it to {@code shot}, and close it.
+     *
+     * <p>The caller owns the shutdown because {@code VexelApplication.tree} hands a {@code Shell} back rather
+     * than doing it — a capture decides when it has finished with the tree, and this one photographs it seven
+     * times over.
+     */
+    private static void on(Shot shot) throws IOException {
+        CalculatorWiring wiring = new CalculatorWiring();
+        Shell shell = VexelApplication.tree(wiring, NO_ARGS);
+        try {
+            shot.take(shell, wiring);
+        } finally {
+            shell.disposer().close();
         }
+    }
 
-        @Override
-        public void reset() {
-        }
-    };
+    /** One scene, against a tree that exists for the length of the call. */
+    private interface Shot {
+
+        void take(Shell shell, CalculatorWiring wiring) throws IOException;
+    }
 
     private Capture() {
     }
