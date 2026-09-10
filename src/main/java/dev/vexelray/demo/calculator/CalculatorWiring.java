@@ -27,7 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * component belongs to is decided by what it needs — which is exactly the inference the processor will do from
  * constructor parameters.
  */
-final class CalculatorWiring implements Wiring {
+final class CalculatorWiring extends Wiring {
 
     private static final AppInfo INFO =
             new AppInfo(Calculator.APP, "Calculator", Calculator.W, Calculator.H);
