@@ -70,7 +70,10 @@ final class Geometry {
      */
 
     /** An axis is thinner than the curve and thicker than the grid, which is the whole of its visual job. */
-    private static final double AXIS_RADIUS = 0.014;
+    // Package-visible rather than private, and the three below with it, because Lighting shades on where the
+    // furniture is and has to use the same numbers that put it there. Two copies would be a shading model
+    // describing a scene this class had since changed.
+    static final double AXIS_RADIUS = 0.014;
 
     /**
      * A grid line.
@@ -80,10 +83,10 @@ final class Geometry {
      * that is found by the <em>threshold</em> rather than by its own surface and stops getting thinner. Grid
      * lines are separated from axes by colour instead, which is what the prototype does anyway.
      */
-    private static final double GRID_RADIUS = 0.008;
+    static final double GRID_RADIUS = 0.008;
 
     /** How far a tick sticks out from its axis. */
-    private static final double TICK = 0.06;
+    static final double TICK = 0.06;
 
     /** Half the length of one arm of the marker that shows where a single value lands. */
     private static final double MARKER_ARM = 0.1;

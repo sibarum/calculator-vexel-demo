@@ -117,6 +117,21 @@ final class March implements Motion.Eye {
      */
     private static final int STILL_GRAIN = 256;
 
+    /**
+     * Whether the plot's targets carry depth.
+     *
+     * <p>True, and it is what lets more than one technique draw the same scene: the march tests and writes a
+     * shared depth attachment, so anything composited beside it occludes and is occluded <em>per pixel</em>
+     * rather than by which of them recorded last. The march alone would not need it — a fullscreen effect has
+     * nothing to be occluded by, and {@link ConeFieldTechnique} declares {@code Depth.NONE} when it is not
+     * offered one — so this is the grid's attachment as much as the curve's.
+     *
+     * <p>Named rather than written twice, because the draft and the still must agree: a technique is realised
+     * against whichever target it was given, and one pass interleaving while the other composites by order is
+     * two different pictures of one scene.
+     */
+    private static final boolean DEPTH = true;
+
     /** The probe spans the two passes are measured as. Constants, because a lane's tallies key on the name. */
     private static final String DRAFT_SPAN = "plot.march";
     private static final String STILL_SPAN = "plot.march.still";
@@ -328,7 +343,7 @@ final class March implements Motion.Eye {
         // compose() is what produces one. The pipeline itself is not built here at all -- the host realises on
         // the first render, which is on the frame thread where GPU work belongs.
         compose(Ramp.BLURPLE);
-        draft = pass(app.viewport(MARCH_W, MARCH_H));
+        draft = pass(app.viewport(MARCH_W, MARCH_H, DEPTH));
         showing = draft;
     }
 
@@ -380,7 +395,9 @@ final class March implements Motion.Eye {
     private void compose(Ramp ramp) {
         SdfScene scene = new SdfScene(
                 new Surface.Sphere(0, 0, 0, 1),      // never compiled; ConeField replaces the field
-                dev.vexelray.shader.Shadings.defaultKeyLight(),
+                // Not the framework's key light on its own: the curve gets it and the furniture does not, which
+                // is one scene wanting two materials and FN-21's whole complaint. See Lighting.
+                new Lighting(),
                 new MarchSettings(MARCH_STEPS, MarchSettings.DEFAULT.maxStep(), FAR_PLANE,
                         MarchSettings.DEFAULT.hitEpsilon(), MarchSettings.DEFAULT.hitEpsilonSlope(),
                         MarchSettings.DEFAULT.normalEpsilon(), MarchSettings.DEFAULT.normalEpsilonSlope()),
@@ -690,7 +707,7 @@ final class March implements Motion.Eye {
         if (held != null && fits(held.target, w, h)) {
             return held;
         }
-        Pass minted = pass(app.viewport(w, h));
+        Pass minted = pass(app.viewport(w, h, DEPTH));
         if (held != null) {
             // The superseded pass's pipeline is closed, which the hand-written version could not safely do:
             // there was no fence on this side to know a frame had finished with it, so it leaked deliberately
