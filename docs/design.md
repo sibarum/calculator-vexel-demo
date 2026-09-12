@@ -689,12 +689,14 @@ tomorrow. All of them live in `Landmarks.java`:
 `await <landmark> <text>` is how a script waits for readiness, with no application-specific hook: readiness is
 declared by writing it into a landmark's accessible name.
 
-> ⚠ **The expression field is not wired to anything.** `TextField.onSubmit` is never called and nothing in the
-> application calls `Model.submit`, so typing an expression and pressing Enter edits the field and changes
-> neither the plot nor the reading — the algebra is reached only through `Scene.initial()`. This predates the
-> engine landing (it was equally unwired behind `Canned`) and is the reason `AutomationDrivingTest` drives the
-> rail and the shortcuts but not the field. It is one line to wire, plus a decision about what the bar should
-> do with the result while the repaint listener still lives in `attach`.
+> ⚠ **`settle` cannot see a commit, and a script that uses it will read the old scene.** This is not a defect
+> in `settle` — `automation.md` says it is exact about the frame loop and blind to application work still in
+> flight — it is a fact about *this* application: `Model.submit` resamples the whole curve on a worker, so at
+> the instant `settle` asks, the loop is owed nothing and it answers `ok` immediately. Driving `type 2+2`,
+> `key ENTER`, `settle`, `find mode` therefore reports `CURVE`, the mode from *before* the entry, and looks
+> exactly like a field that is not wired. Wait on **`await mode POINT`** instead: the badge is named the mode
+> precisely so that the application can say when it has finished thinking. Cost an hour of chasing a bug that
+> was not there.
 
 > **One thing to remember, or every command will answer `ok` and nothing will happen:** a render-on-demand loop
 > has three reasons to wake and injected input is none of them. `Gui.wakeForInput()` exists for exactly this

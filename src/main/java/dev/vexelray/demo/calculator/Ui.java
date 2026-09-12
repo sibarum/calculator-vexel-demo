@@ -89,6 +89,16 @@ final class Ui {
         gui.root().direction(Direction.COLUMN).background(gui.theme().color(Role.PAGE))
                 .children(titleBar.node(), viewport);
 
+        // Enter commits the expression. Everything downstream is already a consequence of the Scene changing:
+        // Model.submit settles the entry and its reading in one version, and the listener in
+        // CalculatorWiring.attach rebuilds the geometry and rewrites the bar from that one value. So this is
+        // the whole of the connection, and there is deliberately no second path that edits the plot directly.
+        //
+        // On Enter rather than on every keystroke: a half-typed expression is usually unreadable, and a plot
+        // that refused its way through "0", "0^", "0^x" as somebody typed would be reporting errors about
+        // nothing. Model.submit is also a full resample, which is not per-keystroke work.
+        bar.field().onSubmit(model::submit);
+
         bar.show(model.scene().reading());
         readout.show(Math.toRadians(38), Math.toRadians(26), 1.0, 0);
     }

@@ -41,13 +41,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * are therefore on {@link Model}, which is where the keystroke's effect actually lands; asserting on the
  * subtitle instead would be asserting that nothing happened, and would pass whether or not the key was wired.
  *
- * <h2>The expression field is not driven here, and that is not an oversight</h2>
+ * <h2>The expression field, and what it caught</h2>
  *
- * <p><b>Nothing in the application calls {@code Model.submit}.</b> {@code TextField.onSubmit} is never wired, so
- * typing an expression and pressing Enter changes the field and nothing else — the engine is reached only
- * through {@code Scene.initial()}. A test that typed into the field could only asserted that the field's own
- * text changed, which is the widget's behaviour and not this application's. When the field is wired, the test
- * to add here is {@code type}/{@code key ENTER} and then the reading on the {@link Model}.
+ * <p>These were written while {@code TextField.onSubmit} was unwired — nothing in the application called
+ * {@code Model.submit}, so Enter edited the field and changed nothing. That is now connected in {@code Ui}, and
+ * the two tests that type into the field are the ones that would have failed the whole time it was not: both go
+ * red with that one line removed, reporting the entry still sitting at {@code 0^x}.
+ *
+ * <p>Clearing the field is End and then Backspace rather than Ctrl+A, because the {@code key} verb takes one
+ * key and no chord. Reaching past the driver to set the text directly would not exercise the path that was
+ * broken, which is the whole point of driving it.
  */
 final class AutomationDrivingTest {
 
@@ -116,6 +119,25 @@ final class AutomationDrivingTest {
             String out = automation.command(command);
             assertTrue(out.startsWith("ok"), command + " -> " + out);
             return out;
+        }
+
+        /**
+         * Put {@code entry} in the expression field and commit it, the way a person with no mouse would.
+         *
+         * <p>End, then Backspace to the start, then the new text. <b>Not Ctrl+A</b>: the {@code key} verb takes
+         * one key and no chord ({@code Key.valueOf} of the word), so a select-all is not expressible over this
+         * surface — and rather than reach past the driver to clear the field directly, this does what the
+         * driver can actually do. A test that set the text through the widget would not be exercising the path
+         * that was broken.
+         */
+        void clearFieldAndType(String entry) {
+            run("click " + Landmarks.EXPR);
+            run("key END");
+            for (int i = 0; i < 64; i++) {
+                run("key BACKSPACE");
+            }
+            run("type " + entry);
+            run("key ENTER");
         }
 
         /**
@@ -269,6 +291,47 @@ final class AutomationDrivingTest {
 
             d.run("key C");
             assertTrue(d.await(() -> model.scene().cropping()), "C should have turned crop mode on");
+        });
+    }
+
+    /**
+     * The expression field, typed into and committed the way a person does it.
+     *
+     * <p>This is the path that was dead: {@code TextField.onSubmit} was never wired, so Enter edited the field
+     * and changed nothing. Everything downstream is a consequence of the {@link Scene} changing, so the scene
+     * is what this asserts on — and at {@code Phase.TREE} it is also all there is, per the class note.
+     */
+    @Test
+    @DisplayName("typing an expression and pressing Enter commits it")
+    void typingAnExpressionCommitsIt(@TempDir Path home) {
+        driving(home, d -> {
+            Model model = d.wiring().model();
+            assertEquals(Algebra.DEFAULT_EXPRESSION, model.scene().expression(), "the premise");
+
+            d.clearFieldAndType("2+2");
+
+            assertTrue(d.await(() -> "2+2".equals(model.scene().expression())),
+                    "Enter should have committed the entry, not left it in the field: "
+                            + model.scene().expression());
+        });
+    }
+
+    /**
+     * And the reading is settled in the same version as the entry, so nothing downstream can read one without
+     * the other. {@code 2+2} has no free names, so committing it turns a curve into a placed point.
+     */
+    @Test
+    @DisplayName("a committed expression brings its reading with it")
+    void aCommittedExpressionBringsItsReading(@TempDir Path home) {
+        driving(home, d -> {
+            Model model = d.wiring().model();
+            assertEquals(Algebra.Mode.CURVE, model.scene().reading().mode(), "the premise: 0^x is a curve");
+
+            d.clearFieldAndType("2+2");
+
+            assertTrue(d.await(() -> model.scene().reading().mode() == Algebra.Mode.POINT),
+                    "a closed expression should read as a point, not " + model.scene().reading().mode());
+            assertEquals("4", model.scene().reading().answer(), "and the engine should have answered it");
         });
     }
 
