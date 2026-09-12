@@ -316,9 +316,12 @@ What the application can do about it, in order:
 1. **March only when something changed.** Render-on-demand already parks a still window; a still *plot* under a
    still camera needs no march either. This makes the cost zero at rest and a per-frame cost only while
    orbiting — which is the case that matters, so it is a mitigation and not a fix.
-2. **Size the target for the march, not for the window.** The target has fixed pixels and the sampler upscales,
-   so a 960×600 march in a 1400×900 viewport is a legitimate quality knob rather than a compromise — and the
-   prototype already exposes the control for it (Sampling → Grid).
+2. **Size the target for the march, not for the window** — while the picture is moving. The target has fixed
+   pixels and the sampler upscales, so a 640×400 march in a 1180×688 viewport is a legitimate quality knob
+   rather than a compromise, for as long as the hand is on it. It stops being one the moment the hand comes
+   off: a still picture is looked at rather than steered, and the grid's thin lines are where the upscale shows.
+   Hence the second pass in §7.6, which pays the full-size march once per gesture instead of sixty times a
+   second.
 3. **Spend the `MarchSettings.steps` budget deliberately** — the default 128 is Fathom's, tuned for a dungeon,
    not for a curve in an empty box.
 
@@ -544,17 +547,26 @@ Three things this seam does not do, each of them deliberate:
 **A picture of a different expression than the one in the field is still the one outcome this must never
 produce.** Nothing falls back to a reference scene: what cannot be drawn is not drawn, and the refusal says why.
 
-### 7.6 Resize
+### 7.6 Resize, and the two resolutions
 
 `GuiApp.viewport` is explicitly *not* resized for you, and the reason is sound: re-marching is far too
 expensive to trigger from a resize the framework merely noticed. So the policy is the application's:
 
 - The sampler upscales, so a resized viewport is soft, not broken, and needs nothing immediately.
-- On `onResize` (the worker lane — this is not the picture case, so a frame's lag is invisible), if the box has
-  changed by more than 25% in either axis, mint a new target at the new size and close the old one **after a
-  frame that no longer names it**.
+- The march is **two passes at one scene**: a fixed 640×400 *draft* every frame the picture is moving, and a
+  *still* at the box's own size on the one frame after everything has held still for 160 ms. A resize changes
+  the box, which is a change like any other — it marches the draft, and the still one follows when the hand
+  comes off the window edge. So a resize needs no handler of its own at all, which is better than the
+  `onResize` rule this section used to specify.
+- The still target is sized by rounding the box up to a 256-pixel grid, capped at `plot.still.pixels` (1.2 M),
+  and is replaced only when the box has outgrown it or shrunk to less than half of it. **The one it replaces is
+  not closed**, because closing it is a double free — see framework-notes FN-27, which is the whole reason the
+  replacement rule is written to make replacement rare.
 - The label `Picture` rebuilds on `onResizeUi` — same frame as the layout, because a picture is authored in
   pixels for the box that was measured and is clipped to it.
+
+The measurement behind the split is in framework-notes FN-20: 5.33 ms a draft against 19.28 ms a still, and
+five stills across a session of orbiting that cost 740 drafts.
 
 ### 7.7 The probe
 

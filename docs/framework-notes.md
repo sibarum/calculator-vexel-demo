@@ -535,8 +535,42 @@ Were `renderInto` asynchronous, the same work would overlap the tree's own draw 
 instead of frame rate, and 1024×640 would be affordable. The fix named in `SampledColorTarget`'s own source
 comment is worth roughly a doubling of the plot's resolution.
 
-*(An app-side mitigation exists and is not yet taken: march at 30 Hz while orbiting and let the GUI run at 60.
-Recorded so it is a decision rather than an oversight.)*
+### The mitigation that was taken instead, and what it measures
+
+Reading 3 turned out to be too generous: *"still looks clean"* was written about a curve, and the furniture is
+what gives it away. Upscaled from 640×400, the floor grid's thin lines break into dashes and the axis ticks go
+ragged — which reads as a *dashed grid*, a design decision nobody made, rather than as undersampling. Two
+screenshots of the same camera settle it, and only one of them has continuous grid lines.
+
+So the plot is now marched at **two resolutions**: the draft, at the fixed 640×400 above, every frame the
+picture is moving; and the **still**, at the box's own size rounded up to a 256-pixel grid, on the one frame
+after everything has held still for 160 ms. Same scene, same module, same camera — the swap is a sharpening and
+not a change of picture. Measured the same way as the table above (`-Dprobe=gpu`, a session of drags on the
+default `0^x`, 454 samples, in a 1180×688 viewport):
+
+| span | target | count | mean | max |
+|---|---|---|---|---|
+| `plot.march` | 640×400 | 740 | 5.33 ms | 10.41 ms |
+| `plot.march.still` | 1280×768 | 5 | 19.28 ms | 20.70 ms |
+
+3.84× the pixels for 3.6× the time, which is reading 1 again from the other end. The shape of the cost is what
+matters: **five sharp marches across a whole session of orbiting**, each a single frame the user is not moving
+through, against 740 cheap ones while they are. A 19 ms stall once per gesture is invisible; the same 19 ms
+sixty times a second is a quarter of the frame rate.
+
+Both numbers were taken again after the march became an ordinary `RenderTechnique` driven by a
+`SampledTechniqueHost` rather than a hand-rolled `renderInto` call, because a table that predates the code it
+describes is worse than no table: 5.60 ms and 19.28 ms over 501 drafts and 4 stills. The host costs nothing
+measurable, which is the result that makes the conversion free to keep.
+
+*(The other app-side mitigation named here — march at 30 Hz while orbiting and let the GUI run at 60 — is still
+not taken, and is now less interesting: it would buy frame rate during the gesture, which is the half of the
+problem that turned out not to be the complaint.)*
+
+**What it costs, stated so it is a decision:** a scripted screenshot taken immediately after a gesture
+photographs the draft. `Automation.settle` waits on `gui.frameOwed()` and never asks the Kron timeline (the
+same blindness recorded against animated panels), and the 160 ms pause is a driven cell on that timeline. A
+driving script that wants the sharp picture has to sleep.
 
 ### And one integration trap, found by a measurement that lied
 
@@ -702,3 +736,31 @@ attribute of a click.
 carries none. Reading the coalesced `State` rather than latching a flag on key-down is what stops a modifier
 sticking when the key-up is delivered to another window mid-capture — a real failure mode when a drag has
 pointer capture.)*
+
+---
+
+## FN-27 · `GuiApp.viewport` tells a resizing application to double-free 🔬
+
+`GuiApp.viewport(w, h)` mints a `SampledColorTarget` **and keeps it**, in a private list that `GuiApp.close()`
+walks: *"Targets made here are closed with the application, so an app that keeps one per viewport for the
+session need not track them."* True and useful. The very next sentence is the problem:
+
+> *"one that resizes a viewport should `SampledColorTarget.close()` the old target itself, after a frame that
+> no longer names it."*
+
+An application that does exactly that destroys the image, the view, the sampler, the framebuffer and the render
+pass — and the target is **still in that list**, so `GuiApp.close()` destroys all of them a second time at
+shutdown. Nothing is removed from `viewports` anywhere, and there is no `GuiApp` method that hands one back. So
+the documented advice is a use-after-free at exit, on a path nobody watches, in the one place a Vulkan error is
+least likely to be noticed: a window that is going away anyway.
+
+**Cost here:** the still pass (FN-20) mints a new target whenever the plot's box outgrows the one in hand, and
+cannot free the one it replaces. The application compensates by making replacement rare rather than by freeing:
+the box is rounded up to a 256-pixel grid, and a target is kept unless it is too small or more than twice the
+size needed, so a session mints a handful. It is still a leak by construction, and it is the framework's to
+fix, not the application's to work around.
+
+**Framework answer:** one line — `GuiApp.release(SampledColorTarget)`, which removes it from the list and
+closes it. The lifetime rule then reads whole: targets you keep are closed for you, targets you replace you
+hand back. A `boolean closed` guard in `SampledColorTarget.close()` would make the current advice merely
+wasteful rather than wrong, but it treats the symptom — the list is the thing that has no exit.

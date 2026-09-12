@@ -113,6 +113,14 @@
             <artifactId>vexelray-technique-sdf</artifactId>
             <version>${vexelray.version}</version>
         </dependency>
+        <!-- The technique host for a target the GUI owns and presents. The plot marches into a viewport rather
+             than into a window, which is the frame the engine's own runtime does not drive: this is the other
+             one, so the march can be an ordinary RenderTechnique instead of a hand-rolled pipeline. -->
+        <dependency>
+            <groupId>dev.vexelray</groupId>
+            <artifactId>vexelray-engine-embedded</artifactId>
+            <version>${vexelray.version}</version>
+        </dependency>
         <!-- Input at the application edge: the tactroller->atchung bridge (brings tactroller-api and
              atchung-core transitively). The GUI core knows only the input topic contract. -->
         <dependency>

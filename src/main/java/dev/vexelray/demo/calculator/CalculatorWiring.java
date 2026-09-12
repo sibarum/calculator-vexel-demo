@@ -127,7 +127,18 @@ final class CalculatorWiring extends Wiring {
     @Override
     public void window(Shell shell) {
         march = new March(shell.app());
+        // Registered after the GuiApp, so it closes before it: the plot's pipelines are GPU objects on that
+        // device, and the loop has stopped by the time this runs, so it is still the render thread and nothing
+        // else holds them. Without it the probe's ledger reports live pipelines at exit.
+        shell.disposer().register(march::close);
         march.showIn(ui.viewport());
+        // The plot is marched small while it is moving and at the box's own size once it stops, and the frame
+        // that "once it stops" happens on is a frame a render-on-demand loop would not otherwise run. So the
+        // pause is a curve on the clock rather than a flag and a frame counter -- see Settle, which is most of
+        // one paragraph about why the obvious implementation cannot work at all.
+        Settle stopped = new Settle(shell.krono().kron(), shell.krono().frames(), March.STILL_PAUSE,
+                march::refine);
+        march.stirredBy(stopped::stir);
         motion = new Motion(shell.krono().kron(), shell.krono().frames(), shell.krono().animator(), march);
         camera.on(motion);
     }
