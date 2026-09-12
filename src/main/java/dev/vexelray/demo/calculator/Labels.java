@@ -47,7 +47,8 @@ final class Labels {
      * @param domain the input range the x axis spans, for the numbers
      * @return the picture, or {@code null} if the node has not been laid out yet
      */
-    static Picture of(Lens lens, NodeLayout box, double domainLo, double domainHi, boolean ticks) {
+    static Picture of(Lens lens, NodeLayout box, Algebra.Reading reading,
+                      double domainLo, double domainHi, boolean ticks) {
         if (box == null) {
             return null;
         }
@@ -58,12 +59,22 @@ final class Labels {
         Color name = Look.QUIET.of(Look.PALETTE);
         Color figure = Look.PALETTE.text(2);
 
+        // The axes are named by what they carry, which is not the same in both modes: a curve's first axis is
+        // its input and a single value's is the first of its own coordinates. Read off the reading rather than
+        // fixed here, so the name and the geometry cannot come to describe different axes.
+        //
+        // "Tr", not "Im". The vertical output axis is the TRACTION axis -- an order of vanishing -- and the
+        // complex reading that made it an imaginary part is not wired in this engine. A label naming a part
+        // the value does not have is the plot claiming something the algebra never said.
+        String[] axes = reading.axisNames();
         sketch.tag("axis-name");
-        put(sketch, lens, w, h, Geometry.BOX * NAME_OUT, 0, 0, "x", name, Type.SMALL_PX);
-        put(sketch, lens, w, h, 0, Geometry.BOX_H * NAME_OUT, 0, "Re", name, Type.SMALL_PX);
-        put(sketch, lens, w, h, 0, 0, Geometry.BOX_H * NAME_OUT, "Im", name, Type.SMALL_PX);
+        put(sketch, lens, w, h, Geometry.BOX * NAME_OUT, 0, 0, axes[0], name, Type.SMALL_PX);
+        put(sketch, lens, w, h, 0, Geometry.BOX_H * NAME_OUT, 0, axes[1], name, Type.SMALL_PX);
+        put(sketch, lens, w, h, 0, 0, Geometry.BOX_H * NAME_OUT, axes[2], name, Type.SMALL_PX);
 
-        if (!ticks) {
+        // Numbers on the input axis only, and only where there is an input: in POINT mode that axis is a
+        // coordinate of the value, and the domain the panels hold is not what it is measuring.
+        if (!ticks || !reading.drawsCurve()) {
             return sketch.picture();
         }
         sketch.tag("tick");

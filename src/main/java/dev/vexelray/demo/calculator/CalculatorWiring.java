@@ -134,7 +134,7 @@ final class CalculatorWiring extends Wiring {
         // Geometry is rebuilt whenever the scene changes, on the committing thread -- which is a worker,
         // because every control's handler is. The GUI thread never samples anything; it takes a float[].
         model.onChange(s -> {
-            Geometry.Built built = Geometry.of(s.reading(), s.omega(), s.x0(), s.x1(),
+            Geometry.Built built = Geometry.of(s.reading(), s.x0(), s.x1(),
                     s.samples(), s.effectiveFurniture(), s.lineWidth(), s.ramp());
             march.geometry(built);
             ui.probe().samples(built.curve(), s.x0(), s.x1());
@@ -147,7 +147,7 @@ final class CalculatorWiring extends Wiring {
         });
         // And once at startup, for the scene nobody has changed yet.
         Scene start = model.scene();
-        Geometry.Built first = Geometry.of(start.reading(), start.omega(), start.x0(), start.x1(),
+        Geometry.Built first = Geometry.of(start.reading(), start.x0(), start.x1(),
                 start.samples(), start.effectiveFurniture(), start.lineWidth(), start.ramp());
         march.geometry(first);
         ui.probe().samples(first.curve(), start.x0(), start.x1());
@@ -180,7 +180,7 @@ final class CalculatorWiring extends Wiring {
         // measured box, in the same frame, on the GUI thread. A frame's lag would be visible as text sliding
         // across the plot behind the geometry it names.
         Labels.show(ui.viewport(), Labels.of(march.lens(), ui.viewport().layout(),
-                now.x0(), now.x1(), now.effectiveFurniture().ticks()));
+                now.reading(), now.x0(), now.x1(), now.effectiveFurniture().ticks()));
         Motion.View eye = motion.now();
         ui.readout().show(eye.yaw(), eye.pitch(), eye.zoom(), march.cones());
     }

@@ -85,6 +85,9 @@ final class Geometry {
     /** How far a tick sticks out from its axis. */
     private static final double TICK = 0.06;
 
+    /** Half the length of one arm of the marker that shows where a single value lands. */
+    private static final double MARKER_ARM = 0.1;
+
     /** What a scene is made of, beyond the curve. */
     record Furniture(boolean axes, boolean ticks, boolean gridXY, boolean gridXZ, boolean gridYZ, int divisions) {
 
@@ -108,29 +111,122 @@ final class Geometry {
     /**
      * The whole scene for a reading.
      *
+     * <h2>What the three axes are depends on the mode, and that is not a special case</h2>
+     *
+     * <p>A curve is drawn over its input, so its axes are {@code (x, Re, Tr)}. A single value has no input, so
+     * its axes are the value's own coordinates, {@code (Re, Tr, Tr')} — the same three axes carrying the thing
+     * there actually is. Forcing one layout on both would mean either a marker stranded on an input axis that
+     * means nothing to it, or a curve with nowhere to put its domain.
+     *
      * @param samples how many points to sample the curve at; the caller clamps this against the buffer ceiling
      */
-    static Built of(Canned.Reading reading, double omega, double x0, double x1, int samples,
+    static Built of(Algebra.Reading reading, double x0, double x1, int samples,
                     Furniture furniture, double radius, Ramp ramp) {
+        List<double[]> runs = Algebra.curve(reading, x0, x1, samples);
+        double span = span(runs, reading);
+        boolean overInput = reading.drawsCurve();
+
         List<Surface.Stroke> scene = new ArrayList<>();
         grid(scene, furniture);
         if (furniture.axes()) {
-            axes(scene, furniture.ticks(), x0, x1);
+            axes(scene, furniture.ticks(), overInput ? x0 : -span, overInput ? x1 : span, span);
         }
-        double[] world = world(Canned.curve(reading, omega, x0, x1, samples), x0, x1);
-        scene.add(curve(world, radius, ramp));
-        return new Built(List.copyOf(scene), world);
+        List<double[]> placed = new ArrayList<>(runs.size());
+        for (double[] run : runs) {
+            placed.add(world(run, x0, x1, span));
+        }
+        // One stroke per run, so a break in the curve is a break in the picture. See Algebra.curve.
+        for (double[] run : placed) {
+            scene.add(curve(run, radius, ramp));
+        }
+        if (reading.drawsMarker()) {
+            marker(scene, reading.place().toDoubles(), span, radius, ramp);
+        }
+        return new Built(List.copyOf(scene), joined(placed));
     }
 
-    /** The sampled points mapped from the domain into the world box, which is where everything else reads them. */
-    private static double[] world(double[] xyz, double x0, double x1) {
+    /**
+     * Half the extent the output axes have to cover, shared between them.
+     *
+     * <p><b>One scale for both, not one each.</b> The two output axes are two coordinates of the same value
+     * space and the chart's symmetries are its point — {@code -a} is a reflection, {@code 1/a} is another —
+     * so scaling them independently would stretch the square the theory is drawn on into a rectangle and the
+     * reflections would stop looking like reflections.
+     *
+     * <p>Never zero: a value sitting at the origin of both output axes would otherwise divide by it, and a
+     * curve along {@code Re = Tr = 0} is a legitimate thing to ask for.
+     */
+    private static double span(List<double[]> runs, Algebra.Reading reading) {
+        double most = 0;
+        for (double[] run : runs) {
+            for (int i = 0; i < run.length / 3; i++) {
+                most = Math.max(most, Math.max(Math.abs(run[i * 3 + 1]), Math.abs(run[i * 3 + 2])));
+            }
+        }
+        if (reading.drawsMarker()) {
+            for (double c : reading.place().toDoubles()) {
+                most = Math.max(most, Math.abs(c));
+            }
+        }
+        return most > 0 ? most : 1;
+    }
+
+    /**
+     * The sampled points mapped into the world box, which is where everything else reads them.
+     *
+     * <p>The input axis is mapped from the domain and the output axes from {@link #span}, because the outputs
+     * are no longer bounded: a coordinate on the traction axis is an order of vanishing and {@code 0^-6} is
+     * six units out. The fake's outputs were a sine and a cosine and could be scaled by a constant; these
+     * cannot, and a constant would have put most curves outside the box.
+     */
+    private static double[] world(double[] xyz, double x0, double x1, double span) {
         double[] out = new double[xyz.length];
         for (int i = 0; i < xyz.length / 3; i++) {
             out[i * 3] = map(xyz[i * 3], x0, x1, -BOX, BOX);
-            out[i * 3 + 1] = xyz[i * 3 + 1] * BOX_H;
-            out[i * 3 + 2] = xyz[i * 3 + 2] * BOX_H;
+            out[i * 3 + 1] = xyz[i * 3 + 1] / span * BOX_H;
+            out[i * 3 + 2] = xyz[i * 3 + 2] / span * BOX_H;
         }
         return out;
+    }
+
+    /** Every run end to end, for the {@link Probe}, which wants samples rather than strokes. */
+    private static double[] joined(List<double[]> runs) {
+        int n = 0;
+        for (double[] run : runs) {
+            n += run.length;
+        }
+        double[] out = new double[n];
+        int at = 0;
+        for (double[] run : runs) {
+            System.arraycopy(run, 0, out, at, run.length);
+            at += run.length;
+        }
+        return out;
+    }
+
+    /**
+     * Where a single value lands: three short segments crossing at the point.
+     *
+     * <p>A cross rather than a blob, because the whole content of this mode is <em>which coordinates</em> the
+     * value has, and a cross states them — each arm runs along the axis it is a reading of, so the point can
+     * be read off the axes by eye instead of being judged by eye against a sphere.
+     *
+     * <p>Coordinates fill the axes in order and a missing third is the origin of its axis, which is what a
+     * two-coordinate value is: it has no third reading, so it sits on the plane where the third is nothing.
+     */
+    private static void marker(List<Surface.Stroke> into, double[] at, double span, double radius, Ramp ramp) {
+        double x = map(coordinate(at, 0), -span, span, -BOX, BOX);
+        double y = coordinate(at, 1) / span * BOX_H;
+        double z = coordinate(at, 2) / span * BOX_H;
+        double arm = MARKER_ARM;
+        Surface.Rgb colour = ramp.scene(1);
+        into.add(line(x - arm * (BOX / BOX_H), y, z, x + arm * (BOX / BOX_H), y, z, radius, colour));
+        into.add(line(x, y - arm, z, x, y + arm, z, radius, colour));
+        into.add(line(x, y, z - arm, x, y, z + arm, radius, colour));
+    }
+
+    private static double coordinate(double[] at, int i) {
+        return i < at.length ? at[i] : 0;
     }
 
     // ------------------------------------------------------------------ curve
@@ -171,7 +267,8 @@ final class Geometry {
      * number beside it cannot describe different places. Two lists of positions that have to agree is exactly
      * the kind of duplication that survives review and then drifts one refactor later.
      */
-    private static void axes(List<Surface.Stroke> into, boolean ticks, double domainLo, double domainHi) {
+    private static void axes(List<Surface.Stroke> into, boolean ticks,
+                             double domainLo, double domainHi, double span) {
         Surface.Rgb colour = colour(Look.QUIET);
         into.add(line(-BOX, 0, 0, BOX, 0, 0, AXIS_RADIUS, colour));
         into.add(line(0, -BOX_H, 0, 0, BOX_H, 0, AXIS_RADIUS, colour));
@@ -183,9 +280,11 @@ final class Geometry {
             double at = map(v, domainLo, domainHi, -BOX, BOX);
             into.add(line(at, -TICK, 0, at, TICK, 0, GRID_RADIUS, colour));
         }
-        // The output axes are the box, not the domain, so they are ticked over their own range.
-        for (double v : Ticks.between(-1, 1)) {
-            double at = v * BOX_H;
+        // The output axes are ticked over the range the values actually reached, not over the box: the box is
+        // an internal frame and its coordinates are never shown, so a mark at "1" that means the edge of the
+        // picture would be a mark measuring nothing. Same reasoning as the domain axis, same source of marks.
+        for (double v : Ticks.between(-span, span)) {
+            double at = v / span * BOX_H;
             into.add(line(-TICK, at, 0, TICK, at, 0, GRID_RADIUS, colour));
             into.add(line(0, -TICK, at, 0, TICK, at, GRID_RADIUS, colour));
         }

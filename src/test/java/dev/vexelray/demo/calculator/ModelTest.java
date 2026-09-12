@@ -59,23 +59,36 @@ class ModelTest {
 
         assertEquals(1, seen.size(), "one version, not two");
         assertEquals("sin(x)*cos(y)", seen.getFirst().expression());
-        assertSame(Canned.Mode.SURFACE, seen.getFirst().reading().mode());
+        assertSame(Algebra.Mode.SURFACE, seen.getFirst().reading().mode());
         for (Scene s : seen) {
-            assertSame(Canned.read(s.expression()).mode(), s.reading().mode(),
+            assertSame(Algebra.read(s.expression()).mode(), s.reading().mode(),
                     "a version in which the expression and the reading disagree");
         }
     }
 
     @Test
-    @DisplayName("an unrecognised expression is refused out loud rather than drawn as something else")
+    @DisplayName("an unreadable expression is refused out loud rather than drawn as something else")
     void refusalIsLoud() {
         Model model = new Model();
-        model.submit("cot(x) + 3");
+        model.submit("&&& 3");
 
-        assertEquals("cot(x) + 3", model.scene().expression(), "the entry stays as typed");
+        assertEquals("&&& 3", model.scene().expression(), "the entry stays as typed");
         assertNotEquals(null, model.scene().reading().refusal(), "no refusal was reported");
-        assertTrue(model.scene().reading().refusal().contains("no evaluator"),
+        // The engine's own message, passed through rather than replaced: it already names the character.
+        assertTrue(model.scene().reading().refusal().contains("&"),
                 "the refusal should say why: " + model.scene().reading().refusal());
+    }
+
+    @Test
+    @DisplayName("an expression that cannot be drawn draws nothing, rather than a different expression")
+    void whatCannotBeDrawnIsNotDrawnAsSomethingElse() {
+        Model model = new Model();
+        model.submit("x+y");
+
+        Algebra.Reading reading = model.scene().reading();
+        assertSame(Algebra.Mode.SURFACE, reading.mode());
+        assertNotEquals(null, reading.refusal(), "two free names needs four axes and should say so");
+        assertTrue(Algebra.curve(reading, -6, 6, 64).isEmpty(), "a refused reading drew a curve anyway");
     }
 
     /**

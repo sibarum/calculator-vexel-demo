@@ -28,6 +28,14 @@ final class Landmarks {
     /** The error line. Absent from the tree when there is nothing wrong, so {@code find error} says so. */
     static final String ERROR = "error";
 
+    /**
+     * The derivation block: the chain of equalities behind a single value, one rewrite a line.
+     *
+     * <p>Absent from the tree unless the expression settled to one value, so {@code find derivation} is how a
+     * driver tells that mode from a curve. The answer itself is in {@link #STATUS}, which does carry its text.
+     */
+    static final String DERIVATION = "derivation";
+
     /** The node carrying the marched image. Orbit, pan and zoom are aimed here. */
     static final String VIEWPORT = "viewport";
 

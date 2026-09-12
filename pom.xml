@@ -23,6 +23,7 @@
         <vexelray-gui.version>0.1.0-SNAPSHOT</vexelray-gui.version>
         <vexelray.version>0.1.0-SNAPSHOT</vexelray.version>
         <tactroller.version>1.0-SNAPSHOT</tactroller.version>
+        <cott-engine.version>0.1.0-SNAPSHOT</cott-engine.version>
         <junit.version>5.11.4</junit.version>
 
         <app.mainClass>dev.vexelray.demo.calculator.Calculator</app.mainClass>
@@ -124,6 +125,15 @@
             <groupId>sibarum.tactroller</groupId>
             <artifactId>tactroller-clipboard</artifactId>
             <version>${tactroller.version}</version>
+        </dependency>
+        <!-- The algebra: Traction Theory as a direct evaluator. Pure Java, no subprocess and no natives, so
+             it adds nothing to the run but a jar. Reached through Algebra and nowhere else - and read for
+             what it SAYS (Place, Variables) rather than for the shape of its carrier, which is the lesson
+             cott-engine's own IMPLEMENTATION-PLAN records from the bridge that died with the last client. -->
+        <dependency>
+            <groupId>sibarum.cott</groupId>
+            <artifactId>cott-engine</artifactId>
+            <version>${cott-engine.version}</version>
         </dependency>
 
         <dependency>

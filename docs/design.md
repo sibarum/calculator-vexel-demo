@@ -18,24 +18,28 @@ document links to them rather than restating them.
 - **The prototype is the whole application.** `docs/plot-viewport.html` — an expression bar, a full-bleed
   viewport, an icon rail with six panels, a hover probe, a camera readout. There is no keypad and no history
   tape. Expressions arrive by keyboard or paste, and nothing else.
-- **No evaluation.** The algebra is not ready. The plot is **hardcoded scene data**, and every path that would
-  one day call an evaluator goes through one class (§7.5) so that switching it on is deleting a file rather
-  than threading a new dependency through the app.
+- **~~No evaluation.~~ The algebra is wired.** This said the algebra was not ready and the plot was hardcoded
+  scene data, behind one class (§7.5) so that switching it on would be deleting a file. That is what happened:
+  `Canned` was deleted and `Algebra` took over its signatures, onto `sibarum.cott:cott-engine`. The scope note
+  is kept rather than rewritten because the shape of the seam was the prediction being tested, and it held.
 - **Look and feel is the deliverable.** The measure of success is that a screenshot of the running application
   is indistinguishable from the prototype, and that orbiting it is smooth while something slow runs on a
   worker.
 - Work happens on `main`. No framework changes without asking first.
 
-### What "hardcoded" means precisely, and the one place I am proposing to bend it
+### What "hardcoded" meant, and what became of it
 
 A frozen picture cannot tell you whether the controls feel right — a slider that moves nothing is a slider you
-cannot evaluate. So the canned scene is **parametric in the controls the panels expose**: the ω slider, the
-domain bounds, the sample count, the camera. The *shape* is hardcoded (a helix for the default expression, a
-ripple for the two-variable case); what the panels do to it is live.
+cannot evaluate. So the canned scene was **parametric in the controls the panels expose**: the ω slider, the
+domain bounds, the sample count, the camera. The *shape* was hardcoded (a helix for the default expression, a
+ripple for the two-variable case); what the panels did to it was live.
 
-That is trigonometry over a fixed parametric form, not an evaluator, and it lives entirely in `Canned.java`. If
-you would rather the picture never move at all, it is a one-line change and worth saying now rather than
-discovering in review.
+**The ω slider is the one casualty of the switch-on, and it is still wired to nothing.** It was a free
+parameter of the fake's parametric form. In this algebra `ω` is not a parameter at all — it is a *value*,
+`0^-1`, the point the traction axis runs to, and `Notation` reads a typed `w` as that point. So there is no
+quantity left for the slider to vary. It remains on the panel and in the `Scene`, and it no longer reaches the
+geometry. Removing it is a panel decision rather than a seam one, so it has been left as it is and written down
+instead.
 
 ---
 
@@ -499,27 +503,46 @@ implementation would give, and it is the best available from this side.
 [FN-12](framework-notes.md#fn-12) is the framework answer: `SdfComposer.project(...)` beside `cameraBytes(...)`,
 derived from the same source.
 
-### 7.5 `Canned` — the whole of the fake
+### 7.5 `Algebra` — the whole of the seam
+
+**`Canned` is gone.** The switch-on happened as designed: the fake was deleted and one class took over its two
+signatures. That class is `Algebra`, and it is the only thing in the application that names cott-engine.
 
 ```java
-/** Scene data until there is an evaluator. One class, one seam, deliberately. */
-final class Canned {
-    static Reading read(String expression);              // → mode + parameters + a refusal, if any
-    static double[] sample(Reading r, Scene s);          // → world-space points, xyz interleaved
+/** The engine, and the whole of the seam onto it. One class, one seam, deliberately. */
+final class Algebra {
+    static Reading read(String expression);                                   // → mode, answer, place, refusal
+    static List<double[]> curve(Reading r, double x0, double x1, int n);      // → runs of xyz, interleaved
 }
 ```
 
-`read` is a small table of recognised expressions:
+The mode is not a table any more — it is **how many names the expression leaves free**, which `Variables` in the
+engine reports:
 
-| Input | Mode | Subtitle | Shape |
+| Free names | Mode | What is drawn | Axes |
 |---|---|---|---|
-| `e^(i·ω·x/2)` *(default)* | LINE | complex output · space curve  x → (Re, Im) | helix, radius 1, pitch from ω |
-| `sin(x)·cos(y)` | SURFACE | real output over x, y · height field | ripple |
-| anything else | LINE | — | the default shape, error line reading *"no evaluator yet — showing the reference scene"* |
+| none | POINT | a marker where the value lands, and its derivation | `(Re, Tr, Tr')` |
+| one | CURVE | a path, sampled over that name | `(x, Re, Tr)` |
+| two | SURFACE | nothing — recognised and refused | — |
 
-That last row matters: it exercises the error affordance honestly rather than leaving it dead. **A picture of a
-different expression than the one in the field is the one outcome this must never produce**, so the refusal is
-loud and the subtitle always describes what is actually drawn.
+**Two inputs and a value of its own is four axes**, which is why SURFACE is refused rather than flattened. It
+keeps its name because the badge should say what the expression *is*, not what happens to be drawable.
+
+Three things this seam does not do, each of them deliberate:
+
+- **It does not read the carrier's shape.** Where a value lands comes back from the engine's `Place`; nothing
+  here pattern-matches a traction. That is cott-engine's own recorded lesson — the bridge that died with the
+  previous client "encoded the abandoned theory in its shape, not just its imports" — and the carrier is
+  expected to move again.
+- **It does not invent error messages.** A `SyntaxException` already carries one written for a person, so it is
+  passed through. (The engine names the offending character only when the entry *starts* with it; otherwise the
+  message is a bare "Error". Worth improving upstream, not papering over here.)
+- **It does not interpolate across an unanswered sample.** `curve` returns contiguous *runs*, and a sample the
+  theory did not settle ends one. Most expressions break nowhere — division by zero is `ω`, a value with a
+  place — so the thing that puts a hole in an ordinary plot does not put one here.
+
+**A picture of a different expression than the one in the field is still the one outcome this must never
+produce.** Nothing falls back to a reference scene: what cannot be drawn is not drawn, and the refusal says why.
 
 ### 7.6 Resize
 

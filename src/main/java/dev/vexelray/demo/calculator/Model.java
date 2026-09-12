@@ -68,7 +68,7 @@ final class Model {
      * which would be a frame in which the badge says {@code SURFACE} over a line plot.
      */
     void submit(String expression) {
-        change(s -> new Scene(expression, Canned.read(expression),
+        change(s -> new Scene(expression, Algebra.read(expression),
                 s.omega(), s.x0(), s.x1(), s.samples(), s.lineWidth(), s.furniture(), s.ramp(),
                 s.cards(), s.cropping(), s.spinning()));
     }

@@ -17,7 +17,7 @@ package dev.vexelray.demo.calculator;
  * field, so they cannot describe different expressions. Recomputing it per consumer is exactly how they drift.
  *
  * @param expression what is in the field, as typed
- * @param reading    what {@link Canned} made of it — the single source for mode, subtitle and refusal
+ * @param reading    what {@link Algebra} made of it — the single source for mode, subtitle and refusal
  * @param omega      the one free parameter the prototype exposes
  * @param x0         domain, low
  * @param x1         domain, high
@@ -29,14 +29,14 @@ package dev.vexelray.demo.calculator;
  * @param cropping   whether the crop handles are showing
  * @param spinning   whether auto-orbit is running
  */
-record Scene(String expression, Canned.Reading reading,
+record Scene(String expression, Algebra.Reading reading,
              double omega, double x0, double x1, int samples,
              double lineWidth, Geometry.Furniture furniture, Ramp ramp,
              Cards cards, boolean cropping, boolean spinning) {
 
     /** What the plot opens on: the prototype's default expression, domain and sampling. */
     static Scene initial() {
-        return new Scene(Canned.DEFAULT_EXPRESSION, Canned.read(Canned.DEFAULT_EXPRESSION),
+        return new Scene(Algebra.DEFAULT_EXPRESSION, Algebra.read(Algebra.DEFAULT_EXPRESSION),
                 4, -6, 6, 420,
                 0.045, Geometry.Furniture.DEFAULT, Ramp.BLURPLE,
                 Cards.DEFAULT, false, false);
@@ -62,7 +62,7 @@ record Scene(String expression, Canned.Reading reading,
     /** A mutable copy of a {@link Scene}, alive only for the length of one {@link #with}. */
     static final class Draft {
         private final String expression;
-        private final Canned.Reading reading;
+        private final Algebra.Reading reading;
         private double omega;
         private double x0;
         private double x1;
@@ -162,7 +162,11 @@ record Scene(String expression, Canned.Reading reading,
     /** Whether {@code layer} is the one the expression called for. */
     boolean isAuto(String layer) {
         return switch (reading.mode()) {
-            case LINE -> layer.equals("line");
+            case CURVE -> layer.equals("line");
+            // A single value is a marker standing in the box rather than anything drawn on a plane, so the
+            // layer it asks for is the volume. It is still the AUTO badge answering "which layer did the
+            // expression call for", which is the reading this is, and not a claim that anything is filled.
+            case POINT -> layer.equals("volume");
             case SURFACE -> layer.equals("surface");
         };
     }
