@@ -103,6 +103,21 @@ final class CalculatorWiring extends Wiring {
     }
 
     /**
+     * The scene, for the same caller and the same reason as {@link #panels()}.
+     *
+     * <p>What a driving test asserts on after a keystroke is <b>the state the keystroke was for</b>, and at
+     * {@code Phase.TREE} that is all there is to see: the listener that repaints on a change is installed in
+     * {@link #attach}, which needs a device. So a test that reached for the view instead would be asserting
+     * that nothing happened, and passing whether or not the key was wired at all.
+     *
+     * <p>Null before {@link #model(Shell)}, which is the only honest answer. It shares that method's name and
+     * differs by arity, which is the ordinary reading: the phase builds it, and this hands it back.
+     */
+    Model model() {
+        return model;
+    }
+
+    /**
      * The plot, and everything that moves it.
      *
      * <p>Phase {@code WINDOW} because a render target and a storage buffer come from the application's device,

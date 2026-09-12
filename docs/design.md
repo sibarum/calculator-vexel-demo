@@ -689,6 +689,13 @@ tomorrow. All of them live in `Landmarks.java`:
 `await <landmark> <text>` is how a script waits for readiness, with no application-specific hook: readiness is
 declared by writing it into a landmark's accessible name.
 
+> ⚠ **The expression field is not wired to anything.** `TextField.onSubmit` is never called and nothing in the
+> application calls `Model.submit`, so typing an expression and pressing Enter edits the field and changes
+> neither the plot nor the reading — the algebra is reached only through `Scene.initial()`. This predates the
+> engine landing (it was equally unwired behind `Canned`) and is the reason `AutomationDrivingTest` drives the
+> rail and the shortcuts but not the field. It is one line to wire, plus a decision about what the bar should
+> do with the result while the repaint listener still lives in `attach`.
+
 > **One thing to remember, or every command will answer `ok` and nothing will happen:** a render-on-demand loop
 > has three reasons to wake and injected input is none of them. `Gui.wakeForInput()` exists for exactly this
 > and must be called on the injection path.
@@ -704,8 +711,8 @@ carrying one draws the placeholder texture instead ([FN-14](framework-notes.md#f
 around that:
 
 1. **Pure unit tests, no GUI.** `Model`'s reducer, `Lens`'s projection against hand-computed cases,
-   `Geometry`'s stroke and cone counts against the declared ceiling, `Canned.read`'s table, tick-label
-   formatting, the elevation clamp. The majority, and fast.
+   `Geometry`'s stroke and cone counts against the declared ceiling, `Algebra.read`'s modes and `Algebra.curve`'s
+   runs, tick-label formatting, the elevation clamp. The majority, and fast.
 2. **A march smoke, in the spirit of `StrokeMarchSmoke`.** Pack a known curve, march it into an offscreen
    target, read the pixels back, and **count the ones that are not sky.** "Nothing renders" is three questions
    a window cannot tell apart, and this answers the first one in numbers. It is also the first test anywhere
@@ -717,6 +724,21 @@ around that:
 4. **Interaction tests** with `HarnessApp` — real loop, real Vulkan, windows created and never shown. The one
    question no unit test can ask: *after this gesture, does a frame arrive on its own?* Needs a GPU, so local
    rather than CI.
+
+**Driving tests — `AutomationDrivingTest`, and the tier that was missing.** `find`, `click` and `key` through
+`Automation`, against the tree `VexelApplication.tree` builds — no GPU, so it runs with everything else.
+`automation.md` calls the socket a troubleshooting instrument rather than a test harness and is right about the
+instrument; what this pins is *this application's half of the contract*, the landmark names in `Landmarks.java`.
+A published contract with nothing checking it breaks quietly: a landmark that stops naming a node leaves
+`click rail.layers` selecting nothing and **reporting ok**, which is the failure `WiringTreeTest` was written
+about, one layer further out. Verified by breaking both a landmark and a shortcut and watching three tests go
+red.
+
+> Two limits, both of them properties of `Phase.TREE` rather than of the approach. The listener that repaints
+> the bar lives in `attach` and needs a device, so an assertion after a keystroke is on the `Model` — asserting
+> on the subtitle instead would be asserting that nothing happened. And the wait between a command and its
+> effect must be a bounded wall-clock one: a shortcut's command runs on the shell's executor, and a spin that
+> never yields finishes all its iterations before that executor is scheduled. Both are written up in the test.
 
 **Visual record.** One medium, since the split below collapsed: `shot` over the automation socket, against the
 real window on the application's own device.
