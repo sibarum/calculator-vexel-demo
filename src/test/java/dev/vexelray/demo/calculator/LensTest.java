@@ -172,6 +172,43 @@ class LensTest {
         }
     }
 
+    /**
+     * The orbit's sign, stated as something you can see rather than as an axis convention.
+     *
+     * <p>{@code Gestures} turns the camera by {@code +dx}, and whether that is right or backwards is not
+     * decidable by looking at it: the eye orbits one way, the picture turns the other, and the two cancel.
+     * What settles it is the <b>near face</b> — the part of the figure the user has a hand on — and the test
+     * is that a positive yaw step carries it right, at every camera.
+     *
+     * <p>The point it follows is the one nearest the eye, which is the unit vector from the origin back
+     * towards the camera. It starts dead centre, so the sign of its {@code u} after the step is the whole
+     * answer and there is no tolerance to choose.
+     */
+    @Test
+    @DisplayName("a positive yaw step carries the near face of the figure to the right")
+    void turningRightTurnsThePictureRight() {
+        for (double yaw = -180; yaw <= 180; yaw += 37) {
+            for (double pitch : new double[]{-75, -30, 0, 26, 75}) {
+                Lens before = orbiting(yaw, pitch);
+                double toEye = 1 / DISTANCE;
+                double nx = before.eyeX() * toEye;
+                double ny = before.eyeY() * toEye;
+                double nz = before.eyeZ() * toEye;
+
+                Lens.Point centred = before.project(nx, ny, nz);
+                assertNotNull(centred);
+                assertEquals(0.5, centred.u(), 1e-9, "the nearest point starts on the axis of the view");
+
+                // A hand's worth of drag: Gestures.ORBIT_PER_PX times a few dozen pixels.
+                Lens.Point after = orbiting(yaw + 8, pitch).project(nx, ny, nz);
+                assertNotNull(after, "a turn of eight degrees cannot put the near face behind the eye");
+                assertTrue(after.u() > 0.5,
+                        "yaw must turn the near face right, at yaw " + yaw + " pitch " + pitch
+                                + " (it went to u=" + after.u() + ")");
+            }
+        }
+    }
+
     @Test
     @DisplayName("the world box the plot is built into is inside the frame at rest")
     void thePlotBoxFitsTheFrame() {

@@ -88,10 +88,14 @@ final class Gestures {
                         // doing beforehand. Forgetting the speed is how that is said.
                         thrown.begin();
                     } else {
-                        // Dragging right turns the plot to the right, which means the camera goes the other
-                        // way. Getting this backwards is the single most common way an orbit feels wrong, and
-                        // it feels wrong immediately rather than subtly.
-                        double dYaw = -e.dx() * ORBIT_PER_PX;
+                        // Dragging right turns the plot to the right: the near face of the figure follows the
+                        // pointer, which is what a hand on a globe does. Both signs are positive because the
+                        // shader's yaw already turns the near face the way the hand went — the eye orbiting
+                        // one way and the picture turning the other is the same rotation described twice, and
+                        // negating here is negating it a third time. The fact this rests on — a positive yaw
+                        // step carries the near face right — is pinned in LensTest against the shader's own
+                        // ray construction, because it is not decidable by reading either sign alone.
+                        double dYaw = e.dx() * ORBIT_PER_PX;
                         double dPitch = e.dy() * ORBIT_PER_PX;
                         motion.turn(dYaw, dPitch);
                         thrown.moved(dYaw, dPitch);
