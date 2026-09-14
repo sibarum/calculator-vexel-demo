@@ -113,6 +113,14 @@
             <artifactId>vexelray-technique-sdf</artifactId>
             <version>${vexelray.version}</version>
         </dependency>
+        <!-- A Canvas hung on a plane in the scene. The floor grid is drawn rather than marched, so a grid line
+             is a shape with analytic coverage instead of a tube thinner than the march's own hit threshold,
+             which is what made it come out dashed. -->
+        <dependency>
+            <groupId>dev.vexelray</groupId>
+            <artifactId>vexelray-technique-panel</artifactId>
+            <version>${vexelray.version}</version>
+        </dependency>
         <!-- The technique host for a target the GUI owns and presents. The plot marches into a viewport rather
              than into a window, which is the frame the engine's own runtime does not drive: this is the other
              one, so the march can be an ordinary RenderTechnique instead of a hand-rolled pipeline. -->

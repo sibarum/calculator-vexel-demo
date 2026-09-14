@@ -221,7 +221,7 @@ final class AutomationDrivingTest {
     void theStatusLinePublishesWhatIsDrawn(@TempDir Path home) {
         driving(home, d -> {
             String out = d.run("find " + Landmarks.STATUS);
-            assertTrue(out.contains("curve over x"), "the subtitle should name the curve and its input: " + out);
+            assertTrue(out.contains("walked over x"), "the subtitle should name the walk and its input: " + out);
         });
     }
 
@@ -258,6 +258,47 @@ final class AutomationDrivingTest {
             d.run("click " + Landmarks.rail("view"));
             assertTrue(d.await(() -> "view".equals(d.wiring().panels().rail().selected())),
                     "and moving to another button should move the panel with it");
+        });
+    }
+
+    /**
+     * The axis-label switch is in the panel, and it reaches the scene.
+     *
+     * <p>Two halves, because either can be true without the other and only the pair is the feature: a
+     * {@code Property} that is declared but never added builds no row, and a row whose setter goes nowhere is
+     * the state four of this panel's controls are still in. So the row is found by name through the same
+     * snapshot a script reads, and then the effect is asserted on {@link Model} — which is where a switch's
+     * effect lands, and the only place it can be seen at {@code TREE}.
+     */
+    @Test
+    @DisplayName("the axis-label switch is built into the layers panel and reaches the scene")
+    void theAxisLabelSwitchIsWired(@TempDir Path home) {
+        driving(home, d -> {
+            Model model = d.wiring().model();
+            assertTrue(model.scene().furniture().labels(), "the premise: a plot opens with its axes named");
+
+            d.run("click " + Landmarks.rail("layers"));
+            assertTrue(d.await(() -> "layers".equals(d.wiring().panels().rail().selected())));
+
+            // Awaited rather than asked once: the rail selects on the click, but the panel's rows are built
+            // and published into the semantic snapshot by a later frame, and nothing draws one at TREE. A bare
+            // find here reports "nothing matches" for a row that is about to exist.
+            assertTrue(d.await(() -> matched(d.automation().find("Axis labels"))),
+                    "no row in the layers panel is named 'Axis labels'");
+
+            // Through the model rather than by clicking the switch: a Property row publishes its name but the
+            // switch inside it carries no landmark of its own, and Rail keeps its tiles private (FN-23). What
+            // is being pinned here is that the setter is connected, which this shows and a click would not
+            // show any better.
+            model.change(s -> Scene.with(s, w -> w.furniture(f -> f.withLabels(false))));
+            assertTrue(d.await(() -> !model.scene().furniture().labels()),
+                    "the axis names should have gone off");
+            assertFalse(model.scene().effectiveFurniture().labels(),
+                    "and the overlay should be told so");
+
+            // The graduations are a separate choice and must not have moved with them.
+            assertTrue(model.scene().furniture().ticks(),
+                    "turning the axis names off took the tick marks with them");
         });
     }
 

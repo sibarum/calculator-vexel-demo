@@ -38,6 +38,20 @@ final class CalculatorWiring extends Wiring {
     private March march;
     private Motion motion;
 
+    /**
+     * Where the last build put the graduations, for the overlay that numbers them.
+     *
+     * <p>Held rather than recomputed because it is the geometry's answer and the labels must not have a second
+     * one — the same rule {@link Geometry#marks} is written under. Volatile because it is written on the
+     * committing thread, which is a worker, and read on the GUI thread in {@link #frame()}.
+     *
+     * <p>A frame between a commit and its rebuild draws the previous build's numbers, which is the same
+     * staleness the marched geometry already has and is resolved the same way: by the next frame. The
+     * alternative — reading the scene and deriving the marks here — is the duplication this field exists to
+     * avoid, and it would be wrong rather than merely a frame late.
+     */
+    private volatile Geometry.Marks graduations = Geometry.Marks.NONE;
+
     @Override
     public AppInfo info() {
         return INFO;
@@ -163,7 +177,8 @@ final class CalculatorWiring extends Wiring {
             Geometry.Built built = Geometry.of(s.reading(), s.x0(), s.x1(),
                     s.samples(), s.effectiveFurniture(), s.lineWidth(), s.ramp());
             march.geometry(built);
-            ui.probe().samples(built.curve(), s.x0(), s.x1());
+            graduations = built.marks();
+            ui.probe().samples(built.curve(), s.x0(), s.x1(), s.reading().axisNames());
             march.recolour(s.ramp());
             ui.bar().show(s.reading());
             ui.bar().cropping(s.cropping());
@@ -176,7 +191,8 @@ final class CalculatorWiring extends Wiring {
         Geometry.Built first = Geometry.of(start.reading(), start.x0(), start.x1(),
                 start.samples(), start.effectiveFurniture(), start.lineWidth(), start.ramp());
         march.geometry(first);
-        ui.probe().samples(first.curve(), start.x0(), start.x1());
+        graduations = first.marks();
+        ui.probe().samples(first.curve(), start.x0(), start.x1(), start.reading().axisNames());
         ui.probe().install(ui.viewport(), march::lens);
 
         Gestures.install(gui, ui.viewport(), motion);
@@ -206,7 +222,7 @@ final class CalculatorWiring extends Wiring {
         // measured box, in the same frame, on the GUI thread. A frame's lag would be visible as text sliding
         // across the plot behind the geometry it names.
         Labels.show(ui.viewport(), Labels.of(march.lens(), ui.viewport().layout(),
-                now.reading(), now.x0(), now.x1(), now.effectiveFurniture().ticks()));
+                now.reading(), now.effectiveFurniture(), graduations));
         Motion.View eye = motion.now();
         ui.readout().show(eye.yaw(), eye.pitch(), eye.zoom(), march.cones());
     }

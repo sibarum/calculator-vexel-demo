@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -69,72 +70,96 @@ class AlgebraTest {
     }
 
     @Test
-    @DisplayName("a curve is sampled over its one free name, whatever that name is")
-    void aCurveIsSampledOverItsVariable() {
+    @DisplayName("a curve is walked over its one free name, whatever that name is")
+    void aCurveIsWalkedOverItsVariable() {
         Algebra.Reading reading = read("0^t");
 
         assertEquals("t", reading.variable());
-        List<double[]> runs = Algebra.curve(reading, -3, 3, 64);
-        assertEquals(1, runs.size(), "0^t settles everywhere, so it is one unbroken run");
-        assertEquals(64 * 3, runs.getFirst().length);
+        List<double[]> runs = Algebra.walk(reading, -3, 3, 64);
+        assertFalse(runs.isEmpty());
+        // 0^t is the traction axis itself: every sample but the origin lands at (0, t), so the walk is two
+        // strokes running away from the origin along Tr, one per direction.
+        assertEquals(2, strokes(runs).size());
+        for (double[] stroke : strokes(runs)) {
+            for (int i = 0; i < stroke.length / 3; i++) {
+                assertEquals(0, stroke[i * 3], 1e-9, "0^t has no real part away from the origin");
+            }
+        }
     }
 
     /**
      * The engine answers 1/0 as omega, a value with a place, so the thing that puts a hole in an ordinary plot
-     * does not put one here. Worth pinning: it is the most visible consequence of the algebra being this one.
+     * does not put one here. It is drawn, and it is drawn <em>alone</em>: its neighbours run off to ±1000 while
+     * omega sits at (0, -1), so the stroke breaks either side of it and the value gets a marker of its own.
      */
     @Test
-    @DisplayName("dividing by zero is a point on the chart, not a hole in the curve")
-    void divisionByZeroDoesNotBreakTheCurve() {
-        List<double[]> runs = Algebra.curve(read("1÷x"), -2, 2, 65);
+    @DisplayName("dividing by zero is a point on the chart, not a hole and not a spike")
+    void divisionByZeroIsItsOwnPoint() {
+        List<double[]> runs = Algebra.walk(read("1÷x"), -2, 2, 65);
 
-        assertEquals(1, runs.size(), "a pole broke the curve, but omega is a value and has a place");
-        assertEquals(65 * 3, runs.getFirst().length);
+        assertTrue(has(runs, 0, -1, 0), "omega is a value with a place and has to be drawn");
+        for (double[] one : isolated(runs)) {
+            assertArrayEquals(new double[]{0, -1, 0}, one, 1e-9,
+                    "the only isolated point should be the pole itself");
+        }
     }
 
     /**
-     * {@code x+0} is the additive sum the rules do not fold — a term that stands at every sample — so nothing
-     * along it is placed and there is nothing to draw. The curve is empty rather than a straight line through
-     * the samples that happened to survive.
+     * <b>The failsafe, on an entry nobody would call pathological.</b> Refining until every gap is short
+     * cannot terminate here: the chord either side of the pole grows as the interval halves, past 1000 while
+     * the step goes to nothing. The walk has to notice that and stop rather than subdivide.
+     */
+    @Test
+    @DisplayName("a diverging neighbourhood stops the walk instead of refining it forever")
+    void divergenceStopsRatherThanRefining() {
+        List<double[]> runs = Algebra.walk(read("1÷x"), -2, 2, 65);
+
+        assertTrue(points(runs) <= 65 * 8, "the walk spent more than its budget: " + points(runs));
+    }
+
+    /** The other half of the failsafe: bounded but endless oscillation, which is the case it was written for. */
+    @Test
+    @DisplayName("an entry that oscillates without limit still terminates inside its budget")
+    void anOscillatingEntryTerminates() {
+        List<double[]> runs = Algebra.walk(read("tan(1÷x)"), -1, 1, 32);
+
+        assertFalse(runs.isEmpty(), "tan(1÷x) does answer, so something should be drawn");
+        assertTrue(points(runs) <= 32 * 8, "the walk spent more than its budget: " + points(runs));
+    }
+
+    /**
+     * {@code x+π} stands at every sample — π is not a rational, so the sum is not the additive pair and
+     * nothing along the curve is placed. The curve is empty rather than a straight line through the samples
+     * that happened to survive.
+     *
+     * <p><b>Not {@code x+0}, which used to be this example and is now a line.</b> {@code Place} reads a
+     * standing sum as {@code n + 0^t}, so {@code -3+0} places at {@code (-3, 1)} rather than standing. An
+     * expression that stands because of an irrational is the durable case: it holds for every binding, where
+     * a sum of unlike traction parts like {@code 0^x+0^2} only stands while the grid misses {@code x = 0}.
      */
     @Test
     @DisplayName("an expression that stands everywhere draws nothing at all")
     void aTermThatStandsIsNotDrawn() {
-        assertTrue(Algebra.curve(read("x+0"), -3, 3, 32).isEmpty());
+        assertTrue(Algebra.walk(read("x+π"), -3, 3, 32).isEmpty());
     }
 
     /**
      * {@code 2^x} answers for a natural power and stands otherwise — {@code 2^0} included, since {@code x^0}
      * is a 4-cycle that reaches nothing else, and {@code 2^-1} since a multiplicity takes no negative power.
-     * Over {@code [-3, 3]} at whole steps that is four standing samples and then three answers, so the curve
-     * has to begin where the answers begin rather than at the edge of the domain.
-     */
-    @Test
-    @DisplayName("a curve begins where the answers begin, not at the edge of the domain")
-    void aLeadingGapIsNotDrawn() {
-        List<double[]> runs = Algebra.curve(read("2^x"), -3, 3, 7);
-
-        assertEquals(1, runs.size());
-        assertEquals(3 * 3, runs.getFirst().length, "only the three samples that answered");
-        assertEquals(1, runs.getFirst()[0], 1e-9, "and the first of them is at x = 1");
-    }
-
-    /**
-     * At half steps the same expression answers only at the whole ones, so no two answered samples are
-     * neighbours. A stroke through one point draws nothing, so emitting those runs would leave invisible
-     * artefacts in the buffer for somebody to find later; they are dropped instead.
+     * So its answers are isolated: no two of them are neighbours at any step size.
      *
-     * <p>A gap strictly <em>inside</em> a run is the case this splitting exists for, and no entry the engine
-     * answers today produces one — what it answers is either everything, a tail, or isolated points. The
-     * splitting is kept because the alternative is a line drawn through samples the engine declined, and that
-     * is the one thing this seam may not do.
+     * <p><b>They are kept, which they were not before.</b> When the input held an axis a run of one point was
+     * dropped, because a stroke through one point draws nothing. Now that a sample contributes only where its
+     * value landed, an isolated answer is an ordinary value at an ordinary place and gets a marker.
      */
     @Test
-    @DisplayName("isolated answers are dropped rather than drawn as strokes of one point")
-    void isolatedSamplesAreNotStrokes() {
-        List<double[]> runs = Algebra.curve(read("2^x"), -3, 3, 13);
+    @DisplayName("an isolated answer is kept as a point rather than dropped for having no neighbour")
+    void isolatedAnswersAreKeptAsPoints() {
+        List<double[]> runs = Algebra.walk(read("2^x"), -3, 3, 7);
 
-        assertTrue(runs.isEmpty(), "no two answered samples are neighbours here, so there is no segment");
+        assertFalse(runs.isEmpty(), "2^3 answers, so there is something to draw");
+        assertEquals(runs.size(), isolated(runs).size(), "every run here should be a lone point");
+        assertTrue(has(runs, 8, 0, 0), "2^3 is 8, which places at (8, 0)");
     }
 
     @Test
@@ -179,26 +204,71 @@ class AlgebraTest {
     @Test
     @DisplayName("the origin samples as an exact zero, so 0^0 is 1 and not erasure")
     void theOriginIsSampledExactly() {
-        // A domain symmetric about zero with an odd sample count puts a sample exactly on the origin.
-        List<double[]> runs = Algebra.curve(read("0^x"), -1, 1, 3);
-        assertEquals(1, runs.size());
+        // The walk starts at the origin, so this sample is taken whatever the step count.
+        assertTrue(has(Algebra.walk(read("0^x"), -1, 1, 3), 1, 0, 0),
+                "0^0 is 1, which places at (1, 0) — not erasure and not the origin of the chart");
+    }
 
-        double[] run = runs.getFirst();
-        // The middle sample: x = 0, and 0^0 is 1, which is the place (1, 0).
-        assertEquals(0, run[3], 1e-9, "the middle sample should be the origin");
-        assertEquals(1, run[4], 1e-9, "0^0 is 1, so the real coordinate is 1");
-        assertEquals(0, run[5], 1e-9, "and its traction coordinate is absent");
+    /**
+     * <b>The case that decides the subdivision rule.</b> As x approaches zero {@code 0^x} approaches
+     * {@code (0, 0)}, which is erasure and not in the type; at zero the answer is {@code 0^0 = 1} at
+     * {@code (1, 0)}. The gap is exactly 1 at every depth, so refining cannot close it. The walk has to break
+     * the stroke and leave the origin standing alone, rather than either subdividing forever or drawing a
+     * line through a region the engine never claimed.
+     */
+    @Test
+    @DisplayName("a jump that cannot be subdivided away breaks the stroke instead")
+    void anUnbridgeableJumpBreaksTheStroke() {
+        List<double[]> runs = Algebra.walk(read("0^x"), -3, 3, 64);
+
+        assertTrue(has(runs, 1, 0, 0), "0^0 = 1 has to be drawn");
+        for (double[] stroke : strokes(runs)) {
+            for (int i = 0; i < stroke.length / 3; i++) {
+                assertNotEquals(1.0, stroke[i * 3],
+                        "the origin was joined to the traction axis by a stroke that crosses nothing");
+            }
+        }
     }
 
     @Test
-    @DisplayName("the axes are named for what they carry, which differs between the modes")
+    @DisplayName("the axes carry the value's own coordinates, the same three in every mode")
     void theAxesAreNamedForWhatTheyCarry() {
-        assertArrayEqualsNamed(new String[]{"x", "Re", "Tr"}, read("0^x").axisNames());
-        assertArrayEqualsNamed(new String[]{"t", "Re", "Tr"}, read("0^t").axisNames());
+        assertArrayEqualsNamed(new String[]{"Re", "Tr", "Tr'"}, read("0^x").axisNames());
+        assertArrayEqualsNamed(new String[]{"Re", "Tr", "Tr'"}, read("0^t").axisNames());
         assertArrayEqualsNamed(new String[]{"Re", "Tr", "Tr'"}, read("2+2").axisNames());
     }
 
     private static void assertArrayEqualsNamed(String[] expected, String[] actual) {
         assertEquals(java.util.Arrays.toString(expected), java.util.Arrays.toString(actual));
+    }
+
+    // ------------------------------------------------------------------ reading a walk
+
+    /** The runs holding more than one point: the ones drawn as strokes. */
+    private static List<double[]> strokes(List<double[]> runs) {
+        return runs.stream().filter(r -> r.length > 3).toList();
+    }
+
+    /** The runs holding exactly one point: the ones drawn as markers. */
+    private static List<double[]> isolated(List<double[]> runs) {
+        return runs.stream().filter(r -> r.length == 3).toList();
+    }
+
+    private static int points(List<double[]> runs) {
+        return runs.stream().mapToInt(r -> r.length / 3).sum();
+    }
+
+    /** Whether any sample anywhere in the walk landed at these coordinates. */
+    private static boolean has(List<double[]> runs, double a, double b, double c) {
+        for (double[] run : runs) {
+            for (int i = 0; i < run.length / 3; i++) {
+                if (Math.abs(run[i * 3] - a) < 1e-9
+                        && Math.abs(run[i * 3 + 1] - b) < 1e-9
+                        && Math.abs(run[i * 3 + 2] - c) < 1e-9) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }

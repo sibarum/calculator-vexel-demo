@@ -24,8 +24,14 @@ import java.util.Locale;
  */
 final class Ticks {
 
-    /** About this many marks on an axis. More is a ruler; fewer is not a scale. */
-    private static final int TARGET = 9;
+    /**
+     * About this many marks on an axis. More is a ruler; fewer is not a scale.
+     *
+     * <p>Visible so that a caller who needs the <em>step</em> the marks came out at — to format them to a
+     * common number of decimals — asks for it with the same target {@link #between} used, rather than
+     * repeating the number and eventually disagreeing about it.
+     */
+    static final int TARGET = 9;
 
     /**
      * Round values inside {@code [lo, hi]}, ascending, excluding zero.

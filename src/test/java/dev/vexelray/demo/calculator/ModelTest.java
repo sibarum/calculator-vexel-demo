@@ -87,8 +87,8 @@ class ModelTest {
 
         Algebra.Reading reading = model.scene().reading();
         assertSame(Algebra.Mode.SURFACE, reading.mode());
-        assertNotEquals(null, reading.refusal(), "two free names needs four axes and should say so");
-        assertTrue(Algebra.curve(reading, -6, 6, 64).isEmpty(), "a refused reading drew a curve anyway");
+        assertNotEquals(null, reading.refusal(), "two free names sweep a surface and should say so");
+        assertTrue(Algebra.walk(reading, -6, 6, 64).isEmpty(), "a refused reading drew a curve anyway");
     }
 
     /**

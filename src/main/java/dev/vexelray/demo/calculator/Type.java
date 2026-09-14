@@ -93,8 +93,19 @@ final class Type {
     /** 11px, as a number: an axis name in the plot overlay. */
     static final double SMALL_PX = 11;
 
-    /** 10px, as a number: a tick figure. */
-    static final double FIGURE_PX = 10;
+    /**
+     * 14px: a tick number on the plot.
+     *
+     * <p><b>Not a twin of anything above</b>, which is why it is named for the plot rather than for a size.
+     * Everything else in this block is the pixel form of a {@link Length} declared a few lines up, and a tick
+     * number used to be {@code FIGURE}'s — ten pixels, the size of a value in an inspector's right-hand column.
+     *
+     * <p>That was the wrong thing to match it to. A figure in a panel is read at a fixed distance against a
+     * flat card; a tick number is read across a picture, over geometry, at whatever size the window happens to
+     * be, and it is the one piece of text that says what the plot is measuring. It is bigger than the axis
+     * names for the same reason: a name is read once and a number is read every time the curve is.
+     */
+    static final double TICK_PX = 14;
 
     private Type() {
     }

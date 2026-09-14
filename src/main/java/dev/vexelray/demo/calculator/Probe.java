@@ -102,6 +102,16 @@ final class Probe {
     private volatile double domainLo = -6;
     private volatile double domainHi = 6;
 
+    /**
+     * What the three axes are called, as {@link Algebra.Reading#axisNames} gives them.
+     *
+     * <p>Carried rather than spelled here so the bubble and the axis labels cannot come to name the same two
+     * numbers differently. They did: this readout used to print the second component as {@code "0.35 i"}, an
+     * imaginary part, which is precisely the claim {@code axisNames} exists to refuse — the vertical axis is
+     * the traction axis, and the complex reading that would make it imaginary is not wired in this engine.
+     */
+    private volatile String[] axes = {"Re", "Tr", "Tr'"};
+
     Probe(Gui gui, KronoGui krono) {
         this.gui = gui;
         this.krono = krono;
@@ -170,11 +180,12 @@ final class Probe {
         return root;
     }
 
-    /** The samples to snap to, handed over whenever the geometry is rebuilt. */
-    void samples(double[] worldXyz, double lo, double hi) {
+    /** The samples to snap to, handed over whenever the geometry is rebuilt, with the names for their axes. */
+    void samples(double[] worldXyz, double lo, double hi, String[] axisNames) {
         this.curve = worldXyz;
         this.domainLo = lo;
         this.domainHi = hi;
+        this.axes = axisNames;
     }
 
     /**
@@ -238,8 +249,17 @@ final class Probe {
         double t = index / (double) Math.max(1, points.length / 3 - 1);
         double x = domainLo + (domainHi - domainLo) * t;
 
+        // Each component is said with the name of the axis it is on, rather than with a suffix that asserts
+        // what kind of number it is. "0.35 i" was a claim about the value; "Tr 0.35" is a statement about
+        // where it is, which is all a probe on a plot is in a position to say.
+        //
+        // Indices 1 and 2, so names[1] and names[2]: a curve sample is (Re, Tr, Tr') -- the input is walked
+        // over rather than plotted against -- so the two numbers beside the parameter are the second and third
+        // axes, not the first two.
+        String[] names = axes;
         label.text(String.format(Locale.ROOT, "x  %s", trim(x)));
-        value.text(String.format(Locale.ROOT, "%s  %s i", trim(points[index * 3 + 1]), trim(points[index * 3 + 2])));
+        value.text(String.format(Locale.ROOT, "%s %s   %s %s",
+                names[1], trim(points[index * 3 + 1]), names[2], trim(points[index * 3 + 2])));
         note.text("sample " + index);
 
         root.floatAt(Length.dp((float) (sx + OFFSET_X)), Length.dp((float) (sy + OFFSET_Y)));

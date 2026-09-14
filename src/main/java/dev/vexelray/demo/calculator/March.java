@@ -1,5 +1,6 @@
 package dev.vexelray.demo.calculator;
 
+import dev.vexelray.canvas.Canvas;
 import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.app.GuiApp;
 import dev.vexelray.gui.core.layout.NodeLayout;
@@ -13,6 +14,8 @@ import dev.vexelray.technique.sdf.ConeField;
 import dev.vexelray.technique.sdf.MarchSettings;
 import dev.vexelray.technique.sdf.SdfComposer;
 import dev.vexelray.technique.sdf.SdfScene;
+import dev.vexelray.technique.panel.PanelTechnique;
+import dev.vexelray.engine.RenderTechnique;
 import dev.vexelray.engine.embedded.SampledTechniqueHost;
 import dev.vexelray.vulkan.present.SampledColorTarget;
 import dev.vexelray.vulkan.present.StorageBuffer;
@@ -20,6 +23,7 @@ import sibarum.kronometer.Dur;
 import sibarum.probe.Lane;
 import sibarum.probe.Probe;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -132,6 +136,16 @@ final class March implements Motion.Eye {
      */
     private static final boolean DEPTH = true;
 
+    /**
+     * How much vertex data the floor's canvas may produce, in floats.
+     *
+     * <p>{@code PanelTechnique}'s own default is a megabyte of floats, sized for a panel with text and artwork
+     * on it. A grid plane is a few dozen strokes and there are six of these, three per pass, so it is worth saying the
+     * smaller number — and saying it as a ceiling that a divisions slider cannot quietly walk through:
+     * {@code draw} refuses a batch that does not fit rather than overrunning the buffer.
+     */
+    private static final int GRID_FLOATS = 1 << 16;
+
     /** The probe spans the two passes are measured as. Constants, because a lane's tallies key on the name. */
     private static final String DRAFT_SPAN = "plot.march";
     private static final String STILL_SPAN = "plot.march.still";
@@ -228,10 +242,42 @@ final class March implements Motion.Eye {
          */
         final SampledTechniqueHost host;
 
-        Pass(SampledColorTarget target, ConeFieldTechnique technique) {
+        /**
+         * The three coordinate planes, drawn rather than marched — the entries that sentence was about, one
+         * per {@link Grid} and in its order.
+         *
+         * <p>After the march in the list, which is submission order, and that is <b>not</b> what decides what
+         * hides what: every panel tests the depth the march writes, so a grid line behind the curve is behind
+         * it per pixel and one in front of it draws over it. Order decides the <em>blend</em>, which is why
+         * they are after — a translucent line composites over a curve already there rather than the reverse.
+         *
+         * <p>Among themselves the three do compose by order, because a panel tests depth without writing it.
+         * Nothing is lost by that: they meet only along the three lines where two planes cross, where both are
+         * drawing the same colour anyway.
+         *
+         * <p>One set per pass for the same reason the march's technique is one per pass: each owns a pipeline,
+         * and a pipeline is built against one render pass at one size. Their canvases are their own too.
+         */
+        final List<PanelTechnique> grids;
+
+        /**
+         * The furnishing this pass's canvases were drawn for, or null for canvases never drawn.
+         *
+         * <p>Per pass rather than per plot because the canvases are: the still pass may be minted long after
+         * the draft was last drawn, and a new one arrives empty whatever the draft is holding. A record, so
+         * "has anything about the furniture changed" is one comparison rather than a field-by-field check that
+         * would go stale the next time {@code Furniture} grows a flag.
+         */
+        Furnishing drawn;
+
+        Pass(SampledColorTarget target, ConeFieldTechnique technique, List<PanelTechnique> grids) {
             this.target = target;
             this.technique = technique;
-            this.host = new SampledTechniqueHost(target, List.of(technique));
+            this.grids = grids;
+            List<RenderTechnique> all = new ArrayList<>();
+            all.add(technique);
+            all.addAll(grids);
+            this.host = new SampledTechniqueHost(target, all);
         }
     }
 
@@ -307,6 +353,22 @@ final class March implements Motion.Eye {
     private volatile double targetZ;
     private volatile double distance;
     private volatile int coneCount;
+
+    /**
+     * What the panels should be drawing: which planes are on, how many divisions, and where the graduations go.
+     *
+     * <p>One value rather than two fields, and that is not tidiness. The worker that builds the geometry writes
+     * it and the frame that draws it reads it, so two fields could be read one update apart — a grid from the
+     * new scene with the ticks of the old one. A record written through one volatile cannot be half-read.
+     *
+     * <p>It is also the redraw key, compared by <b>identity</b>: every build makes a new one, so "is this the
+     * same delivery" is {@code ==} and needs no {@code equals} over the arrays inside it, which a record would
+     * have got wrong for free.
+     */
+    private record Furnishing(Geometry.Furniture furniture, Geometry.Marks marks) {
+    }
+
+    private volatile Furnishing furnishing;
 
     /** The node showing the image. Held for its measured box, which is where the aspect comes from. */
     private volatile Node viewport;
@@ -395,9 +457,11 @@ final class March implements Motion.Eye {
     private void compose(Ramp ramp) {
         SdfScene scene = new SdfScene(
                 new Surface.Sphere(0, 0, 0, 1),      // never compiled; ConeField replaces the field
-                // Not the framework's key light on its own: the curve gets it and the furniture does not, which
-                // is one scene wanting two materials and FN-21's whole complaint. See Lighting.
-                new Lighting(),
+                // The framework's key light, plainly. There was a Lighting here that shaded the furniture flat
+                // and the curve lit, because one SdfScene carries one Shading (FN-21) and the field held both.
+                // The field holds only the curve now, so there is nothing to tell apart and nothing to work
+                // around: the furniture is drawn on panels, where being flat is what a drawing already is.
+                dev.vexelray.shader.Shadings.defaultKeyLight(),
                 new MarchSettings(MARCH_STEPS, MarchSettings.DEFAULT.maxStep(), FAR_PLANE,
                         MarchSettings.DEFAULT.hitEpsilon(), MarchSettings.DEFAULT.hitEpsilonSlope(),
                         MarchSettings.DEFAULT.normalEpsilon(), MarchSettings.DEFAULT.normalEpsilonSlope()),
@@ -428,7 +492,15 @@ final class March implements Motion.Eye {
      * every other piece of this application's GPU work happens.
      */
     private Pass pass(SampledColorTarget target) {
-        return new Pass(target, new ConeFieldTechnique(cones, vertex, fragment, scene, params));
+        // Each panel is handed the scene's own focal length and clip depth rather than numbers of its own, which
+        // is what stops one projecting differently from the march it is standing in -- and the clip depth is the
+        // agreement that makes the shared attachment mean something (ClipDepth, and FN-20's depth note).
+        List<PanelTechnique> grids = new ArrayList<>(Grid.values().length);
+        for (Grid grid : Grid.values()) {
+            grids.add(new PanelTechnique(new Canvas(grid.width(), grid.height()), grid.panel(),
+                    FOCAL_LENGTH, scene.clipDepth(), GRID_FLOATS));
+        }
+        return new Pass(target, new ConeFieldTechnique(cones, vertex, fragment, scene, params), grids);
     }
 
     /**
@@ -520,6 +592,11 @@ final class March implements Motion.Eye {
         float[] packed = ConeField.pack(Cones.flatten(flat), flat.size());
         coneCount = flat.size();
         pending = packed;
+        // What the panels should be drawing, taken from the same Built as the cones so the frame and the
+        // picture inside it can never be one version apart. Refused geometry returns above without setting it,
+        // which is the right answer for the same reason: axes redrawn for a scene that was not drawn would be
+        // graduations measuring the previous plot.
+        furnishing = new Furnishing(built.furniture(), built.marks());
         dirty = true;
     }
 
@@ -647,6 +724,30 @@ final class March implements Motion.Eye {
      */
     private void march(Pass pass, double aspect, String span) {
         pass.technique.camera(eyeX(), eyeY(), eyeZ(), yaw, pitch, aspect);
+        // The same camera, said to each, which is the engine's rule rather than an oversight: per-frame data
+        // reaches a technique through that technique's own API (D5), and a runtime that owned the camera would
+        // be a runtime that knew what one is. What they share is the convention, not the call.
+        //
+        // INCLUDING THE ASPECT, and that is the whole of FN-22 said a second time. A panel left to take the
+        // frame's own aspect projects at the target's shape while the march projects at the box's, so the grid
+        // measures a different unit from the axes beside it -- and a different one again between the draft and
+        // the still, because those are two targets of two shapes. Both were reported from the running window
+        // before either was understood; they are one number.
+        for (PanelTechnique grid : pass.grids) {
+            grid.camera(eyeX(), eyeY(), eyeZ(), yaw, pitch, aspect);
+        }
+        // Drawn here rather than when the scene changed, because a canvas is a technique's own and the worker
+        // that changes the scene is not the thread allowed to touch one. Cheap, and only on a frame that was
+        // going to march anyway: a few dozen strokes against a march that costs milliseconds.
+        Furnishing wanted = furnishing;
+        if (wanted != null && wanted != pass.drawn) {
+            pass.drawn = wanted;
+            Grid[] planes = Grid.values();
+            for (int i = 0; i < planes.length; i++) {
+                Grid plane = planes[i];
+                pass.grids.get(i).draw(canvas -> plane.draw(canvas, wanted.furniture(), wanted.marks()));
+            }
+        }
         try (var zone = Probe.zone(Lane.GPU, span)) {
             pass.host.render((float) sky.r(), (float) sky.g(), (float) sky.b(), 1f);
         }

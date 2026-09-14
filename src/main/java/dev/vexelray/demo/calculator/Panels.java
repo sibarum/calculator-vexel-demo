@@ -201,22 +201,23 @@ final class Panels {
                 s -> s.cards().axes(), (s, on) -> cards(s, c -> new Scene.Cards(c.line(), c.surface(), c.volume(),
                         on, c.grid(), c.lineOpen(), c.axesOpen(), c.gridOpen())))
                 .add(Property.flag("", "Tick marks", () -> scene().furniture().ticks(),
-                        v -> edit(s -> with(s, w -> w.furniture(f -> new Geometry.Furniture(f.axes(), v,
-                                f.gridXY(), f.gridXZ(), f.gridYZ(), f.divisions()))))));
+                                v -> furniture(f -> f.withTicks(v))),
+                        // The axis names, which used to draw unconditionally. They are the other annotation on
+                        // the axes and they are wanted independently of the graduations: a reader who knows the
+                        // scale still wants to know which way is Tr, and a reader taking a still of a familiar
+                        // plot wants neither.
+                        Property.flag("", "Axis labels", () -> scene().furniture().labels(),
+                                v -> furniture(f -> f.withLabels(v))));
 
         card(panel, "grid", "Grid",
                 s -> s.cards().grid(), (s, on) -> cards(s, c -> new Scene.Cards(c.line(), c.surface(), c.volume(),
                         c.axes(), on, c.lineOpen(), c.axesOpen(), c.gridOpen())))
-                .add(plane("XY plane", f -> f.gridXY(), (f, v) -> new Geometry.Furniture(f.axes(), f.ticks(),
-                                v, f.gridXZ(), f.gridYZ(), f.divisions())),
-                        plane("XZ plane", f -> f.gridXZ(), (f, v) -> new Geometry.Furniture(f.axes(), f.ticks(),
-                                f.gridXY(), v, f.gridYZ(), f.divisions())),
-                        plane("YZ plane", f -> f.gridYZ(), (f, v) -> new Geometry.Furniture(f.axes(), f.ticks(),
-                                f.gridXY(), f.gridXZ(), v, f.divisions())),
+                .add(plane("XY plane", f -> f.gridXY(), Geometry.Furniture::withGridXY),
+                        plane("XZ plane", f -> f.gridXZ(), Geometry.Furniture::withGridXZ),
+                        plane("YZ plane", f -> f.gridYZ(), Geometry.Furniture::withGridYZ),
                         Property.range("", "Divisions", 2, 16, 1,
                                 () -> scene().furniture().divisions(),
-                                v -> edit(s -> with(s, w -> w.furniture(f -> new Geometry.Furniture(f.axes(),
-                                        f.ticks(), f.gridXY(), f.gridXZ(), f.gridYZ(), (int) v))))));
+                                v -> furniture(f -> f.withDivisions((int) v))));
 
         into.append(note(g, "Layers are independent. A surface can also draw as lines; a volume as a surface."));
     }
@@ -314,7 +315,7 @@ final class Panels {
     private Property plane(String name, java.util.function.Predicate<Geometry.Furniture> get,
                            java.util.function.BiFunction<Geometry.Furniture, Boolean, Geometry.Furniture> set) {
         return Property.flag("", name, () -> get.test(scene().furniture()),
-                v -> edit(s -> with(s, w -> w.furniture(f -> set.apply(f, v)))));
+                v -> furniture(f -> set.apply(f, v)));
     }
 
     private Inspector inspector(Node into) {
@@ -382,6 +383,19 @@ final class Panels {
 
     private Scene scene() {
         return model.scene();
+    }
+
+    /**
+     * Change one thing about the furniture.
+     *
+     * <p>Relative, like every other edit here: the change is a function of whatever the furniture turns out to
+     * be when the commit lands, rather than of what it was when the row was drawn. Combined with
+     * {@link Geometry.Furniture}'s named withers, that means a furniture row cannot write a stale copy of the
+     * six fields it is not touching — which is the failure Model's javadoc describes as producing something
+     * "perfectly coherent with one change missing".
+     */
+    private void furniture(java.util.function.UnaryOperator<Geometry.Furniture> change) {
+        edit(s -> with(s, w -> w.furniture(change)));
     }
 
     private void edit(java.util.function.UnaryOperator<Scene> change) {

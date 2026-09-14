@@ -23,7 +23,7 @@ package dev.vexelray.demo.calculator;
  * @param x1         domain, high
  * @param samples    points along the curve; clamped against the cone budget before it reaches the buffer
  * @param lineWidth  the curve's radius in world units — see {@link Geometry} on why this is not pixels
- * @param furniture  axes, ticks, grid planes and divisions
+ * @param furniture  axes, their ticks and names, grid planes and divisions
  * @param ramp       which colour map the curve is drawn in
  * @param cards      which layer cards are switched on and which are unfolded
  * @param cropping   whether the crop handles are showing
@@ -198,11 +198,22 @@ record Scene(String expression, Algebra.Reading reading,
      * <p>A layer being switched off is not the same as its settings being cleared — the prototype's cards dim
      * their rows rather than forgetting them, so turning grid back on brings back the planes it had. So the
      * switches are applied here, on the way to the renderer, and {@link #furniture} keeps what was chosen.
+     *
+     * <p><b>The ticks and the labels are gated on the axes, not just on the card.</b> They are annotations
+     * <em>on</em> the axis lines, so an axis that is not drawn cannot carry them — and the two consumers that
+     * draw them do not agree about that on their own. {@link Geometry} and {@link Grid} both check
+     * {@code axes()} before they read {@code ticks()}, so they were right by accident; {@link Labels} draws
+     * into an overlay that knows nothing about the geometry, so it was not. Switching the Axes card off used
+     * to leave the tick numbers and the axis names floating over the plot with nothing under them. Resolving
+     * it here rather than in the overlay means there is one answer to "is this axis annotated" and every
+     * reader gets the same one.
      */
     Geometry.Furniture effectiveFurniture() {
+        boolean axes = cards.axes() && furniture.axes();
         return new Geometry.Furniture(
-                cards.axes() && furniture.axes(),
-                furniture.ticks(),
+                axes,
+                axes && furniture.ticks(),
+                axes && furniture.labels(),
                 cards.grid() && furniture.gridXY(),
                 cards.grid() && furniture.gridXZ(),
                 cards.grid() && furniture.gridYZ(),

@@ -764,3 +764,54 @@ fix, not the application's to work around.
 closes it. The lifetime rule then reads whole: targets you keep are closed for you, targets you replace you
 hand back. A `boolean closed` guard in `SampledColorTarget.close()` would make the current advice merely
 wasteful rather than wrong, but it treats the symptom — the list is the thing that has no exit.
+
+---
+
+## FN-28 · A technique that takes the frame's aspect is wrong when the frame is not shown at its own shape
+
+`SdfRaymarchTechnique` computes its aspect from the frame it is recording into, and says why in the strongest
+terms: *"Aspect is the frame's, never the caller's. A camera API that took it would make every application
+responsible for noticing a resize, and one that used the realise-time extent would stretch the scene for the
+rest of the run."* `PanelTechnique` does the same, in the same words.
+
+That reasoning is right about a **window**, and it is right because a swapchain image is presented at its own
+extent. It is a property of that frame rather than a law about aspects — and [FN-22](#fn-22) is this
+application discovering the other half of it from the other side, two milestones earlier: a target sampled into
+a flexed box is **stretched**, so the shape it must be authored for is the box's and not its own.
+
+So a marched viewport in a GUI already has to override the aspect, and this application's own
+`ConeFieldTechnique.camera` takes one for exactly that reason. What had no such door was `PanelTechnique` — and
+the moment a panel was composited into the same target as the march, the two projected at different shapes.
+
+**What it looked like**, reported from the running window before either symptom was understood, and they are
+one number:
+
+1. *"The grid appears to measure units at a different scale from the axis. The unit on the grid is slightly
+   longer than the graduations on the axis."* The march was given the box's aspect (1920/1108 = 1.733); the
+   panel took its frame's (1280/768 = 1.667). The panel's world therefore scaled by 0.962 of the march's,
+   horizontally only — a grid drawn at the same world coordinates as the ticks, measuring 4% long.
+2. *"The grid appears to scale differently when in motion versus when stationary."* The draft target is
+   640×400 and the still one 1280×768, so "the frame's aspect" is two different numbers in the two passes and
+   the grid changed size whenever the plot settled.
+
+**Measured, at one camera, against a marched feature as the control.** The vertical axis — a march feature —
+is at x = 959.5 before and after, so nothing about the march moved. Three grid crossings, as offsets from that
+axis:
+
+| | before | after | ratio |
+|---|---|---|---|
+| row 720 | 82.3, 132.9 | 78.9, 128.0 | 0.959, 0.963 |
+| row 760 | 86.5, 96.2, 135.8 | 83.2, 92.6, 130.7 | 0.962, 0.963, 0.962 |
+
+Predicted 1.6667 / 1.7329 = **0.9618**. And with the aspect passed in, the draft and still passes put the grid
+in the same pixels to within **0.4 px**, where the two frame aspects predicted a 4.2% disagreement.
+
+**Framework answer, and it is the one taken here:** a six-argument `camera(x, y, z, yaw, pitch, aspect)` on
+`PanelTechnique`, with `FRAME_ASPECT` as the default the five-argument form passes. Per-frame data through the
+technique's own API (D5), so it follows a resize the way everything else does, and the javadoc says what the
+argument is *for* rather than merely what it is — the aspect the image will be **displayed** at, which is a
+thing the caller can know and the frame cannot.
+
+The same door is arguably owed by `SdfRaymarchTechnique`, for the same reason and not yet for the same
+consumer: this application does not use it, because a `ConeField` march is not what that class composes. A
+consumer that put a compiled SDF scene in a GUI viewport would hit this on its first frame.

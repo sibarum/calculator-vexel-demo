@@ -36,19 +36,39 @@ final class Labels {
     /** How far off the end of an axis its name sits, as a fraction of the box. */
     private static final double NAME_OUT = 1.16;
 
+    /**
+     * How far a tick number sits off its own axis, in world units.
+     *
+     * <p>One distance for all three, and each is pushed along a different axis so that a number stays in a
+     * coordinate plane rather than floating in the middle of the box: the {@code Re} numbers drop below their
+     * axis in {@code -y}, and both output axes' numbers step aside in {@code -x}. Zero carries no mark
+     * ({@link Ticks#between} excludes it), which is what keeps the three families from meeting at the origin.
+     */
+    private static final double TICK_OUT = 0.16;
+
     private Labels() {
     }
 
     /**
      * Build the overlay for one frame.
      *
-     * @param box    the node's laid-out rect — the picture is authored in that box's pixels, because the
-     *               renderer resolves no units of its own
-     * @param domain the input range the x axis spans, for the numbers
+     * @param box       the node's laid-out rect — the picture is authored in that box's pixels, because the
+     *                  renderer resolves no units of its own
+     * @param furniture what the scene asked for, <b>after</b> {@link Scene#effectiveFurniture()} has applied
+     *                  the layer switches — the whole record rather than the two flags this reads, so that a
+     *                  third annotation does not mean a third parameter, and so that there is no call site at
+     *                  which the overlay could be handed a different answer than the geometry got
+     * @param marks     where {@link Geometry} put the graduations and what it graduated them at. <b>The scene's
+     *                  domain is deliberately not a parameter any more.</b> This used to number the first axis
+     *                  from {@code x0..x1}, which was right while a curve was plotted against its input and
+     *                  became wrong the moment the algebra made all three axes coordinates of the value: the
+     *                  numbers then measured the input while the marks beside them measured {@code Re}, and the
+     *                  two agreed only for an expression whose values happen to reach as far as its domain
+     *                  does — {@code 0^x} over a symmetric range, which is the default
      * @return the picture, or {@code null} if the node has not been laid out yet
      */
     static Picture of(Lens lens, NodeLayout box, Algebra.Reading reading,
-                      double domainLo, double domainHi, boolean ticks) {
+                      Geometry.Furniture furniture, Geometry.Marks marks) {
         if (box == null) {
             return null;
         }
@@ -66,27 +86,41 @@ final class Labels {
         // "Tr", not "Im". The vertical output axis is the TRACTION axis -- an order of vanishing -- and the
         // complex reading that made it an imaginary part is not wired in this engine. A label naming a part
         // the value does not have is the plot claiming something the algebra never said.
-        String[] axes = reading.axisNames();
-        sketch.tag("axis-name");
-        put(sketch, lens, w, h, Geometry.BOX * NAME_OUT, 0, 0, axes[0], name, Type.SMALL_PX);
-        put(sketch, lens, w, h, 0, Geometry.BOX_H * NAME_OUT, 0, axes[1], name, Type.SMALL_PX);
-        put(sketch, lens, w, h, 0, 0, Geometry.BOX_H * NAME_OUT, axes[2], name, Type.SMALL_PX);
+        if (furniture.labels()) {
+            String[] axes = reading.axisNames();
+            sketch.tag("axis-name");
+            put(sketch, lens, w, h, Geometry.BOX * NAME_OUT, 0, 0, axes[0], name, Type.SMALL_PX);
+            put(sketch, lens, w, h, 0, Geometry.BOX_H * NAME_OUT, 0, axes[1], name, Type.SMALL_PX);
+            put(sketch, lens, w, h, 0, 0, Geometry.BOX_H * NAME_OUT, axes[2], name, Type.SMALL_PX);
+        }
 
-        // Numbers on the input axis only, and only where there is an input: in POINT mode that axis is a
-        // coordinate of the value, and the domain the panels hold is not what it is measuring.
-        if (!ticks || !reading.drawsCurve()) {
+        // Numbers on all three axes, at exactly the positions Geometry put the marks -- one source, so a
+        // number cannot sit beside a mark that is somewhere else, and no axis is graduated in a scale the
+        // other two are not.
+        //
+        // The guard was drawsCurve() and is understood(), and the widening is the point. It excluded POINT
+        // mode because the numbers came from the input domain, which measures nothing a single value is
+        // showing; now they come from the marks, and the marks are the value's own coordinates in every mode.
+        // A value standing in the box is a thing a reader wants to read off an axis at least as much as a
+        // curve is.
+        //
+        // A refusal still gets none, and that is not the old guard surviving by accident: nothing is plotted,
+        // so span falls back to 1, and numbering the axes -1..1 would be offering a scale for an empty box.
+        if (!furniture.ticks() || !reading.understood()) {
             return sketch.picture();
         }
         sketch.tag("tick");
-        // The same positions Geometry put the marks at -- one source, so a number cannot sit beside a mark that
-        // is somewhere else.
-        double[] values = Ticks.between(domainLo, domainHi);
-        double step = Ticks.step(domainHi - domainLo, 9);
-        for (double value : values) {
-            // The label says what the *domain* is there, not where the geometry was put: the world box is an
-            // internal frame and a reader should never see its coordinates.
-            double at = -Geometry.BOX + 2 * Geometry.BOX * ((value - domainLo) / (domainHi - domainLo));
-            put(sketch, lens, w, h, at, -0.16, 0, Ticks.label(value, step), figure, Type.FIGURE_PX);
+        double[] values = marks.values();
+        double[] domain = marks.domain();
+        double[] output = marks.output();
+        for (int i = 0; i < values.length; i++) {
+            // One number written once and placed three times. The label says what the *value* is there, not
+            // where the geometry put it: the world box is an internal frame and a reader should never see its
+            // coordinates.
+            String text = Ticks.label(values[i], marks.step());
+            put(sketch, lens, w, h, domain[i], -TICK_OUT, 0, text, figure, Type.TICK_PX);
+            put(sketch, lens, w, h, -TICK_OUT, output[i], 0, text, figure, Type.TICK_PX);
+            put(sketch, lens, w, h, -TICK_OUT, 0, output[i], text, figure, Type.TICK_PX);
         }
         return sketch.picture();
     }

@@ -38,12 +38,22 @@ import java.util.List;
  * handle. A rounded polyline that merely passes <em>near</em> its vertices would put the curve somewhere other
  * than where the samples say it is, which is the one thing a plot may not do.
  *
- * <h2>The furniture is geometry too, and that is the payoff</h2>
+ * <h2>The furniture is not here at all any more</h2>
  *
- * <p>The axes, the ticks and the grid planes are strokes in the same union as the curve, so they are marched
- * together and <b>occlusion is correct without being managed</b>: a grid line behind the curve is behind it
- * because the ray hit the curve first. No depth sort, no painter's order, no per-cell bounding box. A drawn
- * plot has to solve that; a marched one never has it.
+ * <p>The grid planes, the axes and their ticks were all strokes in the same union as the curve, and the
+ * argument for it was a good one: <b>occlusion is correct without being managed</b>, because an axis behind the
+ * curve is behind it by the ray hitting the curve first. No depth sort, no painter's order.
+ *
+ * <p>They are drawings on panels now ({@link Grid}), and the property survives the move — a panel tests the
+ * depth the march writes, so the occlusion is still per pixel and still not managed by anything here. What the
+ * move bought is that a mark is a <em>shape</em> rather than a tube: a grid line at the radius these wanted is
+ * thinner than the march's own hit threshold, so it was found by the threshold rather than by its surface,
+ * which is a dashed line at any resolution.
+ *
+ * <p>So what is left in the field is the curve and, in point mode, the marker — <b>the things the plot is of,
+ * and nothing of the frame around them</b>. That is also what let the scene go back to one shading model: with
+ * no furniture in the union there is nothing to tell apart from the curve, and the whole of {@code Lighting}
+ * went with it.
  *
  * <h2>Joints are sharp, and that is a cost decision</h2>
  *
@@ -69,32 +79,73 @@ final class Geometry {
      * knowing before the Width slider is wired: it will not be a pixel width and should not claim to be.
      */
 
-    /** An axis is thinner than the curve and thicker than the grid, which is the whole of its visual job. */
-    // Package-visible rather than private, and the three below with it, because Lighting shades on where the
-    // furniture is and has to use the same numbers that put it there. Two copies would be a shading model
-    // describing a scene this class had since changed.
-    static final double AXIS_RADIUS = 0.014;
-
-    /**
-     * A grid line.
-     *
-     * <p>Not much thinner than an axis, and it cannot usefully be: the march's hit threshold is
-     * {@code hitEpsilon + hitEpsilonSlope × distance}, about {@code 0.015} at seven units, so a tube much below
-     * that is found by the <em>threshold</em> rather than by its own surface and stops getting thinner. Grid
-     * lines are separated from axes by colour instead, which is what the prototype does anyway.
-     */
-    static final double GRID_RADIUS = 0.008;
-
-    /** How far a tick sticks out from its axis. */
-    static final double TICK = 0.06;
-
     /** Half the length of one arm of the marker that shows where a single value lands. */
     private static final double MARKER_ARM = 0.1;
 
-    /** What a scene is made of, beyond the curve. */
-    record Furniture(boolean axes, boolean ticks, boolean gridXY, boolean gridXZ, boolean gridYZ, int divisions) {
+    /**
+     * What a scene is made of, beyond the curve.
+     *
+     * <p>{@code ticks} and {@code labels} are the two annotations on the axes, and they are separate because
+     * they answer different questions: the ticks say <em>where</em> along an axis a reader is, and the labels
+     * say <em>which axis it is</em>. A plot that has been read once wants the second without the first, which
+     * is the whole reason the pair is two flags rather than one.
+     *
+     * <p>Neither means anything with the axes switched off, and {@link Scene#effectiveFurniture()} is where
+     * that is enforced rather than here: this record is what was <em>chosen</em>, and a card being off must
+     * not forget the choices inside it.
+     *
+     * @param axes      whether the three axis lines are drawn at all
+     * @param ticks     graduations along the axes, and the numbers beside them
+     * @param labels    the axis names — {@code Re · Tr · Tr'} — drawn off the end of each axis
+     * @param divisions squares across a grid plane
+     */
+    record Furniture(boolean axes, boolean ticks, boolean labels,
+                     boolean gridXY, boolean gridXZ, boolean gridYZ, int divisions) {
 
-        static final Furniture DEFAULT = new Furniture(true, true, false, true, false, 6);
+        /**
+         * All three planes, where it used to be the floor alone.
+         *
+         * <p>One face-mounted plane was as much as the marched grid could carry: three opaque cages around a
+         * curve is a curve in a box, and the two the design left off were off for that reason. Drawn planes
+         * through the origin are the coordinate system rather than a container — they are mostly transparent,
+         * they are read through, and the curve passes visibly between them — so the three that were a cage are
+         * the three that say where a point is.
+         */
+        static final Furniture DEFAULT = new Furniture(true, true, true, true, true, true, 6);
+
+        // Named one-field changes, for the reason Scene.Draft gives at length: a seven-component record has a
+        // seven-argument constructor, and a canonical call spelled out at every call site is how a field ends
+        // up in the wrong slot. Five of these components are booleans standing in a row, so the compiler cannot
+        // catch a swap and the picture that comes back is merely wrong rather than broken. The positional call
+        // appears twice below and nowhere else.
+
+        Furniture withAxes(boolean v) {
+            return new Furniture(v, ticks, labels, gridXY, gridXZ, gridYZ, divisions);
+        }
+
+        Furniture withTicks(boolean v) {
+            return new Furniture(axes, v, labels, gridXY, gridXZ, gridYZ, divisions);
+        }
+
+        Furniture withLabels(boolean v) {
+            return new Furniture(axes, ticks, v, gridXY, gridXZ, gridYZ, divisions);
+        }
+
+        Furniture withGridXY(boolean v) {
+            return new Furniture(axes, ticks, labels, v, gridXZ, gridYZ, divisions);
+        }
+
+        Furniture withGridXZ(boolean v) {
+            return new Furniture(axes, ticks, labels, gridXY, v, gridYZ, divisions);
+        }
+
+        Furniture withGridYZ(boolean v) {
+            return new Furniture(axes, ticks, labels, gridXY, gridXZ, v, divisions);
+        }
+
+        Furniture withDivisions(int v) {
+            return new Furniture(axes, ticks, labels, gridXY, gridXZ, gridYZ, v);
+        }
     }
 
     /**
@@ -105,47 +156,86 @@ final class Geometry {
      * in. Recomputing the mapping in the probe would be three lines and one refactor away from disagreeing with
      * the plot it is pointing at.
      *
-     * @param strokes what goes in the buffer
-     * @param curve   the curve's points, interleaved xyz, already mapped into the world box
+     * <p>The furniture travels with them for the parts of it that are no longer strokes. The three grid planes are
+     * drawings on panels rather than geometry (see {@link Grid}), so what used to leave here as cones now has
+     * to leave as the numbers to draw them from — and it leaves from here, rather than being read off the Scene a
+     * second time, so that the picture and the grid under it can never be built from two different versions.
+     *
+     * @param strokes   what goes in the buffer
+     * @param curve     the curve's points, interleaved xyz, already mapped into the world box
+     * @param furniture what the scene asked for, for the parts of it that are not strokes
      */
-    record Built(List<Surface.Stroke> strokes, double[] curve) {
+    record Built(List<Surface.Stroke> strokes, double[] curve, Furniture furniture, Marks marks) {
+    }
+
+    /**
+     * Where the graduations fall along each axis, in the box's coordinates — {@code -BOX..BOX} for the domain
+     * and {@code -BOX_H..BOX_H} for the outputs.
+     *
+     * <p>One list for the outputs rather than two, because there is one: a traction coordinate and its
+     * reflection share a scale, so the same marks go on both output axes. Two lists that happened to be equal
+     * would be two chances for them to stop being.
+     *
+     * <p><b>The values travel with the positions.</b> All three axes are graduated at the same values — they
+     * are three coordinates of one value space sharing one {@link #span} — so there is a single {@code values}
+     * array, and {@code domain[i]} and {@code output[i]} are both where {@code values[i]} falls, on an axis
+     * scaled to {@code BOX} and to {@code BOX_H} respectively. Carrying them rather than letting the overlay
+     * re-derive them is the same rule this class applies to the mapping itself: {@link Labels} writes the
+     * number beside a mark, and a number computed from anything but the mark's own value is a number for a
+     * different axis. It used to be exactly that — the input domain, from before the input stopped being an
+     * axis at all.
+     *
+     * @param values what each mark stands for, ascending, zero excluded
+     * @param step   the 1-2-5 step those values came out at, so every number on every axis is written to the
+     *               same number of decimals
+     */
+    record Marks(double[] domain, double[] output, double[] values, double step) {
+
+        static final Marks NONE = new Marks(new double[0], new double[0], new double[0], 1);
     }
 
     /**
      * The whole scene for a reading.
      *
-     * <h2>What the three axes are depends on the mode, and that is not a special case</h2>
+     * <h2>The three axes are the same in every mode, and that is the point</h2>
      *
-     * <p>A curve is drawn over its input, so its axes are {@code (x, Re, Tr)}. A single value has no input, so
-     * its axes are the value's own coordinates, {@code (Re, Tr, Tr')} — the same three axes carrying the thing
-     * there actually is. Forcing one layout on both would mean either a marker stranded on an input axis that
-     * means nothing to it, or a curve with nowhere to put its domain.
+     * <p>They are the value's own coordinates, {@code (Re, Tr, Tr')}. A curve no longer spends one of them on
+     * its input: the input is walked over and each sample contributes only where its value landed, so a curve
+     * and a marker are drawn in one space and a reader compares them directly. See {@code Algebra.walk}.
      *
-     * @param samples how many points to sample the curve at; the caller clamps this against the buffer ceiling
+     * @param samples the initial step count for the walk; the caller clamps this against the buffer ceiling
      */
     static Built of(Algebra.Reading reading, double x0, double x1, int samples,
                     Furniture furniture, double radius, Ramp ramp) {
-        List<double[]> runs = Algebra.curve(reading, x0, x1, samples);
+        List<double[]> runs = Algebra.walk(reading, x0, x1, samples);
         double span = span(runs, reading);
-        boolean overInput = reading.drawsCurve();
+
+        // The axes and their ticks are not built here any more -- they are drawn on the panels, like the grid,
+        // so what this contributes to them is where their graduations go. What is left in the field is the
+        // curve and, in point mode, the marker: the things the plot is OF rather than the frame around it.
+        Marks marks = furniture.axes() ? marks(furniture.ticks(), span) : Marks.NONE;
 
         List<Surface.Stroke> scene = new ArrayList<>();
-        grid(scene, furniture);
-        if (furniture.axes()) {
-            axes(scene, furniture.ticks(), overInput ? x0 : -span, overInput ? x1 : span, span);
-        }
         List<double[]> placed = new ArrayList<>(runs.size());
         for (double[] run : runs) {
-            placed.add(world(run, x0, x1, span));
+            // A run of one is an isolated answer, and it gets a marker for the reason a single value does:
+            // a stroke through one point draws nothing, and the value is no less real for having no
+            // neighbour. It is passed unmapped, because marker does its own mapping.
+            if (run.length == 3) {
+                marker(scene, run, span, radius, ramp);
+            }
+            placed.add(world(run, span));
         }
-        // One stroke per run, so a break in the curve is a break in the picture. See Algebra.curve.
+        // One stroke per run, so a break in the curve is a break in the picture. See Algebra.walk.
         for (double[] run : placed) {
-            scene.add(curve(run, radius, ramp));
+            if (run.length >= 6) {
+                scene.add(curve(run, radius, ramp));
+            }
         }
         if (reading.drawsMarker()) {
             marker(scene, reading.place().toDoubles(), span, radius, ramp);
         }
-        return new Built(List.copyOf(scene), joined(placed));
+        return new Built(List.copyOf(scene), joined(placed), furniture, marks);
     }
 
     /**
@@ -162,8 +252,8 @@ final class Geometry {
     private static double span(List<double[]> runs, Algebra.Reading reading) {
         double most = 0;
         for (double[] run : runs) {
-            for (int i = 0; i < run.length / 3; i++) {
-                most = Math.max(most, Math.max(Math.abs(run[i * 3 + 1]), Math.abs(run[i * 3 + 2])));
+            for (double c : run) {
+                most = Math.max(most, Math.abs(c));
             }
         }
         if (reading.drawsMarker()) {
@@ -177,15 +267,19 @@ final class Geometry {
     /**
      * The sampled points mapped into the world box, which is where everything else reads them.
      *
-     * <p>The input axis is mapped from the domain and the output axes from {@link #span}, because the outputs
-     * are no longer bounded: a coordinate on the traction axis is an order of vanishing and {@code 0^-6} is
-     * six units out. The fake's outputs were a sine and a cosine and could be scaled by a constant; these
-     * cannot, and a constant would have put most curves outside the box.
+     * <p>All three axes are mapped from {@link #span}, because all three are outputs now and none of them is
+     * bounded: a coordinate on the traction axis is an order of vanishing and {@code 0^-6} is six units out.
+     * The fake's outputs were a sine and a cosine and could be scaled by a constant; these cannot, and a
+     * constant would have put most curves outside the box.
+     *
+     * <p>Exactly the mapping {@link #marker} uses, and that is load-bearing rather than a coincidence: a
+     * curve and a marker are the same three coordinates, so a curve through a value's place must land on the
+     * marker for that value.
      */
-    private static double[] world(double[] xyz, double x0, double x1, double span) {
+    private static double[] world(double[] xyz, double span) {
         double[] out = new double[xyz.length];
         for (int i = 0; i < xyz.length / 3; i++) {
-            out[i * 3] = map(xyz[i * 3], x0, x1, -BOX, BOX);
+            out[i * 3] = map(xyz[i * 3], -span, span, -BOX, BOX);
             out[i * 3 + 1] = xyz[i * 3 + 1] / span * BOX_H;
             out[i * 3 + 2] = xyz[i * 3 + 2] / span * BOX_H;
         }
@@ -264,64 +358,36 @@ final class Geometry {
     // -------------------------------------------------------------- furniture
 
     /**
-     * Three axes through the origin, each reaching the faces of the box, with ticks along them.
+     * Where the graduations fall, in the box's own coordinates, and what they stand for.
      *
-     * <p>Tick positions come from {@link Ticks}, which is also what {@link Labels} reads -- so a mark and the
-     * number beside it cannot describe different places. Two lists of positions that have to agree is exactly
-     * the kind of duplication that survives review and then drifts one refactor later.
+     * <p>The axes and their ticks are drawn on panels now ({@link Grid}) rather than marched, so what used to
+     * leave this class as strokes leaves it as positions. They are computed here and not there for the reason
+     * {@link Built} gives about the furniture generally: the mapping from a value to a place in the box is this
+     * class's, and a second implementation of it in the thing that draws the marks would be three lines and one
+     * refactor away from disagreeing with the curve they are meant to measure. {@link Labels} reads the values
+     * back off the result for the same reason, and that is new — it used to compute its own.
+     *
+     * <h2>One range for all three axes, because the input is not one of them</h2>
+     *
+     * <p>This took the domain as two arguments when a curve was plotted <em>against</em> its input and the
+     * first axis was that input. It is not, since the algebra landed: all three axes are coordinates of the
+     * value, so all three are ticked over the range the values actually reached — {@code -span..span} — and
+     * the only difference between them is that the first is scaled to {@link #BOX} and the other two to
+     * {@link #BOX_H}. The box is an internal frame and its coordinates are never shown, so a mark at "1"
+     * meaning the edge of the picture would be a mark measuring nothing.
      */
-    private static void axes(List<Surface.Stroke> into, boolean ticks,
-                             double domainLo, double domainHi, double span) {
-        Surface.Rgb colour = colour(Look.QUIET);
-        into.add(line(-BOX, 0, 0, BOX, 0, 0, AXIS_RADIUS, colour));
-        into.add(line(0, -BOX_H, 0, 0, BOX_H, 0, AXIS_RADIUS, colour));
-        into.add(line(0, 0, -BOX_H, 0, 0, BOX_H, AXIS_RADIUS, colour));
+    private static Marks marks(boolean ticks, double span) {
         if (!ticks) {
-            return;
+            return Marks.NONE;
         }
-        for (double v : Ticks.between(domainLo, domainHi)) {
-            double at = map(v, domainLo, domainHi, -BOX, BOX);
-            into.add(line(at, -TICK, 0, at, TICK, 0, GRID_RADIUS, colour));
+        double[] values = Ticks.between(-span, span);
+        double[] domain = new double[values.length];
+        double[] output = new double[values.length];
+        for (int i = 0; i < values.length; i++) {
+            domain[i] = map(values[i], -span, span, -BOX, BOX);
+            output[i] = values[i] / span * BOX_H;
         }
-        // The output axes are ticked over the range the values actually reached, not over the box: the box is
-        // an internal frame and its coordinates are never shown, so a mark at "1" that means the edge of the
-        // picture would be a mark measuring nothing. Same reasoning as the domain axis, same source of marks.
-        for (double v : Ticks.between(-span, span)) {
-            double at = v / span * BOX_H;
-            into.add(line(-TICK, at, 0, TICK, at, 0, GRID_RADIUS, colour));
-            into.add(line(0, -TICK, at, 0, TICK, at, GRID_RADIUS, colour));
-        }
-    }
-
-    /**
-     * Grid planes on the far faces of the box.
-     *
-     * <p>On the faces rather than through the origin, because a plane through the middle of the volume is
-     * something the curve has to be read <em>through</em>, and one on the back wall is something it is read
-     * <em>against</em>. Which face is "far" does not change with the camera here — that would be a per-frame
-     * decision, and the geometry is deliberately camera-independent.
-     */
-    private static void grid(List<Surface.Stroke> into, Furniture f) {
-        Surface.Rgb colour = colour(p -> p.surface(1));
-        int n = Math.max(2, f.divisions());
-        for (int i = 0; i <= n; i++) {
-            double t = i / (double) n;
-            double x = -BOX + 2 * BOX * t;
-            double y = -BOX_H + 2 * BOX_H * t;
-            double z = -BOX_H + 2 * BOX_H * t;
-            if (f.gridXY()) {          // the back wall: constant z
-                into.add(line(x, -BOX_H, -BOX_H, x, BOX_H, -BOX_H, GRID_RADIUS, colour));
-                into.add(line(-BOX, y, -BOX_H, BOX, y, -BOX_H, GRID_RADIUS, colour));
-            }
-            if (f.gridXZ()) {          // the floor: constant y
-                into.add(line(x, -BOX_H, -BOX_H, x, -BOX_H, BOX_H, GRID_RADIUS, colour));
-                into.add(line(-BOX, -BOX_H, z, BOX, -BOX_H, z, GRID_RADIUS, colour));
-            }
-            if (f.gridYZ()) {          // the side wall: constant x
-                into.add(line(-BOX, y, -BOX_H, -BOX, y, BOX_H, GRID_RADIUS, colour));
-                into.add(line(-BOX, -BOX_H, z, -BOX, BOX_H, z, GRID_RADIUS, colour));
-            }
-        }
+        return new Marks(domain, output, values, Ticks.step(2 * span, Ticks.TARGET));
     }
 
     // ----------------------------------------------------------------- shared
