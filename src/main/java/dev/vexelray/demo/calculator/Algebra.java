@@ -86,9 +86,10 @@ import java.util.Set;
  * arithmetic is the model's table; a folded term hands back a {@code T} and the pair's coordinates are the
  * two numbers this passes on. Nothing here implements an operation.
  *
- * <p><b>The one exception is stated rather than hidden</b>: {@link #projection} is the model table's projection
- * column, written here because {@code T} does not publish one yet. It is four lines and it belongs on the
- * type; if it stays here it will be the thing that disagrees when the table moves.
+ * <p><b>The one exception has been closed.</b> {@link #projection} was the model table's projection column,
+ * written here because {@code T} published none. The column is now {@code T.projection()} and what is left
+ * here is the spelling of it, so there is no rule in this file that could disagree with the table when the
+ * table moves -- only a formatter, which can only disagree with itself.
  *
  * <h2>The one rule inherited from the fake, and it still holds</h2>
  *
@@ -490,32 +491,37 @@ final class Algebra {
     }
 
     /**
-     * The model table's projection column: what this pair is as an ordinary signed number.
+     * How this client spells {@code T.projection()}.
      *
-     * <p><b>Written here and it should not be.</b> It is the model's own table — {@code T(0,1)} projects as
-     * {@code +0}, {@code T(0,-1)} as {@code -0}, {@code T(1,0)} as {@code +inf}, {@code T(-1,0)} as
-     * {@code -inf} — and the type is where a column of the table belongs. It is here because {@code T}
-     * publishes no projection yet, and it is four lines of IEEE division rather than four lines of cases
-     * because the signed zeroes and the two infinities are exactly what a double already does with a sign on
-     * its divisor.
+     * <p>The column itself is the type's now, and the reasons it is worth having moved are both reasons this
+     * class could not have served: {@code T} answers the four points on the axes from their signs and divides
+     * the coordinates exactly for everything else, where this divided the two doubles — so a pair whose
+     * coordinates have outgrown a double projects to the number it names rather than to infinity over
+     * infinity. And it reads {@code T(0,0)} as a value by {@code x ÷ x}, which is the table's rule and not
+     * one a chart should be applying on its own.
      *
-     * <p>Written as {@code inf} rather than {@code ∞} for a reason that is not aesthetic: the text atlas this
-     * application draws with has no {@code U+221E}, and a missing glyph draws as a box.
+     * <p>What is left is spelling. {@code inf} rather than {@code ∞} for a reason that is not aesthetic: the
+     * text atlas this application draws with has no {@code U+221E}, and a missing glyph draws as a box. The
+     * signed zero is written out because it is the one distinction {@link #trim} would lose.
      */
     static String projection(T value) {
-        T at = value.resolved();
-        return projection(at.p().doubleValue(), at.q().doubleValue());
+        return spell(value.projection());
     }
 
     /**
      * As {@link #projection(T)}, from a pair already read as doubles — which is what a sampled curve carries.
      *
-     * <p>One implementation for both, because the probe quotes this over a curve and the subtitle quotes it
-     * over a value, and a chart whose bubble and whose caption disagreed about what something projects to
-     * would be worse than one that offered neither.
+     * <p>A sample arrives as two doubles rather than as a pair, so the division happens here; every sample
+     * has already been through {@code T.resolved()} in {@link #place}, which is what the type does first.
+     * One spelling for both, because the probe quotes this over a curve and the subtitle quotes it over a
+     * value, and a chart whose bubble and whose caption disagreed about what something projects to would be
+     * worse than one that offered neither.
      */
     static String projection(double p, double q) {
-        double r = p / q;
+        return spell(p / q);
+    }
+
+    private static String spell(double r) {
         if (Double.isInfinite(r)) {
             return r > 0 ? "+inf" : "-inf";
         }
