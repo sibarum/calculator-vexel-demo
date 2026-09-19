@@ -98,19 +98,26 @@ final class Probe {
     /** The curve in world space, as the last geometry build left it. Read on the pointer thread. */
     private volatile double[] curve = new double[0];
 
-    /** The domain those samples span, for reporting x as the user's number rather than the box's. */
-    private volatile double domainLo = -6;
-    private volatile double domainHi = 6;
+    /**
+     * The same samples in the model's own numbers — interleaved {@code x, q, p} — so the bubble quotes what
+     * the walk found rather than where the box put it.
+     *
+     * <p>This used to read the world coordinates and interpolate the parameter from a sample's index, and both
+     * were wrong in the same way: the world box is an internal frame whose numbers mean nothing to a reader,
+     * and an index across the joined runs is not the parameter wherever a run broke. Both are things the walk
+     * already knew, so they are carried rather than reconstructed.
+     */
+    private volatile double[] values = new double[0];
 
     /**
-     * What the three axes are called, as {@link Algebra.Reading#axisNames} gives them.
+     * What the two axes are called, as {@link Algebra.Reading#axisNames} gives them.
      *
      * <p>Carried rather than spelled here so the bubble and the axis labels cannot come to name the same two
      * numbers differently. They did: this readout used to print the second component as {@code "0.35 i"}, an
-     * imaginary part, which is precisely the claim {@code axisNames} exists to refuse — the vertical axis is
-     * the traction axis, and the complex reading that would make it imaginary is not wired in this engine.
+     * imaginary part — a claim about what kind of number the value is, where {@code q} and {@code p} are the
+     * names of its two coordinates and nothing more, which is all a probe is in a position to say.
      */
-    private volatile String[] axes = {"Re", "Tr", "Tr'"};
+    private volatile String[] axes = {"q", "p"};
 
     Probe(Gui gui, KronoGui krono) {
         this.gui = gui;
@@ -180,11 +187,19 @@ final class Probe {
         return root;
     }
 
-    /** The samples to snap to, handed over whenever the geometry is rebuilt, with the names for their axes. */
-    void samples(double[] worldXyz, double lo, double hi, String[] axisNames) {
+    /**
+     * The samples to snap to, handed over whenever the geometry is rebuilt, with the names for their axes.
+     *
+     * <p>Two arrays of the same points: {@code worldXyz} is where they are on screen, which is what a pointer
+     * is compared against, and {@code values} is what they <em>are</em>, which is what the bubble prints. They
+     * are index-parallel — sample {@code i} is at {@code worldXyz[3i..]} and reads {@code values[3i..]} — and
+     * both come from one geometry build, so neither can describe a different curve than the other.
+     *
+     * @param values interleaved {@code x, q, p}, as {@code Geometry.Built.samples} carries them
+     */
+    void samples(double[] worldXyz, double[] values, String[] axisNames) {
         this.curve = worldXyz;
-        this.domainLo = lo;
-        this.domainHi = hi;
+        this.values = values;
         this.axes = axisNames;
     }
 
@@ -245,22 +260,27 @@ final class Probe {
     }
 
     private void show(int index, double[] points, double sx, double sy) {
-        // The world box is an internal frame; a reader should only ever see the domain.
-        double t = index / (double) Math.max(1, points.length / 3 - 1);
-        double x = domainLo + (domainHi - domainLo) * t;
+        // What the sample IS, not where the box put it. A sample is (x, q, p): the parameter it was walked at
+        // and the pair it landed on, both exactly as the walk had them.
+        double[] found = values;
+        if (found.length < points.length) {
+            return;
+        }
+        double x = found[index * 3];
 
         // Each component is said with the name of the axis it is on, rather than with a suffix that asserts
-        // what kind of number it is. "0.35 i" was a claim about the value; "Tr 0.35" is a statement about
-        // where it is, which is all a probe on a plot is in a position to say.
-        //
-        // Indices 1 and 2, so names[1] and names[2]: a curve sample is (Re, Tr, Tr') -- the input is walked
-        // over rather than plotted against -- so the two numbers beside the parameter are the second and third
-        // axes, not the first two.
+        // what kind of number it is. "0.35 i" was a claim about the value; "p 0.35" is a statement about where
+        // it is, which is all a probe on a plot is in a position to say.
         String[] names = axes;
-        label.text(String.format(Locale.ROOT, "x  %s", trim(x)));
-        value.text(String.format(Locale.ROOT, "%s %s   %s %s",
-                names[1], trim(points[index * 3 + 1]), names[2], trim(points[index * 3 + 2])));
-        note.text("sample " + index);
+        double q = found[index * 3 + 1];
+        double p = found[index * 3 + 2];
+        // The two axes, then the pair behind the turn. The chart gives a reader the input and the angle,
+        // which is both axes and the whole of the value -- so what is left to say is the pair the engine
+        // actually answered and the ordinary number it projects to, neither of which is anywhere on the
+        // picture. This line used to be "sample 213", which was a fact about the array.
+        label.text(String.format(Locale.ROOT, "%s  %s", names[0], trim(x)));
+        value.text(String.format(Locale.ROOT, "%s %s", names[1], Algebra.turn(p, q)));
+        note.text(String.format(Locale.ROOT, "T(%s,%s)   %s", trim(p), trim(q), Algebra.projection(p, q)));
 
         root.floatAt(Length.dp((float) (sx + OFFSET_X)), Length.dp((float) (sy + OFFSET_Y)));
         reveal(true);

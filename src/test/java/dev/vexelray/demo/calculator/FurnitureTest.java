@@ -6,8 +6,10 @@ import dev.vexelray.gui.draw.Picture;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -59,14 +61,14 @@ class FurnitureTest {
     @DisplayName("the overlay stops drawing the axis names when the switch is off")
     void theOverlayHonoursTheSwitch() {
         // The assertion the panel tests cannot make: those show the flag reaching the scene, this shows the
-        // scene reaching the picture. Three names and no more -- the tick numbers are unchanged, which is what
+        // scene reaching the picture. Two names and no more -- the tick numbers are unchanged, which is what
         // makes the difference attributable to the labels rather than to the whole overlay going quiet.
         Scene named = Scene.initial();
         Scene unnamed = sceneWith(Geometry.Furniture.DEFAULT.withLabels(false));
 
         assertTrue(named.reading().drawsCurve(), "the premise: the opening expression draws a curve");
-        assertEquals(3, marks(named) - marks(unnamed),
-                "turning the axis names off should remove exactly the three names");
+        assertEquals(2, marks(named) - marks(unnamed),
+                "turning the axis names off should remove exactly the two names");
     }
 
     @Test
@@ -87,8 +89,13 @@ class FurnitureTest {
 
         assertFalse(point.reading().drawsCurve(), "the premise: this is a value, not a curve");
         assertTrue(point.reading().understood(), "the premise: and it is understood");
-        assertEquals(3 + 3 * built(point).marks().values().length, marks(point),
-                "a single value's axes went ungraduated");
+        assertEquals(2 + graduations(point), marks(point), "a single value's axes went ungraduated");
+    }
+
+    /** Numbers along the input axis plus names up the turn axis: every mark the overlay owes a scene. */
+    private static int graduations(Scene scene) {
+        Geometry.Marks marks = built(scene).marks();
+        return marks.inputs().length + marks.turns().length;
     }
 
     @Test
@@ -100,44 +107,57 @@ class FurnitureTest {
 
         assertFalse(refused.reading().understood(), "the premise: this is refused");
         // The axis names still draw -- they say which axis is which, which is true of an empty box too.
-        assertEquals(3, marks(refused), "an empty plot was given a scale");
+        assertEquals(2, marks(refused), "an empty plot was given a scale");
     }
 
     @Test
-    @DisplayName("every axis is numbered, not just the first")
-    void allThreeAxesAreNumbered() {
+    @DisplayName("the turn axis carries a name at every turn the model names")
+    void everyNamedTurnIsLabelled() {
         Scene scene = Scene.initial();
-        int graduations = built(scene).marks().values().length;
-        assertTrue(graduations > 0, "the premise: the default scene has marks to number");
+        assertEquals(Algebra.NAMED.size(), built(scene).marks().turns().length,
+                "the premise: the turn axis is graduated by the named turns");
 
-        // Three names plus a number per mark per axis. Anything less than three numbers a mark is an axis
-        // going ungraduated, which is the state all of this was in: one axis lettered, two bare.
-        assertEquals(3 + 3 * graduations, marks(scene),
-                "the overlay did not number all three axes");
+        // Two axis letters, a number per input mark, a name per turn. Fewer is a graduation going unwritten,
+        // and on the turn axis the names are the whole scale -- there are no numbers on it to fall back on.
+        assertEquals(2 + graduations(scene), marks(scene), "the overlay did not write every graduation");
     }
 
+    /**
+     * <b>The turn axis does not follow the data and the input axis does</b>, which is the split the two kinds
+     * of graduation exist for. A value is a direction, so the vertical axis is the same for every expression
+     * and two of them can be compared against the same eight marks — where the horizontal axis measures the
+     * domain the reader chose to walk, and has to follow it.
+     */
     @Test
-    @DisplayName("the numbers say what the marks stand for, not what the input domain was")
-    void numbersComeFromTheMarksRatherThanTheDomain() {
-        // 0^(2*x) reaches twice as far as it is walked, so the values the axes are graduated at and the input
-        // range have to differ -- which is the case the old overlay got wrong, and the case that cannot be
-        // seen with the default expression because there the two coincide.
-        Model model = new Model();
-        model.change(s -> Scene.with(s, w -> w.x0(-6).x1(6)));
-        model.submit("0^(2*x)");
-        Scene stretched = model.scene();
+    @DisplayName("the turns are the same for every expression; the input marks follow the domain")
+    void onlyTheInputAxisFollowsTheData() {
+        Model wide = new Model();
+        wide.change(s -> Scene.with(s, w -> w.x0(-6).x1(6)));
+        wide.submit("x*x");
+        Model narrow = new Model();
+        narrow.change(s -> Scene.with(s, w -> w.x0(-0.5).x1(0.5)));
+        narrow.submit("1÷x");
 
-        double[] values = built(stretched).marks().values();
-        assertTrue(values.length > 0, "the premise: this expression is drawn and graduated");
-        assertTrue(Math.abs(values[values.length - 1]) > 6,
-                "the premise: its values reach past its domain, so the two cannot be confused -- reached "
-                        + values[values.length - 1]);
+        assertArrayEquals(built(wide.scene()).marks().up(), built(narrow.scene()).marks().up(), 1e-12,
+                "two expressions were graduated at different turns");
+        assertNotEquals(built(wide.scene()).marks().inputs()[0], built(narrow.scene()).marks().inputs()[0],
+                "the input axis is numbered the same over two different domains");
+    }
 
-        // The overlay writes one number per mark per axis and takes them from the marks, so the count follows
-        // the marks rather than the domain. Ticks.between(-6, 6) would give six; this gives however many the
-        // values reached.
-        assertEquals(3 + 3 * values.length, marks(stretched),
-                "the overlay numbered something other than the marks the geometry made");
+    /** Every name on the turn axis is an entry the field accepts, and it stands at the turn it is written at. */
+    @Test
+    @DisplayName("a name on the turn axis is an expression, and it means the turn it is written at")
+    void everyLabelIsTypeable() {
+        Geometry.Marks marks = built(Scene.initial()).marks();
+
+        for (int i = 0; i < marks.turns().length; i++) {
+            Algebra.Reading back = Algebra.read(marks.turns()[i]);
+            assertTrue(back.drawsMarker(), marks.turns()[i] + " is a label the field would not read");
+            double[] at = back.coordinates();
+            // The mark's position is the turn mapped into the box; read it back the same way round.
+            assertEquals(Math.atan2(at[1], at[0]) / Geometry.TURN * Geometry.BOX, marks.up()[i], 1e-12,
+                    marks.turns()[i] + " is written at a height it does not stand at");
+        }
     }
 
     @Test
@@ -148,7 +168,7 @@ class FurnitureTest {
         assertFalse(f.labels(), "the component asked for did not change");
         assertTrue(f.axes(), "axes was carried away by a labels change");
         assertTrue(f.ticks(), "ticks was carried away by a labels change");
-        assertTrue(f.gridXY() && f.gridXZ() && f.gridYZ(), "a grid plane was carried away");
+        assertFalse(f.gridXY() || f.gridXZ() || f.gridYZ(), "a grid plane turned itself on");
         assertEquals(Geometry.Furniture.DEFAULT.divisions(), f.divisions(), "divisions was carried away");
     }
 
@@ -197,7 +217,9 @@ class FurnitureTest {
     @Test
     @DisplayName("the grid switches are unaffected by the axis switch, and the other way round")
     void gridAndAxesAreIndependent() {
-        Scene noAxes = sceneWith(Geometry.Furniture.DEFAULT.withAxes(false));
+        // Switched on explicitly, because the default is off now: the claim is that the two switches are
+        // independent, not that either of them starts in a particular position.
+        Scene noAxes = sceneWith(Geometry.Furniture.DEFAULT.withGridXY(true).withAxes(false));
         assertTrue(noAxes.effectiveFurniture().gridXY(), "the grid went with the axes");
 
         Scene noGrid = sceneWith(Geometry.Furniture.DEFAULT

@@ -132,6 +132,7 @@ class MotionTest {
     @DisplayName("stopping the spin leaves the plot exactly where the eye last saw it")
     void stoppingHoldsTheCurrentAngle() {
         try (Rig rig = Rig.open()) {
+            double from = rig.eye.last().yaw();
             rig.motion.spinning(true);
             rig.at(0);
             rig.at(500);
@@ -141,7 +142,9 @@ class MotionTest {
             rig.at(600);
             rig.at(5_000);
 
-            assertEquals(18, (stopped - Math.toRadians(38)) / DEGREE, 0.001, "half a second is 18 degrees");
+            // Measured from wherever the opening view is rather than from a literal, which is what this said
+            // when the opening view was an iso one. The claim is about the spin's rate, not about home.
+            assertEquals(18, (stopped - from) / DEGREE, 0.001, "half a second is 18 degrees");
             assertEquals(stopped, rig.eye.last().yaw(), 1e-12,
                     "the camera fell back to where the spin started instead of holding");
         }
@@ -198,26 +201,27 @@ class MotionTest {
     @DisplayName("a preset caught halfway continues from where it actually is")
     void aPresetIsInterruptible() {
         try (Rig rig = Rig.open()) {
-            rig.motion.look(0, 0);
+            // From home, which is square on to the plane, so the first preset has somewhere to go.
+            rig.motion.look(90, 0);                 // Side
             rig.at(0);
-            rig.at(110);                            // halfway to Front
+            rig.at(110);                            // most of the way there: OUT_CUBIC is 87.5% at half time
             double halfway = rig.eye.last().yaw();
-            assertTrue(halfway < Math.toRadians(38) && halfway > 0, "the first preset is not underway");
+            assertTrue(halfway < Math.toRadians(90) && halfway > 0, "the first preset is not underway");
 
-            rig.motion.look(90, 0);                 // Side, from halfway
+            rig.motion.look(180, 0);                // and away again, from wherever it has got to
             rig.at(120);
             double resumed = rig.eye.last().yaw();
 
             // Ten milliseconds into a 220ms OUT_CUBIC is already 13% of the way, so "continues from where it
             // is" is not "has barely moved". What separates the two cases is where it set off from: continuing
-            // leaves 4.7° heading for 90 and arrives near 16°, where a snap back to the first preset's start
-            // leaves 38° and arrives near 45°.
-            assertTrue(resumed > halfway, "the second preset is not heading for Side at all");
-            assertTrue(resumed < Math.toRadians(25),
+            // leaves 78.8° heading for 180 and arrives near 92°, where a snap back to the first preset's start
+            // leaves 0° and arrives near 23°.
+            assertTrue(resumed > halfway, "the second preset is not heading anywhere at all");
+            assertTrue(resumed > Math.toRadians(50),
                     "the second preset snapped back to the first one's start instead of continuing: "
                             + resumed / DEGREE + "°");
             rig.at(400);
-            assertEquals(90, rig.eye.last().yaw() / DEGREE, 0.001, "it did not arrive at Side");
+            assertEquals(180, rig.eye.last().yaw() / DEGREE, 0.001, "it did not arrive");
         }
     }
 

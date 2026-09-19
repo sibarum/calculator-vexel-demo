@@ -58,7 +58,7 @@ enum Grid {
      * {@code roll = 0} a panel's down axis is {@code (−sin·sin, −cos, −sin·cos)}, so {@code pitch = −π/2} sends
      * canvas-down to world {@code +z} and the plane becomes the {@code xz} one.
      */
-    XZ(2 * Geometry.BOX, 2 * Geometry.BOX_H, 0, -Math.PI / 2),
+    XZ(2 * Geometry.BOX, 2 * Geometry.BOX, 0, -Math.PI / 2),
 
     /**
      * Perpendicular to the second output axis — the plane a camera at rest is looking straight at.
@@ -66,7 +66,7 @@ enum Grid {
      * <p>No rotation at all. A panel's unrotated axes are world {@code +x} and world {@code −y}, and canvas y
      * points down, so an untouched panel is already the {@code xy} plane the right way up.
      */
-    XY(2 * Geometry.BOX, 2 * Geometry.BOX_H, 0, 0),
+    XY(2 * Geometry.BOX, 2 * Geometry.BOX, 0, 0),
 
     /**
      * Perpendicular to the input axis — the one that stands across the domain.
@@ -75,7 +75,7 @@ enum Grid {
      * was, since a pitch of zero keeps it at world {@code −y} whatever the yaw. The grid is symmetric along
      * {@code z}, so which way the quarter turn goes is not observable in the picture.
      */
-    YZ(2 * Geometry.BOX_H, 2 * Geometry.BOX_H, Math.PI / 2, 0);
+    YZ(2 * Geometry.BOX, 2 * Geometry.BOX, Math.PI / 2, 0);
 
     /**
      * How many canvas units the domain is drawn across. The one number here that is a choice.
@@ -207,30 +207,27 @@ enum Grid {
         float midY = height / 2f;
         switch (this) {
             case XY -> {
-                canvas.strokeLine(0, midY, width, midY, AXIS_WIDTH, ink);        // the domain axis
-                canvas.strokeLine(midX, 0, midX, height, AXIS_WIDTH, ink);       // Re
+                canvas.strokeLine(0, midY, width, midY, AXIS_WIDTH, ink);        // the turn zero
+                canvas.strokeLine(midX, 0, midX, height, AXIS_WIDTH, ink);       // the input zero
                 if (furniture.ticks()) {
-                    for (double at : marks.domain()) {
+                    for (double at : marks.across()) {
                         float x = midX + units(at);
                         canvas.strokeLine(x, midY - TICK, x, midY + TICK, TICK_WIDTH, ink);
                     }
-                    for (double at : marks.output()) {
+                    // A rule right across at every named turn, not a tick beside the axis. These eight are
+                    // the scale on this axis -- there are no numbers on it -- and a reader's question is
+                    // "which side of omega is the curve here", which wants a line to compare against and not
+                    // a mark at the edge of the picture.
+                    for (double at : marks.up()) {
                         float y = midY - units(at);                              // canvas down is world -y
-                        canvas.strokeLine(midX - TICK, y, midX + TICK, y, TICK_WIDTH, ink);
+                        canvas.strokeLine(0, y, width, y, TICK_WIDTH, ink);
                     }
                 }
             }
-            case YZ -> {
-                canvas.strokeLine(0, midY, width, midY, AXIS_WIDTH, ink);        // Tr
-                if (furniture.ticks()) {
-                    for (double at : marks.output()) {
-                        float x = midX - units(at);                              // canvas right is world -z
-                        canvas.strokeLine(x, midY - TICK, x, midY + TICK, TICK_WIDTH, ink);
-                    }
-                }
-            }
-            case XZ -> {
-                // Both axes lying in this plane are drawn by the planes that carry their ticks.
+            case YZ, XZ -> {
+                // Nothing. Both of these stand out of the plane the plot is in, so neither contains an axis
+                // there is anything left to draw: the two axes are q and p and they both lie in XY. They keep
+                // their grids, which a reader may still switch on to see the plane edge-on against them.
             }
         }
     }

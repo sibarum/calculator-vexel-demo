@@ -39,12 +39,11 @@ final class Labels {
     /**
      * How far a tick number sits off its own axis, in world units.
      *
-     * <p>One distance for all three, and each is pushed along a different axis so that a number stays in a
-     * coordinate plane rather than floating in the middle of the box: the {@code Re} numbers drop below their
-     * axis in {@code -y}, and both output axes' numbers step aside in {@code -x}. Zero carries no mark
-     * ({@link Ticks#between} excludes it), which is what keeps the three families from meeting at the origin.
+     * <p>Outward along the ray through the mark, so a name sits off the circle at its own turn and the eight
+     * of them are as far apart as the turns are. Far enough to clear the tick that crosses the circle, close
+     * enough to read as belonging to it.
      */
-    private static final double TICK_OUT = 0.16;
+    private static final double NAME_OFF = 0.17;
 
     private Labels() {
     }
@@ -79,19 +78,19 @@ final class Labels {
         Color name = Look.QUIET.of(Look.PALETTE);
         Color figure = Look.PALETTE.text(2);
 
-        // The axes are named by what they carry, which is not the same in both modes: a curve's first axis is
-        // its input and a single value's is the first of its own coordinates. Read off the reading rather than
-        // fixed here, so the name and the geometry cannot come to describe different axes.
+        // The axes are named by what they carry: the input across, the value's turn up. Read off the reading
+        // rather than fixed here, so the name and the geometry cannot come to describe different axes -- and
+        // the name of the input axis is the free name the expression actually left, not a fixed "x".
         //
-        // "Tr", not "Im". The vertical output axis is the TRACTION axis -- an order of vanishing -- and the
-        // complex reading that made it an imaginary part is not wired in this engine. A label naming a part
-        // the value does not have is the plot claiming something the algebra never said.
+        // "theta", not "Im" and not "p". What is drawn is arg(q + pi), one number out of the pair, and it is
+        // the whole value: the radius the pair has is which representative was written. A label naming a
+        // coordinate would be the plot claiming to show a coordinate, which is exactly the mistake the first
+        // two versions of this chart made.
         if (furniture.labels()) {
             String[] axes = reading.axisNames();
             sketch.tag("axis-name");
             put(sketch, lens, w, h, Geometry.BOX * NAME_OUT, 0, 0, axes[0], name, Type.SMALL_PX);
-            put(sketch, lens, w, h, 0, Geometry.BOX_H * NAME_OUT, 0, axes[1], name, Type.SMALL_PX);
-            put(sketch, lens, w, h, 0, 0, Geometry.BOX_H * NAME_OUT, axes[2], name, Type.SMALL_PX);
+            put(sketch, lens, w, h, 0, Geometry.BOX * NAME_OUT, 0, axes[1], name, Type.SMALL_PX);
         }
 
         // Numbers on all three axes, at exactly the positions Geometry put the marks -- one source, so a
@@ -110,17 +109,24 @@ final class Labels {
             return sketch.picture();
         }
         sketch.tag("tick");
-        double[] values = marks.values();
-        double[] domain = marks.domain();
-        double[] output = marks.output();
-        for (int i = 0; i < values.length; i++) {
-            // One number written once and placed three times. The label says what the *value* is there, not
-            // where the geometry put it: the world box is an internal frame and a reader should never see its
-            // coordinates.
-            String text = Ticks.label(values[i], marks.step());
-            put(sketch, lens, w, h, domain[i], -TICK_OUT, 0, text, figure, Type.TICK_PX);
-            put(sketch, lens, w, h, -TICK_OUT, output[i], 0, text, figure, Type.TICK_PX);
-            put(sketch, lens, w, h, -TICK_OUT, 0, output[i], text, figure, Type.TICK_PX);
+        double[] across = marks.across();
+        double[] inputs = marks.inputs();
+        for (int i = 0; i < inputs.length; i++) {
+            // The input, under its own mark. A number here measures the domain, which is what the horizontal
+            // axis carries again.
+            put(sketch, lens, w, h, across[i], -NAME_OFF, 0,
+                    Ticks.label(inputs[i], marks.step()), figure, Type.TICK_PX);
+        }
+        double[] up = marks.up();
+        String[] turns = marks.turns();
+        for (int i = 0; i < up.length; i++) {
+            // The name of the turn, off the left-hand end of its rule. These are the model's eight named
+            // points and they are also what the field accepts, so every label on this axis is an entry a
+            // reader can type back in -- which is the whole reason the names come from Algebra rather than
+            // being spelled again here. There are no numbers on this axis and these are not a substitute for
+            // them: a turn is not a quantity, and 45 degrees is a fact about the picture where "1" is a fact
+            // about the value.
+            put(sketch, lens, w, h, -Geometry.BOX - NAME_OFF, up[i], 0, turns[i], figure, Type.TICK_PX);
         }
         return sketch.picture();
     }

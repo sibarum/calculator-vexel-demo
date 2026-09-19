@@ -178,7 +178,7 @@ final class CalculatorWiring extends Wiring {
                     s.samples(), s.effectiveFurniture(), s.lineWidth(), s.ramp());
             march.geometry(built);
             graduations = built.marks();
-            ui.probe().samples(built.curve(), s.x0(), s.x1(), s.reading().axisNames());
+            ui.probe().samples(built.curve(), built.samples(), s.reading().axisNames());
             march.recolour(s.ramp());
             ui.bar().show(s.reading());
             ui.bar().cropping(s.cropping());
@@ -192,7 +192,7 @@ final class CalculatorWiring extends Wiring {
                 start.samples(), start.effectiveFurniture(), start.lineWidth(), start.ramp());
         march.geometry(first);
         graduations = first.marks();
-        ui.probe().samples(first.curve(), start.x0(), start.x1(), start.reading().axisNames());
+        ui.probe().samples(first.curve(), first.samples(), start.reading().axisNames());
         ui.probe().install(ui.viewport(), march::lens);
 
         Gestures.install(gui, ui.viewport(), motion);

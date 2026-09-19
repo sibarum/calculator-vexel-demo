@@ -2,25 +2,28 @@ package dev.vexelray.demo.calculator;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import sibarum.cott.engine.ratio.T;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The seam onto the algebra.
  *
- * <p>These are about <em>what the application is told</em>, not about whether the theory is right — cott-engine
- * has 228 tests for that and duplicating them here would be two statements of one thing, and the pair of them
- * would disagree the first time the theory moved. So what is pinned here is the reading: which mode an entry
- * lands in, that a refusal is reported rather than swallowed, and that a break in a curve is a break.
+ * <p>These are about <em>what the application is told</em>, not about whether the model is right — cott-engine
+ * has its own tests for that, one per line of {@code docs/Traction-Model.md}, and duplicating them here would
+ * be two statements of one thing that would disagree the first time the model moved. So what is pinned here is
+ * the reading: which mode an entry lands in, that a refusal is reported rather than swallowed, that a sample
+ * the model does not fold breaks the curve rather than being drawn through, and the two facts about the
+ * <em>picture</em> that the model makes true and nothing else would — the eight named points are eight places,
+ * and the pole of {@code 1÷x} is an ordinary point on a straight line.
  */
 class AlgebraTest {
 
@@ -32,134 +35,155 @@ class AlgebraTest {
     @DisplayName("how many names an expression leaves free is what decides the mode")
     void theModeFollowsTheFreeNames() {
         assertSame(Algebra.Mode.POINT, read("2+2").mode());
-        assertSame(Algebra.Mode.CURVE, read("0^x").mode());
+        assertSame(Algebra.Mode.CURVE, read("1÷x").mode());
         assertSame(Algebra.Mode.SURFACE, read("x+y").mode());
     }
 
     @Test
-    @DisplayName("a value with no free names is answered, placed, and shown its derivation")
+    @DisplayName("a value with no free names is answered, placed, and shown how it folded")
     void aClosedExpressionIsAPlacedPoint() {
         Algebra.Reading reading = read("2+2");
 
-        assertNull(reading.refusal());
-        assertEquals("4", reading.answer());
+        assertEquals(null, reading.refusal());
+        assertEquals("T(4,1)", reading.answer());
         assertTrue(reading.drawsMarker());
-        assertNotNull(reading.place());
-        assertFalse(reading.derivation().isEmpty(), "the steps that got there are the point of this mode");
+        assertArrayEquals2(new double[]{1, 4}, reading.coordinates());
+        assertFalse(reading.derivation().isEmpty(), "how it folded is the point of this mode");
     }
 
     /**
-     * The four points are four places. This is the one piece of theory worth restating here, because it is the
-     * distinction the whole chart exists to show and a projection that lost it would still look plausible.
-     */
-    @Test
-    @DisplayName("the point zero and one do not land in the same place")
-    void theFourPointsAreFourPlaces() {
-        List<double[]> places = List.of(
-                read("1").place().toDoubles(),
-                read("0").place().toDoubles(),
-                read("w").place().toDoubles(),
-                read("-1").place().toDoubles());
-        for (int i = 0; i < places.size(); i++) {
-            for (int j = i + 1; j < places.size(); j++) {
-                assertNotEquals(java.util.Arrays.toString(places.get(i)),
-                        java.util.Arrays.toString(places.get(j)),
-                        "two of the four points landed together");
-            }
-        }
-    }
-
-    @Test
-    @DisplayName("a curve is walked over its one free name, whatever that name is")
-    void aCurveIsWalkedOverItsVariable() {
-        Algebra.Reading reading = read("0^t");
-
-        assertEquals("t", reading.variable());
-        List<double[]> runs = Algebra.walk(reading, -3, 3, 64);
-        assertFalse(runs.isEmpty());
-        // 0^t is the traction axis itself: every sample but the origin lands at (0, t), so the walk is two
-        // strokes running away from the origin along Tr, one per direction.
-        assertEquals(2, strokes(runs).size());
-        for (double[] stroke : strokes(runs)) {
-            for (int i = 0; i < stroke.length / 3; i++) {
-                assertEquals(0, stroke[i * 3], 1e-9, "0^t has no real part away from the origin");
-            }
-        }
-    }
-
-    /**
-     * The engine answers 1/0 as omega, a value with a place, so the thing that puts a hole in an ordinary plot
-     * does not put one here. It is drawn, and it is drawn <em>alone</em>: its neighbours run off to ±1000 while
-     * omega sits at (0, -1), so the stroke breaks either side of it and the value gets a marker of its own.
-     */
-    @Test
-    @DisplayName("dividing by zero is a point on the chart, not a hole and not a spike")
-    void divisionByZeroIsItsOwnPoint() {
-        List<double[]> runs = Algebra.walk(read("1÷x"), -2, 2, 65);
-
-        assertTrue(has(runs, 0, -1, 0), "omega is a value with a place and has to be drawn");
-        for (double[] one : isolated(runs)) {
-            assertArrayEquals(new double[]{0, -1, 0}, one, 1e-9,
-                    "the only isolated point should be the pole itself");
-        }
-    }
-
-    /**
-     * <b>The failsafe, on an entry nobody would call pathological.</b> Refining until every gap is short
-     * cannot terminate here: the chord either side of the pole grows as the interval halves, past 1000 while
-     * the step goes to nothing. The walk has to notice that and stop rather than subdivide.
-     */
-    @Test
-    @DisplayName("a diverging neighbourhood stops the walk instead of refining it forever")
-    void divergenceStopsRatherThanRefining() {
-        List<double[]> runs = Algebra.walk(read("1÷x"), -2, 2, 65);
-
-        assertTrue(points(runs) <= 65 * 8, "the walk spent more than its budget: " + points(runs));
-    }
-
-    /** The other half of the failsafe: bounded but endless oscillation, which is the case it was written for. */
-    @Test
-    @DisplayName("an entry that oscillates without limit still terminates inside its budget")
-    void anOscillatingEntryTerminates() {
-        List<double[]> runs = Algebra.walk(read("tan(1÷x)"), -1, 1, 32);
-
-        assertFalse(runs.isEmpty(), "tan(1÷x) does answer, so something should be drawn");
-        assertTrue(points(runs) <= 32 * 8, "the walk spent more than its budget: " + points(runs));
-    }
-
-    /**
-     * {@code x+π} stands at every sample — π is not a rational, so the sum is not the additive pair and
-     * nothing along the curve is placed. The curve is empty rather than a straight line through the samples
-     * that happened to survive.
+     * <b>The test the model exists for.</b> Four of the eight rows share a tangent with another —
+     * {@code 0} with {@code -0}, {@code 1} with {@code -_1}, {@code -1} with {@code _1} — so a chart drawn
+     * against the projection would put each of those pairs in one place. The plane draws the pair, so the
+     * eight stand in eight places, and this is what would still look perfectly plausible if it broke.
      *
-     * <p><b>Not {@code x+0}, which used to be this example and is now a line.</b> {@code Place} reads a
-     * standing sum as {@code n + 0^t}, so {@code -3+0} places at {@code (-3, 1)} rather than standing. An
-     * expression that stands because of an irrational is the durable case: it holds for every binding, where
-     * a sum of unlike traction parts like {@code 0^x+0^2} only stands while the grid misses {@code x = 0}.
+     * <p>It is also the test that every row can be <em>typed</em>, the way the model writes it: the numbers
+     * parse, the underscores are names bound in {@code Algebra}, and the minus signs are the grammar's.
      */
+    @Test
+    @DisplayName("the eight named points of the model are eight places in the plane")
+    void theEightNamedPointsAreEightPlaces() {
+        List<String> rows = List.of("0", "_0", "1", "-1", "_1", "-_1", "w", "-w");
+        List<String> places = new ArrayList<>();
+        for (String row : rows) {
+            Algebra.Reading reading = read(row);
+            assertTrue(reading.drawsMarker(), row + " did not fold to a pair");
+            places.add(Arrays.toString(reading.coordinates()));
+        }
+        for (int i = 0; i < rows.size(); i++) {
+            for (int j = i + 1; j < rows.size(); j++) {
+                assertFalse(places.get(i).equals(places.get(j)),
+                        rows.get(i) + " and " + rows.get(j) + " landed together, at " + places.get(i));
+            }
+        }
+    }
+
+    /** The coordinates the model's table gives those rows, so a place is right and not merely distinct. */
+    @Test
+    @DisplayName("each named point stands where the model's table puts it")
+    void theNamedPointsStandWhereTheTableSaysTheyDo() {
+        assertArrayEquals2(new double[]{1, 0}, read("0").coordinates());     // T(0,1)   at  1
+        assertArrayEquals2(new double[]{-1, 0}, read("_0").coordinates());   // T(0,-1)  at -1
+        assertArrayEquals2(new double[]{1, 1}, read("1").coordinates());     // T(1,1)   at  1+i
+        assertArrayEquals2(new double[]{1, -1}, read("-1").coordinates());   // T(-1,1)  at  1-i
+        assertArrayEquals2(new double[]{-1, 1}, read("_1").coordinates());   // T(1,-1)  at -1+i
+        assertArrayEquals2(new double[]{-1, -1}, read("-_1").coordinates()); // T(-1,-1) at -1-i
+        assertArrayEquals2(new double[]{0, 1}, read("w").coordinates());     // T(1,0)   at  i
+        assertArrayEquals2(new double[]{0, -1}, read("-w").coordinates());   // T(-1,0)  at -i
+    }
+
+    /**
+     * The projection column, and the two rows it separates that nothing else does: {@code 0} and {@code -0}
+     * project to the two signed zeroes, and the quarter turns to the two infinities.
+     */
+    @Test
+    @DisplayName("the projection is the model's table, signed zeroes and all")
+    void theProjectionIsTheTable() {
+        assertEquals("+0", Algebra.projection(T.of(0, 1)));
+        assertEquals("-0", Algebra.projection(T.of(0, -1)));
+        assertEquals("+inf", Algebra.projection(T.of(1, 0)));
+        assertEquals("-inf", Algebra.projection(T.of(-1, 0)));
+        assertEquals("1", Algebra.projection(T.of(1, 1)));
+        assertEquals("-1", Algebra.projection(T.of(1, -1)), "_1 projects as -1, as the table says");
+        assertEquals("1", Algebra.projection(T.of(-1, -1)), "-_1 projects as 1, as the table says");
+        assertEquals("1", Algebra.projection(T.of(0, 0)), "0w is read as a value by x÷x = 1");
+    }
+
+    /**
+     * <b>The other test the model exists for.</b> Sample the name at {@code k÷d} and {@code 1÷x} is
+     * {@code T(d, k)}, the point {@code k + di} — so the classic singularity is a straight horizontal line and
+     * the pole is the ordinary point on it where {@code q} reaches zero. No hole, no spike, and no break: one
+     * unbroken run straight through the place an ordinary plot cannot draw.
+     */
+    @Test
+    @DisplayName("the pole of 1÷x is an ordinary point on a straight line")
+    void thePoleIsAnOrdinaryPointOnALine() {
+        List<double[]> runs = Algebra.walk(read("1÷x"), -2, 2, 64);
+
+        assertEquals(1, runs.size(), "the line is unbroken, so there is one run");
+        double[] run = runs.getFirst();
+        double p = run[2];
+        boolean throughTheAxis = false;
+        for (int i = 0; i < run.length / 3; i++) {
+            assertEquals(p, run[i * 3 + 2], 1e-9, "every sample of 1÷x stands at the same height");
+            throughTheAxis |= Math.abs(run[i * 3 + 1]) < 1e-9;
+        }
+        assertTrue(throughTheAxis, "the pole is the sample whose q is zero, and it has to be on the line");
+    }
+
+    /**
+     * Nothing in this model reduces, so where a sample lands depends on how its input was spelled: 1.5 is
+     * {@code T(15,10)} and 2 is {@code T(2,1)}, and their reciprocals stand an order of magnitude apart. The
+     * walk therefore steps one denominator across the whole domain — which is what makes the line above a line
+     * rather than a scatter.
+     */
+    @Test
+    @DisplayName("every sample of a walk is taken at one denominator")
+    void theWalkStepsOneDenominator() {
+        List<double[]> runs = Algebra.walk(read("x"), -2, 2, 64);
+
+        assertFalse(runs.isEmpty());
+        double q = runs.getFirst()[1];
+        for (double[] run : runs) {
+            for (int i = 0; i < run.length / 3; i++) {
+                assertEquals(q, run[i * 3 + 1], 1e-9,
+                        "x itself is T(k, d): every sample stands on the same vertical line");
+            }
+        }
+    }
+
+    /**
+     * A power folds at a whole exponent and stands otherwise, so {@code 2^x} answers on one side of the domain
+     * and nothing on the other. The run covers what folded and stops where the folding does, rather than
+     * bridging a stretch the model said nothing about.
+     */
+    @Test
+    @DisplayName("a sample that does not fold breaks the run rather than being drawn through")
+    void aSampleThatDoesNotFoldBreaksTheRun() {
+        // Six steps across six units is one sample per unit, so the exponents are whole and the power rule
+        // can reach them at all: T(k,1)^n for k from 0 up, and nothing below zero.
+        List<double[]> runs = Algebra.walk(read("2^x"), -3, 3, 6);
+
+        assertEquals(1, runs.size(), "the answers are contiguous, so they are one run");
+        assertEquals(4, runs.getFirst().length / 3, "2^0 through 2^3 answer; the negative powers stand");
+    }
+
     @Test
     @DisplayName("an expression that stands everywhere draws nothing at all")
     void aTermThatStandsIsNotDrawn() {
-        assertTrue(Algebra.walk(read("x+π"), -3, 3, 32).isEmpty());
+        // Nothing resolves calls in this client, so sin(x) is a term with a name applied to an argument, and
+        // it stands at every sample. That is the honest answer while the model has no real-valued calls.
+        assertTrue(Algebra.walk(read("sin(x)"), -3, 3, 32).isEmpty());
     }
 
-    /**
-     * {@code 2^x} answers for a natural power and stands otherwise — {@code 2^0} included, since {@code x^0}
-     * is a 4-cycle that reaches nothing else, and {@code 2^-1} since a multiplicity takes no negative power.
-     * So its answers are isolated: no two of them are neighbours at any step size.
-     *
-     * <p><b>They are kept, which they were not before.</b> When the input held an axis a run of one point was
-     * dropped, because a stroke through one point draws nothing. Now that a sample contributes only where its
-     * value landed, an isolated answer is an ordinary value at an ordinary place and gets a marker.
-     */
     @Test
-    @DisplayName("an isolated answer is kept as a point rather than dropped for having no neighbour")
-    void isolatedAnswersAreKeptAsPoints() {
-        List<double[]> runs = Algebra.walk(read("2^x"), -3, 3, 7);
+    @DisplayName("an entry that does not fold to a pair is shown standing, and placed nowhere")
+    void aStandingValueIsShownAndNotPlaced() {
+        Algebra.Reading reading = read("2^(1÷2)");
 
-        assertFalse(runs.isEmpty(), "2^3 answers, so there is something to draw");
-        assertEquals(runs.size(), isolated(runs).size(), "every run here should be a lone point");
-        assertTrue(has(runs, 8, 0, 0), "2^3 is 8, which places at (8, 0)");
+        assertFalse(reading.drawsMarker(), "a term that is not one pair has no point in the plane");
+        assertNotNull(reading.refusal());
+        assertTrue(reading.subtitle().startsWith("stands"), reading.subtitle());
     }
 
     @Test
@@ -168,18 +192,12 @@ class AlgebraTest {
         Algebra.Reading reading = read("&&&");
 
         assertNotNull(reading.refusal());
-        assertTrue(reading.refusal().contains("&"), reading.refusal());
         assertFalse(reading.drawsCurve());
         assertFalse(reading.drawsMarker());
     }
 
-    /**
-     * The engine names the character only when the entry starts with it; {@code 2 & 3} comes back as a bare
-     * "Error". That is worth a test of its own, because what matters at this seam is that the entry is refused
-     * and nothing is drawn — which must not depend on how good the message happened to be.
-     */
     @Test
-    @DisplayName("an entry is refused even where the engine's message says little")
+    @DisplayName("an entry the grammar rejects part-way through is still refused")
     void aTerseErrorIsStillARefusal() {
         Algebra.Reading reading = read("2 & 3");
 
@@ -197,78 +215,37 @@ class AlgebraTest {
     }
 
     /**
-     * The sampling literal has to be exact. "0.0" parses as the coordinate 0/10, which is not the rational
-     * zero, and the rules that fire on zero do not fire on it -- so 0^x at the origin answered 0^(0/10) and
-     * placed at erasure instead of answering 1. One wrong sample, in the middle of the domain.
+     * The input axis is named for the name the entry actually left free, and the other is the turn — never a
+     * coordinate. What is drawn up the chart is {@code arg(q + pi)}, one number out of the pair and the whole
+     * of the value; the radius the pair has is which representative got written.
      */
     @Test
-    @DisplayName("the origin samples as an exact zero, so 0^0 is 1 and not erasure")
-    void theOriginIsSampledExactly() {
-        // The walk starts at the origin, so this sample is taken whatever the step count.
-        assertTrue(has(Algebra.walk(read("0^x"), -1, 1, 3), 1, 0, 0),
-                "0^0 is 1, which places at (1, 0) — not erasure and not the origin of the chart");
-    }
-
-    /**
-     * <b>The case that decides the subdivision rule.</b> As x approaches zero {@code 0^x} approaches
-     * {@code (0, 0)}, which is erasure and not in the type; at zero the answer is {@code 0^0 = 1} at
-     * {@code (1, 0)}. The gap is exactly 1 at every depth, so refining cannot close it. The walk has to break
-     * the stroke and leave the origin standing alone, rather than either subdividing forever or drawing a
-     * line through a region the engine never claimed.
-     */
-    @Test
-    @DisplayName("a jump that cannot be subdivided away breaks the stroke instead")
-    void anUnbridgeableJumpBreaksTheStroke() {
-        List<double[]> runs = Algebra.walk(read("0^x"), -3, 3, 64);
-
-        assertTrue(has(runs, 1, 0, 0), "0^0 = 1 has to be drawn");
-        for (double[] stroke : strokes(runs)) {
-            for (int i = 0; i < stroke.length / 3; i++) {
-                assertNotEquals(1.0, stroke[i * 3],
-                        "the origin was joined to the traction axis by a stroke that crosses nothing");
-            }
-        }
-    }
-
-    @Test
-    @DisplayName("the axes carry the value's own coordinates, the same three in every mode")
+    @DisplayName("the axes are the free name and the turn")
     void theAxesAreNamedForWhatTheyCarry() {
-        assertArrayEqualsNamed(new String[]{"Re", "Tr", "Tr'"}, read("0^x").axisNames());
-        assertArrayEqualsNamed(new String[]{"Re", "Tr", "Tr'"}, read("0^t").axisNames());
-        assertArrayEqualsNamed(new String[]{"Re", "Tr", "Tr'"}, read("2+2").axisNames());
+        assertArrayEqualsNamed(new String[]{"x", "θ"}, read("1÷x").axisNames());
+        assertArrayEqualsNamed(new String[]{"t", "θ"}, read("1÷t").axisNames());
+        assertArrayEqualsNamed(new String[]{"x", "θ"}, read("2+2").axisNames(),
+                "a value has no input, so the placeholder stands and nothing draws it");
+    }
+
+    @Test
+    @DisplayName("the default expression is a curve, which is what the plot opens on")
+    void theDefaultEntryDraws() {
+        Algebra.Reading reading = read(Algebra.DEFAULT_EXPRESSION);
+
+        assertSame(Algebra.Mode.CURVE, reading.mode());
+        assertFalse(Algebra.walk(reading, -6, 6, 420).isEmpty());
     }
 
     private static void assertArrayEqualsNamed(String[] expected, String[] actual) {
-        assertEquals(java.util.Arrays.toString(expected), java.util.Arrays.toString(actual));
+        assertEquals(Arrays.toString(expected), Arrays.toString(actual));
     }
 
-    // ------------------------------------------------------------------ reading a walk
-
-    /** The runs holding more than one point: the ones drawn as strokes. */
-    private static List<double[]> strokes(List<double[]> runs) {
-        return runs.stream().filter(r -> r.length > 3).toList();
+    private static void assertArrayEqualsNamed(String[] expected, String[] actual, String message) {
+        assertEquals(Arrays.toString(expected), Arrays.toString(actual), message);
     }
 
-    /** The runs holding exactly one point: the ones drawn as markers. */
-    private static List<double[]> isolated(List<double[]> runs) {
-        return runs.stream().filter(r -> r.length == 3).toList();
-    }
-
-    private static int points(List<double[]> runs) {
-        return runs.stream().mapToInt(r -> r.length / 3).sum();
-    }
-
-    /** Whether any sample anywhere in the walk landed at these coordinates. */
-    private static boolean has(List<double[]> runs, double a, double b, double c) {
-        for (double[] run : runs) {
-            for (int i = 0; i < run.length / 3; i++) {
-                if (Math.abs(run[i * 3] - a) < 1e-9
-                        && Math.abs(run[i * 3 + 1] - b) < 1e-9
-                        && Math.abs(run[i * 3 + 2] - c) < 1e-9) {
-                    return true;
-                }
-            }
-        }
-        return false;
+    private static void assertArrayEquals2(double[] expected, double[] actual) {
+        assertEquals(Arrays.toString(expected), Arrays.toString(actual));
     }
 }

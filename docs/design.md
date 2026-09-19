@@ -2,6 +2,8 @@
 
 **Status: proposal, for review. No code written.**
 *Rev 2 — the plot is a ray-marched `Surface.Stroke`, not a `Picture`. See §7.*
+*Rev 3 — the model is `T`, an oriented projective rational. A value is one number, its turn, so the plot is
+the walked input across and θ up, square on and bounded. See §7.5.*
 
 A plot viewport built on vexelray-gui, and the reference implementation of what a client application of that
 framework looks like. This document says what is being built, which framework component supplies each part of
@@ -36,9 +38,9 @@ ripple for the two-variable case); what the panels did to it was live.
 
 **The ω slider is the one casualty of the switch-on, and it is still wired to nothing.** It was a free
 parameter of the fake's parametric form. In this algebra `ω` is not a parameter at all — it is a *value*,
-`0^-1`, the point the traction axis runs to, and `Notation` reads a typed `w` as that point. So there is no
-quantity left for the slider to vary. It remains on the panel and in the `Scene`, and it no longer reaches the
-geometry. Removing it is a panel decision rather than a seam one, so it has been left as it is and written down
+`T(1,0)`, the quarter turn, and `Algebra.CONSTANTS` reads a typed `w` as that point. (It was `0^-1` under the
+carrier before this one; it has been a value under both.) So there is no quantity left for the slider to vary.
+It remains on the panel and in the `Scene`, and it no longer reaches the geometry. Removing it is a panel decision rather than a seam one, so it has been left as it is and written down
 instead.
 
 ---
@@ -97,7 +99,7 @@ letterspaced small-caps mono precisely so they read as *state* rather than as te
 
 | | |
 |---|---|
-| drag | orbit — azimuth free, elevation clamped to ±75° |
+| drag | pan — *was orbit; the chart is angles now, see §7.5* |
 | shift + drag | pan |
 | scroll | zoom about the centre |
 | hover | snap the probe to the nearest sampled point |
@@ -508,41 +510,119 @@ derived from the same source.
 
 ### 7.5 `Algebra` — the whole of the seam
 
+*Rev 3 — the model is `T`, and the plot is a plane. The carrier moved, as §7.5 said it would.*
+
 **`Canned` is gone.** The switch-on happened as designed: the fake was deleted and one class took over its two
 signatures. That class is `Algebra`, and it is the only thing in the application that names cott-engine.
 
 ```java
 /** The engine, and the whole of the seam onto it. One class, one seam, deliberately. */
 final class Algebra {
-    static Reading read(String expression);                                   // → mode, answer, place, refusal
-    static List<double[]> curve(Reading r, double x0, double x1, int n);      // → runs of xyz, interleaved
+    static Reading read(String expression);                                 // → mode, answer, value, refusal
+    static List<double[]> walk(Reading r, double x0, double x1, int n);     // → runs of (x, q, p), interleaved
 }
 ```
 
-The mode is not a table any more — it is **how many names the expression leaves free**, which `Variables` in the
-engine reports:
+#### What `T` changed
+
+cott-engine's `docs/Traction-Model.md`: a traction is an **oriented projective rational**, `T(p, q)`, and the
+pair is two readings of one thing — `T(p,q) = p ÷ q = tan(θ)` where `θ = arg(q + pi)`. So a value **is** a
+direction in a plane, and the plot is that plane: `q` across, `p` up. Two axes, and there is no third to want.
+
+That replaced the `(Re, Tr, Tr')` reading whole. The previous carrier was a nesting of `n·0^t` needing as many
+as three numbers, the plot was a marched box you orbited, and a value wanting four was refused. `Place`,
+`Projector` and the spine went with it; what the client reads now is a `T`, and its two coordinates are the
+picture.
+
+#### The value is one number, its turn — `x` across, `θ` up
+
+**This took three goes and the screen decided each one.** Both wrong answers are worth keeping, because each
+was wrong for a reason that is a fact about the model.
+
+*First: draw the pair, at `(q, p)`.* Every simple entry came out a straight line — `x`, `x+1` and `x·x`
+vertical, `1÷x` horizontal. The reason is arithmetic, not rendering:
+
+```
+T(a,b) · T(c,d) = T(ac, bd)          T(a,b) + T(c,d) = T(ad+bc, bd)
+```
+
+**A result's denominator depends only on its operands' denominators.** Every sample of a walk shares one
+denominator, so any polynomial in the sampled name has a *constant* `q`. The line `q = 4` is not a shape the
+function has; it is the set of rationals written over four. The chart was drawing the representative, and a
+representative's distance from the origin is bookkeeping — the angle was the part being thrown away.
+
+*Second: draw only the direction, on one circle.* That fixed the representative problem and lost something
+worse. **With the input nowhere, every expression is an arc**, and `2*x^2` came out a semicircle — which is not
+what a parabola looks like under any reading. A value contributes one number, so it may have one axis, and the
+second axis belongs to the thing a graph is of.
+
+*So: `x` across, `θ` up.* The vertical axis is that circle, cut at the half turn and stood on end. Everything
+the circle bought survives:
+
+- **The eight named points are eight heights**, at the eighth turns, and they are the graduations — a turn is
+  not a quantity, so the axis carries names and no numbers. They come from the same table the parser reads, so
+  **every label on it is an entry that can be typed back in**. `0` and `_0` are half a turn apart; `1` and
+  `-_1` project alike and sit opposite. A chart drawn against the projection would lose both.
+- **The axis is bounded at ±π whatever the expression.** Nothing is ever cropped, rescaled or fitted; two
+  expressions are read against the same eight marks. The unbounded output axis is gone, not tamed.
+- **`1÷x` is one continuous falling curve through `ω` at the origin** where an ordinary plot has two branches
+  and an asymptote, and `2*x^2` is a U at `0` saturating toward `ω`. Those two pictures are the model's claim
+  and the objection to the circle, answered in the same chart.
+- **The camera is square on and the hand pans.** Orbit and the throw are gone from the gestures; the VIEW
+  panel's presets and the spin still reach the same camera.
+
+The input axis is graduated the ordinary way, 1-2-5 over the walked domain — `Ticks` came back for it after
+being deleted with the circle. The square grid stays off by default (the named turns are drawn as rules right
+across, which is the grid this chart wants).
+
+Verified rather than assumed: sum, product and reciprocal are homogeneous in each operand, so the turn is the
+same whichever representative was written — `T(3,2)`, `T(15,10)` and `T(30,20)` give one angle for every entry
+tried. An exponent is the exception, being read as a whole number rather than as a ratio.
+
+A value with no free name has no input, so it is drawn as a **rule straight across** at its turn rather than as
+a marker, which would have to claim an `x` the expression has not got.
+
+#### The modes
+
+Still **how many names the expression leaves free** — read off the parse tree now, since the grammar has already
+decided what is a name:
 
 | Free names | Mode | What is drawn | Axes |
 |---|---|---|---|
-| none | POINT | a marker where the value lands, and its derivation | `(Re, Tr, Tr')` |
-| one | CURVE | a path, sampled over that name | `(x, Re, Tr)` |
+| none | POINT | a rule across the plot at the value's turn, how it folded, and its projection | `θ` |
+| one | CURVE | a path, sampled over that name | `(name, θ)` |
 | two | SURFACE | nothing — recognised and refused | — |
 
-**Two inputs and a value of its own is four axes**, which is why SURFACE is refused rather than flattened. It
-keeps its name because the badge should say what the expression *is*, not what happens to be drawable.
+A single value has no input, which is why it is a rule and not a marker: the turn is the one true thing about
+it, and it is drawn against the same eight named graduations a curve is read against, so the two can be
+compared by eye.
 
-Three things this seam does not do, each of them deliberate:
+#### Notation
 
-- **It does not read the carrier's shape.** Where a value lands comes back from the engine's `Place`; nothing
-  here pattern-matches a traction. That is cott-engine's own recorded lesson — the bridge that died with the
-  previous client "encoded the abandoned theory in its shape, not just its imports" — and the carrier is
-  expected to move again.
-- **It does not invent error messages.** A `SyntaxException` already carries one written for a person, so it is
-  passed through. (The engine names the offending character only when the entry *starts* with it; otherwise the
-  message is a bare "Error". Worth improving upstream, not papering over here.)
-- **It does not interpolate across an unanswered sample.** `curve` returns contiguous *runs*, and a sample the
-  theory did not settle ends one. Most expressions break nowhere — division by zero is `ω`, a value with a
-  place — so the thing that puts a hole in an ordinary plot does not put one here.
+Text becomes a term through `Parse` and the ANTLR grammar in `Traction.g4`. Numbers are ratios (`3.25` is
+`T(325,100)`, unreduced), `T(1,0)` is a literal, and a name is a name. `Algebra.CONSTANTS` binds the three that
+make the model's own table typable as it is written — `ω` (and `w`, which is on a keyboard), `_0` and `_1`; the
+other five rows are numbers and negations already. Calls are left standing: `Functions.NONE`, because this model
+has no real-valued calls and folding a sine into a ratio would be the client inventing arithmetic.
+
+#### Three things this seam does not do, each of them deliberate
+
+- **It does not read the carrier's shape.** A term folds through `Node.fold`, whose arithmetic is the model's
+  table, and hands back a `T`. Nothing here implements an operation. The one exception is stated in the file
+  rather than hidden: `projection` is the table's projection column, written here because `T` publishes none
+  yet, and it belongs on the type.
+- **It does not invent error messages.** `Parse` raises a `SyntaxException` carrying one written for a person,
+  with a character position, so it is passed through.
+- **It does not interpolate across a sample that did not fold.** `walk` returns contiguous *runs*, and a sample
+  the model leaves standing ends one. Division by zero is not such a sample — it is an ordinary point — so the
+  thing that puts a hole in an ordinary plot does not put one here.
+
+**Nothing is refined, and there is nothing to refine with.** The walk steps one denominator across the whole
+domain and there is no midpoint between `T(k,d)` and `T(k+1,d)` at that denominator — and a sample taken at a
+finer one would stand somewhere else in the plane, because nothing in this model reduces. Resolution is the
+denominator, chosen once, and the control for it is the sample count that already exists. This is what makes a
+walk a line rather than a scatter, and it also disposed of the old sampling trap: there is no literal text to
+strip trailing zeros from.
 
 **A picture of a different expression than the one in the field is still the one outcome this must never
 produce.** Nothing falls back to a reference scene: what cannot be drawn is not drawn, and the refusal says why.

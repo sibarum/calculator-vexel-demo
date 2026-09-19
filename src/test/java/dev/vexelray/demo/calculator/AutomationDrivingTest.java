@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>These were written while {@code TextField.onSubmit} was unwired — nothing in the application called
  * {@code Model.submit}, so Enter edited the field and changed nothing. That is now connected in {@code Ui}, and
  * the two tests that type into the field are the ones that would have failed the whole time it was not: both go
- * red with that one line removed, reporting the entry still sitting at {@code 0^x}.
+ * red with that one line removed, reporting the entry still sitting at the default expression.
  *
  * <p>Clearing the field is End and then Backspace rather than Ctrl+A, because the {@code key} verb takes one
  * key and no chord. Reaching past the driver to set the text directly would not exercise the path that was
@@ -208,7 +208,7 @@ final class AutomationDrivingTest {
     @DisplayName("the mode badge is named for the mode, which is what await waits on")
     void theModeBadgeCarriesTheMode(@TempDir Path home) {
         driving(home, d -> {
-            // The scene opens on 0^x -- one free name, so a curve.
+            // The scene opens on 1÷x -- one free name, so a curve.
             assertEquals(Algebra.Mode.CURVE, d.wiring().model().scene().reading().mode(), "the premise");
             assertTrue(d.run("find " + Landmarks.MODE).contains("CURVE"),
                     "the badge has to be NAMED the mode, or await mode CURVE waits forever");
@@ -366,13 +366,13 @@ final class AutomationDrivingTest {
     void aCommittedExpressionBringsItsReading(@TempDir Path home) {
         driving(home, d -> {
             Model model = d.wiring().model();
-            assertEquals(Algebra.Mode.CURVE, model.scene().reading().mode(), "the premise: 0^x is a curve");
+            assertEquals(Algebra.Mode.CURVE, model.scene().reading().mode(), "the premise: the default entry is a curve");
 
             d.clearFieldAndType("2+2");
 
             assertTrue(d.await(() -> model.scene().reading().mode() == Algebra.Mode.POINT),
                     "a closed expression should read as a point, not " + model.scene().reading().mode());
-            assertEquals("4", model.scene().reading().answer(), "and the engine should have answered it");
+            assertEquals("T(4,1)", model.scene().reading().answer(), "and the engine should have answered it");
         });
     }
 

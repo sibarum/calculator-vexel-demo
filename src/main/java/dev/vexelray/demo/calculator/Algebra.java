@@ -1,77 +1,200 @@
 package dev.vexelray.demo.calculator;
 
-import sibarum.cott.Bindings;
-import sibarum.cott.Cott;
-import sibarum.cott.Render;
 import sibarum.cott.SyntaxException;
-import sibarum.cott.Variables;
-import sibarum.cott.engine.base.expr.IExpr;
-import sibarum.cott.engine.derivation.Derivation;
-import sibarum.cott.engine.derivation.Step;
-import sibarum.cott.engine.projection.Place;
+import sibarum.cott.engine.ratio.T;
+import sibarum.cott.parse.Functions;
+import sibarum.cott.parse.Node;
+import sibarum.cott.parse.Parse;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
- * <b>The engine, and the whole of the seam onto it.</b> This is what replaced {@code Canned}.
+ * <b>The engine, and the whole of the seam onto it.</b>
  *
- * <p>One class, the way the fake was one class: {@link #read} makes a {@link Reading} and {@link #curve}
- * samples one. Everything in the application that would touch the algebra touches this and nothing else, which
- * is what let the fake be deleted in a single move and is worth keeping now that the thing behind it is real.
+ * <p>One class, as it was when the seam went onto a fake and again when it went onto the traction carrier:
+ * {@link #read} makes a {@link Reading} and {@link #walk} samples one. Everything in the application that
+ * would touch the algebra touches this and nothing else, which is what has now let the model underneath it be
+ * replaced three times without the view noticing.
+ *
+ * <h2>The model is {@code T}, and a value is a point in a plane</h2>
+ *
+ * <p>cott-engine's {@code docs/Traction-Model.md}: a traction is an <b>oriented projective rational</b>,
+ * {@code T(p, q)}, which is two readings of one pair rather than two things —
+ *
+ * <pre>
+ *  T(p, q) := p ÷ q = tan(θ)        θ = arg(q + pi)
+ * </pre>
+ *
+ * <p>So the pair <em>is</em> the point {@code q + pi} in the plane, and the ratio it names is the tangent of
+ * the angle that point stands at. The plot is the {@code (q, p)} plane, {@code q} across and {@code p} up.
+ *
+ * <p>This replaces the three-axis reading it inherited. {@code Place}, {@code Projector} and the
+ * {@code (Re, Tr, Tr')} spine went with the carrier they projected: a nesting of {@code n·0^t} needed as many
+ * as three numbers and the plot had to refuse a fourth, where a pair needs two and there is no fourth to
+ * refuse. <b>Two axes is not a simplification of three, it is the model's own shape.</b>
+ *
+ * <h2>A value is a direction, and the picture is the circle of them</h2>
+ *
+ * <p>What this class reports is the pair the engine really answered. <b>Where that goes on the chart is
+ * {@link Geometry}'s decision, and it draws the direction rather than the point</b> — every value on one
+ * circle, at its own turn. The reason is a fact about the arithmetic, and it took a plot full of straight
+ * lines to see it:
+ *
+ * <pre>
+ *  T(a,b) · T(c,d) = T(ac, bd)          T(a,b) + T(c,d) = T(ad+bc, bd)
+ * </pre>
+ *
+ * <p><b>The denominator of a result depends only on the denominators of its operands.</b> Every sample of a
+ * walk shares one denominator ({@link #walk} says why it must), so <em>any</em> polynomial in the sampled name
+ * has a constant {@code q} — and a chart of the pairs drew {@code x}, {@code x+1} and {@code x·x} as three
+ * vertical lines, one per denominator, with {@code 1÷x} horizontal because a reciprocal swaps the coordinates.
+ * The line {@code q = 4} is not a shape the function has; it is the set of rationals written over four.
+ *
+ * <p>The radius is bookkeeping and the angle is the value. {@code 1÷x} sampled over {@code k÷4} runs through
+ * 127°, 117°, 104°, <b>90°</b>, 76°, 63°, 53° — smooth, total, and straight through the pole, which is the
+ * whole claim the model makes. So the chart draws the turn, and the cost is stated rather than hidden:
+ * {@code T(1,2)} and {@code T(2,4)} are two values here and they stand at one place on that circle, because
+ * what separates them is which representative was written and not where the value is.
+ *
+ * <h2>What the plane shows that a number line cannot</h2>
+ *
+ * <p>The eight rows the model names are eight <em>places</em>, and four of them share a tangent:
+ *
+ * <pre>
+ *   0 = T(0,1)  at  1          projects as  +0        ω = T(1,0)   at   i    projects as  +inf
+ *  _0 = T(0,-1) at -1          projects as  -0       -ω = T(-1,0)  at  -i    projects as  -inf
+ *   1 = T(1,1)  at  1+i                              _1 = T(1,-1)  at -1+i   projects as  -1
+ *  -1 = T(-1,1) at  1-i                             -_1 = T(-1,-1) at -1-i   projects as   1
+ * </pre>
+ *
+ * <p>{@code 0} and {@code -0} are both a zero tangent and they are half a turn apart; {@code 1} and
+ * {@code -_1} project alike and stand in opposite quadrants. A chart drawn against the projection alone would
+ * put each of those pairs in one place and lose the orientation the model is named for. The plane keeps them
+ * apart because it draws the pair rather than the ratio, and {@link #projection} is reported <em>beside</em>
+ * the point rather than instead of it.
  *
  * <h2>The client reads what the engine says and does not re-derive it</h2>
  *
- * <p>That is cott-engine's own recorded lesson, from the bridge that died with the previous calculator: a
- * client that read the carrier structurally "encoded the abandoned theory in its shape, not just its imports",
- * and had to be rewritten when the carrier moved. The carrier is going to move again. So nothing here
- * pattern-matches a traction — where a value lands comes back from {@code Place}, and which names are free
- * comes back from {@code Variables}, both published by the engine.
+ * <p>That rule survives the change of model and is why this file is short. Text becomes a term through
+ * {@code Parse} and the grammar in {@code Traction.g4}; a term folds through {@code Node.fold}, whose
+ * arithmetic is the model's table; a folded term hands back a {@code T} and the pair's coordinates are the
+ * two numbers this passes on. Nothing here implements an operation.
  *
- * <h2>What the three modes are, and why there is no fourth</h2>
- *
- * <p>A value's place needs at least two coordinates and sometimes three, so three axes is what there is. The
- * input does not take one of them — it is walked over, not plotted against — which is why a curve and a
- * single value are drawn in the same space and mean the same thing by it:
- *
- * <ul>
- *   <li><b>{@link Mode#POINT}</b> — no free names. The expression is one value, so it gets a marker where it
- *       lands and the derivation that got it there.
- *   <li><b>{@link Mode#CURVE}</b> — one free name, walked from the middle outward and drawn as the path its
- *       value traces through {@code (Re, Tr, Tr')}. See {@link #walk}.
- *   <li><b>{@link Mode#SURFACE}</b> — two free names. Two inputs and a two-coordinate value is four axes, so
- *       this is <em>recognised and refused</em> rather than drawn flat. It keeps its name because the badge
- *       should say what the expression is, not what happens to be drawable.
- * </ul>
+ * <p><b>The one exception is stated rather than hidden</b>: {@link #projection} is the model table's projection
+ * column, written here because {@code T} does not publish one yet. It is four lines and it belongs on the
+ * type; if it stays here it will be the thing that disagrees when the table moves.
  *
  * <h2>The one rule inherited from the fake, and it still holds</h2>
  *
  * <p><b>A picture of a different expression than the one in the field is the one outcome that is not
  * allowed.</b> Nothing here falls back to a default scene: an expression that cannot be drawn produces no
- * curve and a {@link Reading#refusal()} saying why, and a sample that has no place breaks the curve rather
- * than being interpolated across.
+ * curve and a {@link Reading#refusal()} saying why, and a sample that does not fold to a pair breaks the curve
+ * rather than being interpolated across.
  */
 final class Algebra {
 
     /**
      * What the plot opens with.
      *
-     * <p>{@code 0^x} rather than the prototype's {@code e^(i*w*x/2)}: this is the traction axis itself, the
-     * thing the theory is about, and every sample of it is a value the engine answers exactly. It also shows
-     * the two facts a reader should meet first — it is {@code 1} at {@code x = 0} and the point zero at
-     * {@code x = 1}, so the curve crosses from the real axis onto the traction axis in view.
+     * <p>{@code 1÷x}, and it is the best single argument for the model. Sample the name at {@code k÷d} and the
+     * reciprocal is {@code T(d, k)} — the point {@code k + di} — so the graph of the classic singularity is a
+     * <b>straight horizontal line</b>, and the pole is the ordinary point on it where {@code q} reaches zero.
+     * Nothing jumps, nothing is a hole, and the thing that breaks an ordinary plot is visibly the place where
+     * the line crosses the {@code p} axis.
      */
-    static final String DEFAULT_EXPRESSION = "0^x";
+    static final String DEFAULT_EXPRESSION = "1÷x";
+
+    /**
+     * What a call in an entry means: nothing, so far.
+     *
+     * <p>{@code Functions} is supplied by whoever is calculating rather than by the parser, and this client has
+     * no table to supply. So {@code sin(x)} parses, stands, and is reported as standing. That is the honest
+     * answer while the model has no real-valued calls in it — the previous seam folded them through the syntax
+     * layer's {@code Real}, and folding a sine into a ratio here would be this class inventing arithmetic.
+     */
+    private static final Functions FUNCTIONS = Functions.NONE;
+
+    /**
+     * The names that are values rather than unknowns, and the whole of this client's notation.
+     *
+     * <p>The grammar has no constants in it: a run of letters is a name and what a name means is the caller's
+     * to say, which is why {@code Parse} hands back a {@code Var} and stops. So a table is needed to type the
+     * model at all, and <b>this is the smallest one that makes every row of it typable exactly as the model
+     * writes it</b> — the other five rows already parse:
+     *
+     * <pre>
+     *   0    T(0,1)   a number                    ω   T(1,0)    bound here, and {@code w} beside it
+     *   1    T(1,1)   a number                  -ω   T(-1,0)    the negation of that
+     *  -1    T(-1,1)  a negated number            _0  T(0,-1)   bound here
+     *  _1    T(1,-1)  bound here                -_1  T(-1,-1)   the negation of that
+     * </pre>
+     *
+     * <p>The negations come out right rather than by luck, and it is worth saying which fact is doing it:
+     * {@code Folding.ORDINARY} turns the numerator, so {@code -_1} is {@code T(-1,-1)} and {@code -1} is
+     * {@code T(-1,1)} — the table's own two positions. An underscore leads a name in the grammar, which is
+     * what lets {@code _0} and {@code _1} be written the model's way instead of as coordinates.
+     *
+     * <p>{@code w} is bound beside {@code ω} for the reason the previous notation bound it: the glyph is not
+     * on a keyboard. The cost is that {@code w} cannot be a variable, which was true of the last three
+     * notations here too.
+     *
+     * <p>Substituted before the free names are counted, so a constant is a value and never an axis.
+     */
+    private static final Map<String, Node> CONSTANTS = Map.of(
+            "ω", new Node.Lit(T.OMEGA),
+            "w", new Node.Lit(T.OMEGA),
+            "_0", new Node.Lit(T.of(0, -1)),
+            "_1", new Node.Lit(T.of(1, -1)));
+
+    /**
+     * One of the model's named points: what it is called here, and which pair it is.
+     *
+     * @param name  as {@link #CONSTANTS} reads it, so the chart cannot label a place something a reader could
+     *              not type back into the field
+     * @param value the pair, whose {@link T#theta()} is where on the circle it stands
+     */
+    record Named(String name, T value) {
+
+        /** Where this point stands on the circle, in radians. */
+        double theta() {
+            return value.theta();
+        }
+    }
+
+    /**
+     * The model's eight named points, in the order they stand around the circle.
+     *
+     * <p>They are the graduations. A circle of directions has no scale to graduate — every value is at a
+     * turn and nothing is nearer or further — so what a reader needs marked is the turns that have names, and
+     * the model names exactly these eight, at the eighth turns. Two of them are on each axis and the other
+     * four are the diagonals.
+     *
+     * <p>This is the same list twice over on purpose: it labels the chart <em>and</em> it is what the field
+     * accepts, so every mark on the picture is an entry a reader can type.
+     */
+    static final List<Named> NAMED = List.of(
+            new Named("0", T.of(0, 1)),        //    0°   the point zero
+            new Named("1", T.of(1, 1)),        //   45°
+            new Named("ω", T.of(1, 0)),        //   90°   the quarter turn
+            new Named("_1", T.of(1, -1)),      //  135°   distinct from -1, and projects as -1
+            new Named("_0", T.of(0, -1)),      //  180°   distinct from 0, and projects as -0
+            new Named("-_1", T.of(-1, -1)),    // -135°   distinct from 1, and projects as 1
+            new Named("-ω", T.of(-1, 0)),      //  -90°
+            new Named("-1", T.of(-1, 1)));     //  -45°
 
     /** How an expression wants to be drawn. Decided by how many names it leaves free. */
     enum Mode {
         /** No free names: one value, one marker. */
         POINT,
-        /** One free name: a path through {@code (x, a, b)}. */
+        /** One free name: a path through the plane. */
         CURVE,
-        /** Two free names: recognised, and not drawable in three axes. */
+        /** Two free names: recognised, and not one path. */
         SURFACE
     }
 
@@ -82,17 +205,17 @@ final class Algebra {
      * error line and the geometry all read it and must not describe different expressions.
      *
      * @param mode       which of the three kinds this is
-     * @param term       the expression parsed, expanded and settled; what {@link #curve} samples
+     * @param term       the expression as parsed, unfolded; what {@link #walk} substitutes into
      * @param variable   the free name a curve is drawn over, or {@code null} in the other modes
-     * @param answer     the settled value as the engine renders it, for {@link Mode#POINT}
-     * @param derivation every rewrite from the entry to the answer, one line each, for {@link Mode#POINT}
-     * @param place      where a {@link Mode#POINT} value lands, or {@code null}
+     * @param answer     the folded value as the model writes it — {@code T(p,q)} — for {@link Mode#POINT}
+     * @param derivation the entry, what it folded to, and where that lands, for {@link Mode#POINT}
+     * @param value      the pair a {@link Mode#POINT} entry folded to, or {@code null} where it did not fold
      * @param subtitle   the line under the field — always a description of <em>what is shown</em>
      * @param refusal    {@code null} when the expression was understood and drawn; otherwise what to tell the
      *                   user, in which case nothing is drawn
      */
-    record Reading(Mode mode, IExpr term, String variable, String answer, List<String> derivation,
-                   Place place, String subtitle, String refusal) {
+    record Reading(Mode mode, Node term, String variable, String answer, List<String> derivation,
+                   T value, String subtitle, String refusal) {
 
         Reading {
             derivation = List.copyOf(derivation);
@@ -107,42 +230,56 @@ final class Algebra {
             return mode == Mode.CURVE && refusal == null;
         }
 
-        /** Whether there is a marker to place. */
+        /** Whether there is a marker to place: an entry that folded to one pair. */
         boolean drawsMarker() {
-            return mode == Mode.POINT && place != null && place.withinVolume();
+            return value != null;
         }
 
         /**
-         * What the three world axes carry, in order.
+         * Where the value stands, as {@code (q, p)}.
          *
-         * <p>The same three in every mode, because the input is walked over rather than plotted against: a
-         * curve and a single value are both drawn in the value's own coordinates, and the third is the
-         * exponent's own traction part, which is why it is {@code Tr'} rather than a second name.
+         * <p>Horizontal first, because the point is {@code q + pi} and the horizontal axis is the one the
+         * angle is measured from. {@code T(0,0)} answers as {@link T#resolved()} does — the table reads it as
+         * a value by {@code x ÷ x = 1}, and a plot is exactly the place that reads a pair as a value.
+         */
+        double[] coordinates() {
+            T at = value.resolved();
+            return new double[]{at.q().doubleValue(), at.p().doubleValue()};
+        }
+
+        /**
+         * What the two world axes carry, in order: the input, and the value's turn.
          *
-         * <p>The second name is <b>Tr</b> and not <b>Im</b>. The vertical output axis is the traction axis, an
-         * order of vanishing; the reading under which it would be an imaginary part is the phase, and nothing
-         * in this engine wires it. Naming it Im would be the plot asserting a component the value has not got.
+         * <p>The first is <b>the free name the expression actually left</b>, so an entry walked over
+         * {@code t} says {@code t} — a fixed "x" would be the chart naming a variable the reader did not
+         * write. In the other modes there is no input and it is "x" only as a placeholder, which nothing
+         * draws.
+         *
+         * <p>The second is <b>{@code θ}</b>, and not a coordinate. It was {@code q} and {@code p} when the
+         * chart drew the pair, and that chart was wrong: what is drawn is {@code arg(q + pi)}, one number out
+         * of the pair and the whole of the value, where the radius is only which representative got written.
+         * Naming this axis for a coordinate would be the plot claiming to show one.
          */
         String[] axisNames() {
-            return new String[]{"Re", "Tr", "Tr'"};
+            return new String[]{variable == null ? "x" : variable, "θ"};
         }
     }
 
     /**
      * Read an expression.
      *
-     * <p>Everything a syntax error knows is the engine's to say: {@code SyntaxException} already carries a
-     * message written for a person ({@code "'&' not in COTT"}), so it becomes the refusal verbatim rather than
-     * being replaced by something this class invents and would have to keep in step.
+     * <p>Everything a syntax error knows is the engine's to say: {@code Parse} raises {@code SyntaxException}
+     * with a message written for a person and a character position, so it becomes the refusal verbatim rather
+     * than being replaced by something this class invents and would have to keep in step.
      */
     static Reading read(String expression) {
         String entry = expression == null ? "" : expression.trim();
         if (entry.isEmpty()) {
             return refused(Mode.POINT, "type an expression", "nothing entered");
         }
-        Derivation derivation;
+        Node term;
         try {
-            derivation = Cott.derive(entry);
+            term = Parse.of(entry).substitute(CONSTANTS);
         } catch (SyntaxException e) {
             return refused(Mode.POINT, "not read", message(e));
         } catch (RuntimeException e) {
@@ -150,42 +287,41 @@ final class Algebra {
             // is worse than one that says it could not read something, and the entry is recoverable either way.
             return refused(Mode.POINT, "not read", message(e));
         }
-        IExpr term = derivation.to();
-        List<String> names = List.copyOf(Variables.of(term));
+        List<String> names = List.copyOf(names(term));
         return switch (names.size()) {
-            case 0 -> point(derivation, term);
+            case 0 -> point(term);
             case 1 -> curve(term, names.getFirst());
             case 2 -> refused(Mode.SURFACE, "two inputs over " + names,
-                    "two free names sweep a surface, and only the real line is walked so far — not drawn");
+                    "two free names sweep a family of points, and one name is as many as is walked — not drawn");
             default -> refused(Mode.SURFACE, names.size() + " free names",
                     "only one free name can be plotted; this has " + names);
         };
     }
 
-    /** One value: where it lands, and how it got there. */
-    private static Reading point(Derivation derivation, IExpr term) {
-        String answer = Render.show(term);
-        List<String> lines = lines(derivation);
-        Optional<Place> place = Place.of(term);
-        if (place.isEmpty()) {
-            // Not a failure of this class or of the entry: the theory has no answer, and the term standing IS
-            // the answer. It is shown, and not placed, because it is not one point.
-            return new Reading(Mode.POINT, term, null, answer, lines, null,
-                    "stands — " + answer, "no rule settles this, so it has no place on the chart");
+    /** One value: what it folded to, and where that lands in the plane. */
+    private static Reading point(Node term) {
+        Node folded = fold(term);
+        Optional<T> value = folded.literal();
+        if (value.isEmpty()) {
+            // Not a failure of this class or of the entry: no rule folds this, and the term standing IS the
+            // answer. It is shown, and not placed, because it is not one pair.
+            return new Reading(Mode.POINT, term, null, folded.show(), List.of(term.show(), "= " + folded.show()),
+                    null, "stands — " + folded.show(),
+                    "nothing folds this to a pair, so it has no point in the plane");
         }
-        Place at = place.get();
-        if (!at.withinVolume()) {
-            return new Reading(Mode.POINT, term, null, answer, lines, at,
-                    answer + " — " + at.dimension() + " coordinates",
-                    "this value needs " + at.dimension() + " axes; three is as many as there are");
-        }
+        T at = value.get();
+        String answer = folded.show();
+        List<String> lines = List.of(
+                term.show(),
+                "= " + answer,
+                "at  " + coordinates(at) + "    " + turn(at) + "    projects as " + projection(at));
         return new Reading(Mode.POINT, term, null, answer, lines, at,
-                answer + "  at  " + coordinates(at), null);
+                answer + "  at  " + coordinates(at) + "  ·  " + turn(at) + "  ·  " + projection(at), null);
     }
 
-    private static Reading curve(IExpr term, String variable) {
+    private static Reading curve(Node term, String variable) {
         return new Reading(Mode.CURVE, term, variable, null, List.of(), null,
-                "walked over " + variable + "  ·  (Re, Tr, Tr')", null);
+                "walked over " + variable + "  ·  θ = arg(q + pi)", null);
     }
 
     private static Reading refused(Mode mode, String subtitle, String refusal) {
@@ -193,282 +329,232 @@ final class Algebra {
     }
 
     /**
-     * The curve, as contiguous runs of interleaved value coordinates {@code a, b, c}.
+     * The curve, as contiguous runs of interleaved {@code x, q, p}.
      *
      * <h2>The input is a parameter, not an axis</h2>
      *
-     * <p>A sample contributes <em>where its value landed</em> and nothing else. The free name is walked over,
-     * not plotted against, so a curve and a single value occupy the same three axes and mean the same thing by
-     * them. That is what makes the other modes possible later: a mode is a choice of which path through the
-     * input to walk, and the picture it draws is always the value's own coordinates.
+     * <p>A sample contributes <em>where its value landed</em>, and the {@code x} it carries is for the probe to
+     * quote rather than for the picture to use. The free name is walked over, not plotted against, so a curve
+     * and a single value occupy the same two axes and mean the same thing by them.
      *
-     * <p><b>The walk starts in the middle and steps outward both ways</b>, rather than sweeping from one end.
-     * The budget is therefore spent nearest the starting point first, so an expression that goes pathological
-     * far out still gets drawn faithfully near the middle. Each direction is its own run; they share the
-     * starting sample, so a curve continuous through it is drawn as one unbroken line.
+     * <h2>The walk steps on one denominator</h2>
      *
-     * <h2>Subdividing on convergence, not on a threshold</h2>
+     * <p>Every sample is the name bound to {@code T(k, d)} for one {@code d} across the whole domain, and the
+     * numerator is what steps. Two reasons, and a third that used to be the main one and is not:
      *
-     * <p><b>A long chord has three causes and only one of them is under-sampling.</b> Refining until every gap
-     * is under a limit would not terminate on ordinary input: {@code 0^x} jumps by exactly 1 at the origin at
-     * every depth, because {@code 0^0 = 1} lands at {@code (1, 0)} while its neighbours approach {@code (0, 0)},
-     * which is erasure and not in the type at all. {@code x^2} plateaus at 2.236 against {@code (0, 2)}, the
-     * order of vanishing. {@code 1÷x} gets <em>worse</em> as it is refined, the chord growing past 1000 while
-     * the interval halves. None of those are resolution problems and none of them can be subdivided away.
+     * <ul>
+     *   <li><b>The grid is exact.</b> There is no literal text to convert, so the old sampling trap cannot
+     *       happen — {@code Node.of(k, d)} <em>is</em> the pair, where {@code "0.0"} was a string that parsed
+     *       as {@code 0÷10} and missed every rule that fires on zero.
+     *   <li><b>The power rule sees the same kind of exponent everywhere.</b> A power folds at a whole
+     *       exponent, so in {@code 2^x} it is the sample's denominator that decides whether anything folds at
+     *       all. One denominator makes that one answer for the whole walk instead of a different one every
+     *       few steps.
+     *   <li><s>Otherwise the samples scatter.</s> <b>True of the plane and not of the circle.</b> Nothing in
+     *       this model reduces, so {@code 1.5} is {@code T(15,10)} where {@code 2} is {@code T(2,1)}, and
+     *       plotted as <em>points</em> their reciprocals stand an order of magnitude apart. But sum, product
+     *       and reciprocal are homogeneous in each operand — scaling a pair's coordinates by a positive factor
+     *       scales the result's by one too — so the <em>direction</em> is the same whichever representative
+     *       was written, and the chart draws directions. A walk in decimals would now land in the right
+     *       places. The exception is the one the bullet above is about: an exponent is read as a whole number
+     *       rather than as a ratio, so {@code T(2,1)} is a square and {@code T(4,2)} is a term that stands.
+     * </ul>
      *
-     * <p>So the test is whether splitting an interval makes <em>progress</em>. On a smooth stretch each half
-     * chord is about half the whole; at a jump one half keeps essentially the whole gap, and under divergence
-     * it exceeds it. When the longer half fails to beat {@link #PROGRESS} of the whole, the curve is broken
-     * there and the far sample begins a new run — the honest picture, since the engine really did say the
-     * value is somewhere else.
+     * <p><b>Nothing is refined, and there is nothing to refine with.</b> The previous walk bisected an interval
+     * until splitting stopped making progress. Between {@code T(k,d)} and {@code T(k+1,d)} there is no
+     * midpoint at this denominator, and a sample taken at a finer one would stand somewhere else in the plane
+     * for the reason above. Resolution here is the denominator and it is chosen once; a curve that wants more
+     * of it wants more samples, which is the control that already exists.
      *
-     * <p>{@link #DEPTH} and a total sample budget are the backstop under that, for entries like
-     * {@code tan(1÷x)} whose jumps stay bounded and would otherwise refine forever.
-     *
-     * <p><b>Runs rather than one array, because a break is real.</b> A sample whose value the theory does not
-     * settle has no place, and joining the samples either side of it would draw a segment through a region the
-     * engine said nothing about. Such a sample breaks the run and is never subdivided toward — there is
-     * nothing between two points that do not exist.
+     * <p><b>Runs rather than one array, because a break is real.</b> A sample the model does not fold to a pair
+     * has no point, and joining the samples either side of it would draw a segment through a place the engine
+     * said nothing about. Such a sample breaks the run.
      *
      * <p>Pure and allocation-per-call, run on a worker whenever the expression or the domain changes, never per
      * frame.
      *
-     * @param samples the initial step count per direction; the walk may spend up to {@link #BUDGET} times this
-     *                many in total refining, and no more
+     * @param samples how many steps to spend across the domain; the denominator is chosen to give about this
+     *                many, and the count is held under {@link #CEILING} of them
      */
     static List<double[]> walk(Reading reading, double x0, double x1, int samples) {
         if (!reading.drawsCurve() || x1 <= x0) {
             return List.of();
         }
-        Walk walk = new Walk(reading, Math.max(2, samples));
-        // The starting point, clamped into the domain rather than skipped when the domain excludes it. Zero
-        // is the reading of "(0, 0)" that the real line projection is named for; a mode that walks some other
-        // path through the input is the seam this leaves open, and it changes only these two calls.
-        double start = Math.min(x1, Math.max(x0, ORIGIN));
-        walk.outward(start, x1);
-        walk.outward(start, x0);
-        return walk.runs();
-    }
-
-    /** Where the walk begins before stepping away in each direction. */
-    private static final double ORIGIN = 0;
-
-    /** How much of the whole chord the longer half must beat for a split to count as progress. */
-    private static final double PROGRESS = 0.95;
-
-    /** How far a single interval may be bisected before the walk gives up and breaks the curve. */
-    private static final int DEPTH = 12;
-
-    /** Total samples allowed, as a multiple of the requested step count. The failsafe. */
-    private static final int BUDGET = 8;
-
-    /** A gap smaller than this fraction of the largest coordinate seen so far is close enough. */
-    private static final double TOLERANCE = 0.02;
-
-    /** Below this the tolerance stops shrinking, so a curve sitting at the origin still terminates. */
-    private static final double FLOOR = 1e-9;
-
-    /**
-     * One walk over one reading, and the mutable state it needs.
-     *
-     * <p>A class rather than a fold because three things vary together as it goes: what is left of the budget,
-     * the largest coordinate seen so far (which sets the tolerance, so that a curve reaching 1000 is not
-     * sampled to the same absolute precision as one reaching 1), and the run being accumulated.
-     */
-    private static final class Walk {
-
-        private final Reading reading;
-        private final int steps;
-        private final List<double[]> runs = new ArrayList<>();
-        private final List<Double> run = new ArrayList<>();
-        private int budget;
-        private double extent;
-
-        Walk(Reading reading, int steps) {
-            this.reading = reading;
-            this.steps = steps;
-            this.budget = steps * BUDGET;
-        }
-
-        /**
-         * Step from the starting point out to one end, refining each gap that is too long to accept.
-         *
-         * <p><b>The grid is walked before anything is refined</b>, because the tolerance is relative to the
-         * largest coordinate seen and that is not known until it has been. Refining as it went measured the
-         * first few steps against an extent of almost nothing, found them enormous by comparison, and spent
-         * the budget subdividing the flattest part of the curve.
-         */
-        void outward(double from, double to) {
-            double step = (to - from) / steps;
-            if (step == 0 || !Double.isFinite(step)) {
-                return;
-            }
-            double[] xs = new double[steps + 1];
-            double[][] grid = new double[steps + 1][];
-            for (int i = 0; i <= steps; i++) {
-                xs[i] = from + step * i;
-                grid[i] = place(xs[i]);
-            }
-            double[] previous = null;
-            for (int i = 0; i <= steps; i++) {
-                double[] at = grid[i];
-                if (at == null) {
-                    // No place here, so nothing to bridge to and nothing between: break rather than refine.
-                    close();
-                    previous = null;
-                    continue;
-                }
-                if (previous != null && !bridge(xs[i - 1], previous, xs[i], at, 0)) {
-                    close();
-                }
-                emit(at);
-                previous = at;
-            }
-            close();
-        }
-
-        /**
-         * Fill the gap between two placed samples, or report that it cannot be filled.
-         *
-         * <p>Returns false where the curve should be broken instead: the split made no progress, the depth or
-         * the budget ran out, or the midpoint has no place. Points found on the way are emitted as they are
-         * proven, so a gap that breaks halfway through still draws the half that was good.
-         */
-        private boolean bridge(double a, double[] from, double b, double[] to, int depth) {
-            double whole = gap(from, to);
-            if (whole <= tolerance()) {
-                return true;
-            }
-            if (depth >= DEPTH || budget <= 0) {
-                return false;
-            }
-            double middle = (a + b) / 2;
-            if (middle == a || middle == b) {
-                return false;
-            }
-            double[] at = place(middle);
+        long d = denominator(x0, x1, Math.max(2, samples));
+        long from = (long) Math.ceil(x0 * d);
+        long to = (long) Math.floor(x1 * d);
+        List<double[]> runs = new ArrayList<>();
+        List<Double> run = new ArrayList<>();
+        for (long k = from; k <= to; k++) {
+            double[] at = place(reading, k, d);
             if (at == null) {
-                return false;
+                close(runs, run);
+                continue;
             }
-            // The convergence test. On a smooth stretch both halves are about half the whole; at a jump one
-            // half keeps it all, and under divergence it grows past it. Either way, refining is not working.
-            if (Math.max(gap(from, at), gap(at, to)) >= whole * PROGRESS) {
-                return false;
-            }
-            if (!bridge(a, from, middle, at, depth + 1)) {
-                return false;
-            }
-            emit(at);
-            return bridge(middle, at, b, to, depth + 1);
-        }
-
-        /**
-         * Where one sample lands, padded to three, or null where it has no place in a volume.
-         *
-         * <p>Two coordinates and three are both drawn, which they were not when the input held an axis: the
-         * third is the innermost exponent, and an exponent with no traction in it is the absence marker, so
-         * padding says the axis is unoccupied rather than inventing a position.
-         */
-        private double[] place(double x) {
-            if (budget <= 0) {
-                return null;
-            }
-            budget--;
-            try {
-                Bindings at = Bindings.EMPTY.define(reading.variable() + " = " + literal(x));
-                Optional<Place> place = Place.of(Cott.reduce(at.expand(reading.term())));
-                if (place.isEmpty() || !place.get().withinVolume()) {
-                    return null;
-                }
-                double[] found = place.get().toDoubles();
-                double[] out = new double[3];
-                System.arraycopy(found, 0, out, 0, found.length);
-                for (double c : out) {
-                    if (!Double.isFinite(c)) {
-                        return null;
-                    }
-                    extent = Math.max(extent, Math.abs(c));
-                }
-                return out;
-            } catch (RuntimeException e) {
-                return null;
-            }
-        }
-
-        /** Relative to the largest coordinate seen, so one scale of curve is not sampled like another. */
-        private double tolerance() {
-            return Math.max(FLOOR, extent * TOLERANCE);
-        }
-
-        private static double gap(double[] from, double[] to) {
-            double dx = from[0] - to[0];
-            double dy = from[1] - to[1];
-            double dz = from[2] - to[2];
-            return Math.sqrt(dx * dx + dy * dy + dz * dz);
-        }
-
-        private void emit(double[] at) {
+            run.add(k / (double) d);
             run.add(at[0]);
             run.add(at[1]);
-            run.add(at[2]);
         }
+        close(runs, run);
+        return List.copyOf(runs);
+    }
 
-        private void close() {
-            // A run of one point is kept, which it was not when the input held an axis. An isolated answer is
-            // a real value at a real place -- 0^0 = 1 at the origin of 0^x, omega at the pole of 1/x, the
-            // order of vanishing at the bottom of x^2 -- and every one of those is a discontinuity, so every
-            // one arrives alone. Dropping them deleted the most informative sample on the chart. The caller
-            // draws a run of one as a marker; a stroke of one point would still draw nothing.
-            if (run.size() >= 3) {
-                double[] out = new double[run.size()];
-                for (int i = 0; i < out.length; i++) {
-                    out[i] = run.get(i);
-                }
-                runs.add(out);
+    /** As many steps across the domain as were asked for, held under a ceiling a buffer can carry. */
+    private static long denominator(double x0, double x1, int samples) {
+        double wanted = samples / (x1 - x0);
+        long d = Math.max(1, Math.round(wanted));
+        while ((x1 - x0) * d > CEILING) {
+            d = Math.max(1, d / 2);
+            if (d == 1) {
+                break;
             }
-            run.clear();
         }
+        return d;
+    }
 
-        List<double[]> runs() {
-            return List.copyOf(runs);
+    /** How many samples one walk may take, whatever the domain and the step ask for between them. */
+    private static final int CEILING = 4000;
+
+    /**
+     * Where one sample lands, or null where the model does not fold it to a pair.
+     *
+     * <p>The name is bound to the pair itself rather than to text: {@code Node.of(k, d)} is a literal at those
+     * coordinates, so nothing about the sample passes back through the grammar and there is no spelling for it
+     * to acquire on the way.
+     */
+    private static double[] place(Reading reading, long k, long d) {
+        try {
+            Node at = reading.term()
+                    .substitute(Map.of(reading.variable(), Node.of(k, d)))
+                    .resolve(FUNCTIONS)
+                    .fold();
+            Optional<T> value = at.literal();
+            if (value.isEmpty()) {
+                return null;
+            }
+            T pair = value.get().resolved();
+            double q = pair.q().doubleValue();
+            double p = pair.p().doubleValue();
+            // A coordinate that has outgrown a double is a real coordinate the picture cannot hold. Breaking
+            // the run says so; drawing it at infinity would put the curve somewhere the value is not.
+            return Double.isFinite(q) && Double.isFinite(p) ? new double[]{q, p} : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static void close(List<double[]> runs, List<Double> run) {
+        // A run of one is kept. An isolated answer is a real value at a real place, and every such sample
+        // arrives alone precisely because its neighbours did not fold -- which makes it the most informative
+        // point on the chart, not the least. The caller draws a run of one as a marker; a stroke through one
+        // point would draw nothing at all.
+        if (!run.isEmpty()) {
+            double[] out = new double[run.size()];
+            for (int i = 0; i < out.length; i++) {
+                out[i] = run.get(i);
+            }
+            runs.add(out);
+        }
+        run.clear();
+    }
+
+    /** Substituted with nothing, resolved, then folded — the three walks in the order they compose. */
+    private static Node fold(Node term) {
+        try {
+            return term.evaluate(Map.of(), FUNCTIONS);
+        } catch (RuntimeException e) {
+            return term;
         }
     }
 
     /**
-     * A sample value as a literal the parser reads exactly.
+     * The free names in a term: every {@link Node.Var} in it, in the order they were written.
      *
-     * <p><b>Trailing zeros are stripped, and that is not cosmetic.</b> Coordinates in this engine are never
-     * reduced, so {@code "0.0"} parses as {@code 0/10} — a literal whose numerator is zero but which is not
-     * the rational zero, and the rules that fire on zero do not fire on it. Sampling {@code 0^x} at the origin
-     * answered {@code 0^(0/10)}, which places at {@code (0,0)} — erasure, which is not a member of the type at
-     * all — where the answer is {@code 0^0 = 1} at {@code (1,0)}. One sample in the middle of the domain, in
-     * the wrong place, on the one axis crossing a reader would be looking at.
+     * <p>Read off the parse tree rather than asked of the engine, which is a change from the previous seam and
+     * a smaller claim than it looks. {@code Variables} had to tell a variable from {@code π} or {@code e},
+     * because the carrier held both under one atom; here the grammar has already decided — a name that is not
+     * a call is a {@code Var} and nothing in this client binds any of them. The day one is bound, the binding
+     * is what this consults, and it is still not the carrier's shape being read.
      */
-    private static String literal(double v) {
-        return new BigDecimal(Double.toString(v)).stripTrailingZeros().toPlainString();
-    }
-
-    /** The coordinates as the chart writes them. */
-    private static String coordinates(Place place) {
-        List<String> parts = new ArrayList<>();
-        place.coordinates().forEach(c -> parts.add(Render.show(c)));
-        return "(" + String.join(", ", parts) + ")";
-    }
-
-    /**
-     * A derivation as lines, each a whole term and the rule that licensed it.
-     *
-     * <p>Rendered through {@link Render} rather than through {@code Derivation.toString}, which prints the raw
-     * records — the engine's own debugging view, and not something to put in front of a person.
-     */
-    private static List<String> lines(Derivation derivation) {
-        List<String> out = new ArrayList<>();
-        out.add(Render.show(derivation.from()));
-        for (Step step : derivation.steps()) {
-            out.add("= " + Render.show(step.after()) + "    " + step.rule().name()
-                    + "  [" + step.rule().reference() + ", " + step.rule().status() + "]");
-        }
+    private static Set<String> names(Node term) {
+        Set<String> out = new LinkedHashSet<>();
+        collect(term, out);
         return out;
+    }
+
+    private static void collect(Node node, Set<String> into) {
+        if (node instanceof Node.Var(String name)) {
+            into.add(name);
+        }
+        node.children().forEach(child -> collect(child, into));
+    }
+
+    /**
+     * The model table's projection column: what this pair is as an ordinary signed number.
+     *
+     * <p><b>Written here and it should not be.</b> It is the model's own table — {@code T(0,1)} projects as
+     * {@code +0}, {@code T(0,-1)} as {@code -0}, {@code T(1,0)} as {@code +inf}, {@code T(-1,0)} as
+     * {@code -inf} — and the type is where a column of the table belongs. It is here because {@code T}
+     * publishes no projection yet, and it is four lines of IEEE division rather than four lines of cases
+     * because the signed zeroes and the two infinities are exactly what a double already does with a sign on
+     * its divisor.
+     *
+     * <p>Written as {@code inf} rather than {@code ∞} for a reason that is not aesthetic: the text atlas this
+     * application draws with has no {@code U+221E}, and a missing glyph draws as a box.
+     */
+    static String projection(T value) {
+        T at = value.resolved();
+        return projection(at.p().doubleValue(), at.q().doubleValue());
+    }
+
+    /**
+     * As {@link #projection(T)}, from a pair already read as doubles — which is what a sampled curve carries.
+     *
+     * <p>One implementation for both, because the probe quotes this over a curve and the subtitle quotes it
+     * over a value, and a chart whose bubble and whose caption disagreed about what something projects to
+     * would be worse than one that offered neither.
+     */
+    static String projection(double p, double q) {
+        double r = p / q;
+        if (Double.isInfinite(r)) {
+            return r > 0 ? "+inf" : "-inf";
+        }
+        if (r == 0) {
+            // Negative zero is a distinct projection here, and it is the one case the formatter would lose.
+            return Math.copySign(1, r) < 0 ? "-0" : "+0";
+        }
+        return trim(r);
+    }
+
+    /** Where the point stands, as the chart writes it: the coordinates of {@code q + pi}, horizontal first. */
+    private static String coordinates(T value) {
+        T at = value.resolved();
+        return "(" + at.q() + ", " + at.p() + ")";
+    }
+
+    /**
+     * The angle the point stands at, in degrees.
+     *
+     * <p>The reading that tells apart what the ratio cannot: {@code 0} and {@code -0} are both a zero tangent
+     * and they are 0° and 180°. Degrees rather than radians because this is a readout for a person, and
+     * whole-ish degrees because the interesting ones are the eighth turns the table lists.
+     */
+    private static String turn(T value) {
+        return trim(Math.toDegrees(value.theta())) + "°";
+    }
+
+    /** As {@link #turn(T)}, from a pair already read as doubles. See {@link #projection(double, double)}. */
+    static String turn(double p, double q) {
+        return trim(Math.toDegrees(Math.atan2(p, q))) + "°";
+    }
+
+    /** Four decimals at most, and no trailing zeros: a readout quotes a number, it does not measure one. */
+    private static String trim(double v) {
+        String s = String.format(Locale.ROOT, "%.4f", v);
+        if (s.contains(".")) {
+            s = s.replaceAll("0+$", "").replaceAll("\\.$", "");
+        }
+        return s.equals("-0") ? "0" : s;
     }
 
     private static String message(RuntimeException e) {

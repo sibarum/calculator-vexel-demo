@@ -112,9 +112,20 @@ final class Motion implements Panels.Viewpoint {
     private static final double NEAR = 3.0;
     private static final double FAR = 24.0;
 
-    /** Where a fresh view stands, and where Reset goes back to. */
-    private static final View HOME =
-            new View(Math.toRadians(38), Math.toRadians(26), DISTANCE, 0, 0, 0);
+    /**
+     * Where a fresh view stands, and where Reset goes back to: <b>square on to the plane</b>.
+     *
+     * <p>It was an iso view, 38° round and 26° up, which is what a three-axis box wants — you cannot read a
+     * volume from straight on. The plot is a plane now, and the two things it is read for are both angles
+     * measured in it: where a point stands, and what turn {@code arg(q + pi)} it is at. Any tilt at all is a
+     * foreshortening of exactly those, so the camera that shows the model is the one looking straight down the
+     * axis the plane is not in.
+     *
+     * <p>Tilting it is still reachable — the VIEW panel's presets and the spin move the camera as they always
+     * did, and looking at the plane edge-on is a fair thing to want to do once. What has gone is the hand: a
+     * drag pans, and there is no gesture that tips the picture by accident. See {@link Gestures}.
+     */
+    private static final View HOME = new View(0, 0, DISTANCE, 0, 0, 0);
 
     /**
      * The whole camera: where it is pointed, how far out it stands, and what it stands off.
@@ -277,7 +288,7 @@ final class Motion implements Panels.Viewpoint {
 
     @Override
     public void reset() {
-        look(38, 26);
+        look(0, 0);
     }
 
     /**
