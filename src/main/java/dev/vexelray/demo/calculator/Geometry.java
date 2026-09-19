@@ -277,6 +277,7 @@ final class Geometry {
 
         List<Surface.Stroke> scene = new ArrayList<>();
         List<double[]> placed = new ArrayList<>(runs.size());
+        List<double[]> drawn = new ArrayList<>(runs.size());
         for (double[] run : runs) {
             // A run of one is an isolated answer, and it gets a marker for the reason a single value does:
             // a stroke through one point draws nothing, and the value is no less real for having no
@@ -284,11 +285,15 @@ final class Geometry {
             if (run.length == 3) {
                 marker(scene, at(run[0], x0, x1), turn(run[1], run[2]), radius, ramp);
             }
+            // Twice, in two densities, and they are not the same list. The probe snaps to SAMPLES -- points
+            // the engine actually answered -- and quotes them from an index-parallel array, so nothing may be
+            // inserted into that one. The stroke wants the path BETWEEN them, which is mediants.
             placed.add(world(run, x0, x1));
+            drawn.add(mediants(run, x0, x1));
         }
         // One stroke per run, so a break in the curve is a break in the picture. See Algebra.walk. Split
         // again here for the one break that is the CHART's and not the walk's: the half turn.
-        for (double[] run : placed) {
+        for (double[] run : drawn) {
             for (double[] piece : unwrapped(run)) {
                 if (piece.length >= 6) {
                     scene.add(curve(piece, radius, ramp));
@@ -322,6 +327,108 @@ final class Geometry {
         }
         return out;
     }
+
+    /**
+     * The same run with the path <em>between</em> its samples filled in, at mediants.
+     *
+     * <h2>A straight segment between two turns is the wrong curve, and it is wrong by the model's own rule</h2>
+     *
+     * <p>A stroke joins its vertices with straight lines, so between two samples the drawn path is linear in
+     * {@code θ}. Between {@code ω} at 90° and {@code 1} at 45° that puts the halfway point at 67.5°, whose
+     * tangent is {@code 1 + √2} — <b>an irrational, which {@code T} cannot hold</b>. Every interior point of
+     * every segment was a claim the type is unable to make.
+     *
+     * <p>The model already says what lies between two pairs: {@code ⊕}, the mediant, which is coordinate-wise
+     * addition. {@code T(1,1) ⊕ T(1,0) = T(2,1)}, so the halfway value is {@code 2} at 63.4°, every
+     * intermediate is a rational, and repeated mediants are the Stern-Brocot construction. Interpolating the
+     * pair and then taking its direction is the same move a rational Bézier makes in homogeneous coordinates,
+     * and the same one a rasteriser makes to be perspective-correct: interpolate before projecting, never
+     * after.
+     *
+     * <p><b>For {@code 1÷x} this is exact rather than close.</b> Sampled at {@code T(k,d)} the value is
+     * {@code T(d,k)}, so the pair is linear in {@code k}, so the chord through the pairs <em>is</em> the path
+     * and the mediant of two samples is the value the engine answers between them. Where the pair path bends,
+     * {@code x·x} for instance, it is an approximation — but a nearer one than the angular chord, and one that
+     * only ever names values the type has.
+     *
+     * <p><b>It reads the representative, and that is the point.</b> The mediant is an operation on pairs and
+     * not on directions: {@code T(1,1) ⊕ T(1,0)} and {@code T(1,1) ⊕ T(2,0)} are different turns from the same
+     * two values. Farey and Stern-Brocot avoid that by reducing; nothing here reduces, so the subdivision uses
+     * information the direction alone has thrown away, which is exactly what makes it exact above. The drawn
+     * path therefore depends on which representatives the walk produced. That is a property of the model
+     * rather than a defect of the chart.
+     *
+     * <h2>Every segment carries its mediant; deeper only where it shows</h2>
+     *
+     * <p>The first bisection is unconditional, so <b>every drawn segment passes through the mediant of the two
+     * samples it joins</b> — which is the claim, and it would not hold under a purely adaptive rule, since at
+     * the default sampling the angular error is a fraction of a degree and every test would decline. Below
+     * that first split it is a flatness test against the thing being corrected: keep splitting while the
+     * mediant sits more than {@link #CHORD} from where a straight segment would put it. So an ordinary walk
+     * costs one extra vertex per sample and the rest is spent where the samples are sparse or the curve turns
+     * fastest, which is where the old segments were visibly wrong.
+     *
+     * @param run interleaved {@code x, q, p}, as the walk gave it
+     * @return interleaved world {@code x, y, z}, with the mediants in place
+     */
+    private static double[] mediants(double[] run, double x0, double x1) {
+        List<Double> out = new ArrayList<>(run.length);
+        int n = run.length / 3;
+        if (n == 0) {
+            return new double[0];
+        }
+        emit(out, at(run[0], x0, x1), turn(run[1], run[2]));
+        for (int i = 1; i < n; i++) {
+            between(out, run[(i - 1) * 3], run[(i - 1) * 3 + 1], run[(i - 1) * 3 + 2],
+                    run[i * 3], run[i * 3 + 1], run[i * 3 + 2], x0, x1, 0);
+            emit(out, at(run[i * 3], x0, x1), turn(run[i * 3 + 1], run[i * 3 + 2]));
+        }
+        double[] made = new double[out.size()];
+        for (int i = 0; i < made.length; i++) {
+            made[i] = out.get(i);
+        }
+        return made;
+    }
+
+    /** The mediants strictly between two samples, in order, down to where the segment goes flat. */
+    private static void between(List<Double> into, double ax, double aq, double ap,
+                                double bx, double bq, double bp, double x0, double x1, int depth) {
+        double mq = aq + bq;
+        double mp = ap + bp;
+        if (mq == 0 && mp == 0) {
+            // Two samples exactly half a turn apart. Their pairs cancel, so the chord between them runs
+            // through the origin and has no direction there -- there is no mediant to draw and the run is
+            // about to be cut at the half turn anyway. See unwrapped.
+            return;
+        }
+        double mediant = turn(mq, mp);
+        double straight = (turn(aq, ap) + turn(bq, bp)) / 2;
+        // Depth zero always splits: the mediant of two samples is the thing this method exists to draw, and a
+        // flatness test would decline it at every ordinary sampling.
+        if (depth > 0 && (depth >= DEPTH || Math.abs(mediant - straight) <= CHORD)) {
+            return;
+        }
+        double mx = (ax + bx) / 2;
+        // Halved back to a representative of the same size as its neighbours, so the next mediant down is
+        // weighted evenly between them rather than dragged toward whichever side was summed last.
+        double hq = mq / 2;
+        double hp = mp / 2;
+        between(into, ax, aq, ap, mx, hq, hp, x0, x1, depth + 1);
+        emit(into, at(mx, x0, x1), mediant);
+        between(into, mx, hq, hp, bx, bq, bp, x0, x1, depth + 1);
+    }
+
+    private static void emit(List<Double> into, double x, double y) {
+        into.add(x);
+        into.add(y);
+        into.add(0.0);
+    }
+
+    /** How far the drawn path may sit from the mediant before the segment is split, in world units. */
+    private static final double CHORD = 0.003;
+
+    /** How far one segment may be bisected. Six is 63 mediants, which is more than a segment can need. */
+    private static final int DEPTH = 6;
 
     /** Where an input stands across the box: the walked domain onto {@code -BOX..BOX}. */
     private static double at(double x, double x0, double x1) {
