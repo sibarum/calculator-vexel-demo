@@ -6,6 +6,9 @@ import dev.vexelray.gui.core.layout.NodeLayout;
 import dev.vexelray.gui.draw.Picture;
 import dev.vexelray.gui.draw.Sketch;
 
+import java.util.ArrayList;
+import java.util.List;
+
 
 /**
  * The axis names and tick numbers, drawn over the marched image.
@@ -117,19 +120,49 @@ final class Labels {
             put(sketch, lens, w, h, across[i], -NAME_OFF, 0,
                     Ticks.label(inputs[i], marks.step()), figure, Type.TICK_PX);
         }
-        double[] up = marks.up();
-        String[] turns = marks.turns();
-        for (int i = 0; i < up.length; i++) {
-            // The name of the turn, off the left-hand end of its rule. These are the model's eight named
-            // points and they are also what the field accepts, so every label on this axis is an entry a
-            // reader can type back in -- which is the whole reason the names come from Algebra rather than
-            // being spelled again here. There are no numbers on this axis and these are not a substitute for
-            // them: a turn is not a quantity, and 45 degrees is a fact about the picture where "1" is a fact
-            // about the value.
-            put(sketch, lens, w, h, -Geometry.BOX - NAME_OFF, up[i], 0, turns[i], figure, Type.TICK_PX);
+        // The turn axis is numbered in one column down the left-hand edge, and the two families that fill it
+        // are placed in order of what a reader cannot do without. A name goes down whatever else is there: it
+        // is a landmark, the field accepts it, and there are at most eight. A rung goes down only where the
+        // column has room for it in PIXELS -- which is the one thing that cannot be decided when the marks
+        // are generated, because how far apart two heights are on screen depends on the camera, and the
+        // camera is not something the worker that built them is allowed to know.
+        List<Mark> column = new ArrayList<>();
+        for (int i = 0; i < marks.up().length; i++) {
+            column.add(new Mark(marks.up()[i], marks.turns()[i], 0));
+        }
+        for (Turns.Rung rung : marks.ladder()) {
+            // Inside the box only. Out on the sheet the grid is fading towards nothing and a number is the
+            // one thing on it that would still be legible, which would leave the picture labelled where it
+            // is faintest.
+            if (Math.abs(rung.at()) <= Geometry.BOX) {
+                column.add(new Mark(rung.at(), rung.name(), 1 + rung.rank()));
+            }
+        }
+        column.sort((a, b) -> Integer.compare(a.priority(), b.priority()));
+        List<Double> taken = new ArrayList<>();
+        for (Mark mark : column) {
+            Lens.Point p = lens.project(-Geometry.BOX - NAME_OFF, mark.at(), 0);
+            if (p == null) {
+                continue;
+            }
+            double v = p.v() * h;
+            boolean room = true;
+            for (double already : taken) {
+                room &= Math.abs(already - v) >= Type.TICK_PX * 1.3;
+            }
+            if (!room) {
+                continue;
+            }
+            taken.add(v);
+            put(sketch, lens, w, h, -Geometry.BOX - NAME_OFF, mark.at(), 0, mark.name(), figure, Type.TICK_PX);
         }
         return sketch.picture();
     }
+
+    /** One entry in the column of numbers down the turn axis, and how badly it wants to be there. */
+    private record Mark(double at, String name, int priority) {
+    }
+
 
     /**
      * Place one run of text at a world point.

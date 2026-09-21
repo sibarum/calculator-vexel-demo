@@ -21,6 +21,8 @@ package dev.vexelray.demo.calculator;
  * @param omega      the one free parameter the prototype exposes
  * @param x0         domain, low
  * @param x1         domain, high
+ * @param window     which arc of the circle the turn axis shows — the vertical counterpart of the domain,
+ *                   and what makes the fineprint on that axis readable
  * @param samples    points along the curve; clamped against the cone budget before it reaches the buffer
  * @param lineWidth  the curve's radius in world units — see {@link Geometry} on why this is not pixels
  * @param furniture  axes, their ticks and names, grid planes and divisions
@@ -30,14 +32,14 @@ package dev.vexelray.demo.calculator;
  * @param spinning   whether auto-orbit is running
  */
 record Scene(String expression, Algebra.Reading reading,
-             double omega, double x0, double x1, int samples,
+             double omega, double x0, double x1, Turns.Window window, int samples,
              double lineWidth, Geometry.Furniture furniture, Ramp ramp,
              Cards cards, boolean cropping, boolean spinning) {
 
     /** What the plot opens on: the prototype's default expression, domain and sampling. */
     static Scene initial() {
         return new Scene(Algebra.DEFAULT_EXPRESSION, Algebra.read(Algebra.DEFAULT_EXPRESSION),
-                4, -6, 6, 420,
+                4, -6, 6, Turns.Window.WHOLE, 420,
                 0.045, Geometry.Furniture.DEFAULT, Ramp.BLURPLE,
                 Cards.DEFAULT, false, false);
     }
@@ -45,10 +47,10 @@ record Scene(String expression, Algebra.Reading reading,
     /**
      * A one-field change.
      *
-     * <p>A record with twelve components has a twelve-argument constructor, and a canonical call spelled out at
+     * <p>A record with thirteen components has a thirteen-argument constructor, and a canonical call spelled out at
      * every call site is how a field ends up in the wrong slot — two {@code double}s adjacent in the signature
      * is all it takes, and the compiler cannot help. So a change is a short-lived mutable copy with named
-     * setters, and the twelve-argument call appears exactly once, in {@link Draft#done()}.
+     * setters, and the positional call appears exactly once, in {@link Draft#done()}.
      *
      * <p>Pure, as {@code State.commit} requires: the draft is created inside the call and never escapes, so a
      * CAS retry re-runs it against the newer value rather than replaying a stale one.
@@ -66,6 +68,7 @@ record Scene(String expression, Algebra.Reading reading,
         private double omega;
         private double x0;
         private double x1;
+        private Turns.Window window;
         private int samples;
         private double lineWidth;
         private Geometry.Furniture furniture;
@@ -80,6 +83,7 @@ record Scene(String expression, Algebra.Reading reading,
             omega = s.omega();
             x0 = s.x0();
             x1 = s.x1();
+            window = s.window();
             samples = s.samples();
             lineWidth = s.lineWidth();
             furniture = s.furniture();
@@ -105,6 +109,11 @@ record Scene(String expression, Algebra.Reading reading,
 
         Draft x1(double v) {
             x1 = v;
+            return this;
+        }
+
+        Draft window(java.util.function.UnaryOperator<Turns.Window> f) {
+            window = f.apply(window);
             return this;
         }
 
@@ -144,8 +153,8 @@ record Scene(String expression, Algebra.Reading reading,
         }
 
         private Scene done() {
-            return new Scene(expression, reading, omega, x0, x1, samples, lineWidth, furniture, ramp,
-                    cards, cropping, spinning);
+            return new Scene(expression, reading, omega, x0, x1, window, samples, lineWidth, furniture,
+                    ramp, cards, cropping, spinning);
         }
     }
 

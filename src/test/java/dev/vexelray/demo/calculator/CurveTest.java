@@ -30,7 +30,7 @@ class CurveTest {
 
     private static Geometry.Built built(String entry, double x0, double x1, int samples) {
         return Geometry.of(Algebra.read(entry), x0, x1, samples,
-                Geometry.Furniture.DEFAULT, 0.045, Ramp.BLURPLE);
+                Geometry.Furniture.DEFAULT, 0.045, Ramp.BLURPLE, Turns.Window.WHOLE);
     }
 
     /** Every vertex of every stroke, as heights, in order. */
@@ -111,26 +111,37 @@ class CurveTest {
     void theMediantIsTheAnswerForAReciprocal() {
         T atHalf = Algebra.read("1÷x").term()
                 .substitute(java.util.Map.of("x", sibarum.cott.parse.Node.of(1, 2)))
-                .fold().literal().orElseThrow().resolved();
+                .fold().literal().orElseThrow();
 
         assertEquals("T(2,1)", "T(" + atHalf.p() + "," + atHalf.q() + ")",
                 "1÷(1÷2) should be 2, and T(1,0) + T(1,1) is T(2,1)");
     }
 
     /**
-     * The correction costs one vertex per sample on an ordinary walk and does not run away: the first
-     * bisection is unconditional and everything below it has to earn its place against the flatness test.
+     * What arrives at the buffer, which is no longer what the subdivision produced.
+     *
+     * <p><b>This test used to assert the opposite and it was right to.</b> It read
+     * {@code vertices >= 2 * samples - 1} — "every segment should carry its mediant" — because the first
+     * bisection is unconditional and that was the claim: the drawn path goes through a value the type has.
+     *
+     * <p>It still does, to within the flatness tolerance the subdivision itself uses, and {@link Chords} is
+     * where that argument is written out. What changed is that the redundant vertices are dropped on the way
+     * into the buffer, because the march's cost is very nearly linear in the cone count and this curve was
+     * spending 840 of them to say what 25 say. The bound worth pinning here is therefore the new one — the
+     * geometry is a small fraction of the sampling — and the <em>accuracy</em> bound it is traded against
+     * lives in {@code ChordsTest.theDrawnCurveStillPassesThroughEveryAnswer}, which is the test that would go
+     * red if simplifying ever moved the curve off the values.
      */
     @Test
-    @DisplayName("subdividing doubles an ordinary curve rather than exploding it")
-    void theSubdivisionIsBounded() {
+    @DisplayName("an ordinary curve reaches the buffer as a fraction of its sampling")
+    void theDrawnGeometryIsAFractionOfTheSampling() {
         Geometry.Built built = built("1÷x", -6, 6, 420);
         int samples = built.samples().length / 3;
         int vertices = heights(built).length;
 
         assertTrue(samples > 400, "the premise: this is an ordinary walk -- " + samples);
-        assertTrue(vertices >= 2 * samples - 1, "every segment should carry its mediant -- " + vertices);
-        assertTrue(vertices < 3 * samples, "the subdivision ran away: " + vertices + " for " + samples);
+        assertTrue(vertices >= 2, "a curve needs two ends -- " + vertices);
+        assertTrue(vertices < samples / 4, "the drawn curve is not simplified: " + vertices + " for " + samples);
         assertTrue(vertices < March.MAX_CONES, "a curve may not exceed the buffer on its own");
     }
 
@@ -151,5 +162,42 @@ class CurveTest {
         assertTrue(heights(built).length > samples,
                 "the premise: the drawn path carries more points than the walk answered");
         assertFalse(sampled(built, 2, 1), "a mediant reached the array the probe quotes from");
+    }
+
+    /**
+     * A sample that lands on the origin breaks the run, which is the curve's half of the answer a single
+     * value already gets — {@code T(0,0)} has no direction, and this chart is a circle of directions.
+     *
+     * <p>{@code x·ω} is the case in its simplest form: it folds at every sample, to {@code T(q=0, p=x)}, so
+     * every sample but one stands at a quarter turn — above for {@code x > 0} and below for {@code x < 0} —
+     * and exactly one, at {@code x = 0}, is the origin. The break therefore falls in the middle of the
+     * domain with placed samples either side of it, which is what makes it a break rather than an end.
+     *
+     * <p>Asserted on the walk's own samples and on the stroke count, because those are the two things the
+     * decline has to reach: the origin must not be <em>reported</em> as a point the engine answered, and the
+     * curve must not be <em>drawn</em> straight through the gap where it was declined. A single stroke here
+     * would be the renderer joining {@code x = -1} to {@code x = 1} across a value that has no place on the
+     * circle, which is precisely the claim the break exists to refuse.
+     */
+    @Test
+    @DisplayName("a sample at the origin breaks the curve rather than being drawn through")
+    void theOriginBreaksTheRun() {
+        T atZero = Algebra.read("x·ω").term()
+                .substitute(java.util.Map.of("x", sibarum.cott.parse.Node.of(0, 1)))
+                .fold().literal().orElseThrow();
+        assertTrue(atZero.isZeroOmega(), "the premise: x·ω folds to the origin at x = 0");
+
+        Geometry.Built built = built("x·ω", -2, 2, 5);
+
+        assertTrue(sampled(built, -1, 0), "the premise: the sample below the origin is placed");
+        assertTrue(sampled(built, 1, 0), "the premise: the sample above the origin is placed");
+
+        // Both of these catch the decline being removed, and they catch different halves of it: without it
+        // the walk answers five samples rather than four, and the renderer draws ONE stroke rather than two
+        // -- a single line straight across the value with no place on the circle.
+        assertEquals(4, built.samples().length / 3, "the origin was reported as a sample the engine answered");
+        assertFalse(sampled(built, 0, 0), "the origin reached the array the probe quotes from");
+        assertEquals(2, built.strokes().size(),
+                "the origin should break the run in two, not be joined across");
     }
 }

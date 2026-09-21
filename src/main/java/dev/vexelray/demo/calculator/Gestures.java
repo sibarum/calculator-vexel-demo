@@ -7,6 +7,9 @@ import dev.vexelray.gui.core.input.DragEvent;
 import dev.vexelray.gui.core.input.InputTopics;
 import dev.vexelray.gui.core.layout.NodeLayout;
 import sibarum.tactroller.api.InputEvent;
+import sibarum.tactroller.api.Modifier;
+
+import java.util.Set;
 
 /**
  * Pan and zoom on the viewport.
@@ -61,27 +64,107 @@ final class Gestures {
     }
 
     /**
+     * How much of the pointer's travel a drag spends — half of it, as of now.
+     *
+     * <p><b>One number for both drags</b>, because they are one gesture with two targets: a hand that panned
+     * at one rate and slid the turn axis at another would be a hand that behaves differently depending on a
+     * key, which is the thing a modifier should never do to the <em>feel</em> of a gesture. It is here rather
+     * than in {@link Motion} or in the window arithmetic for the same reason: this is a property of the hand,
+     * and both of the things it steers already know how to move by a given amount.
+     *
+     * <p>Halved rather than damped: the pan is the same pan it was, at half the rate, so nothing downstream
+     * of it has to know. What it costs is reach — the pointer runs out of desk twice as fast, which is the
+     * argument for holding the pointer for the length of a drag rather than letting the window's edge end it.
+     */
+    private static final double HAND = 0.5;
+
+    /**
+     * What the hand can do to the turn axis, as opposed to what it can do to the camera.
+     *
+     * <p>Two gestures on one modifier, and the modifier is the whole of why this is a second interface rather
+     * than two more calls on {@link Motion}: the camera and the window are different things being moved —
+     * one is where the eye stands, the other is which arc of the circle the box is drawn from — and a hand
+     * that could reach the second without asking would be a hand that changes the picture's meaning by
+     * accident. Ctrl says which.
+     */
+    interface Axis {
+
+        /** Magnify the turn axis about its own centre, in wheel notches. */
+        void magnify(double notches);
+
+        /** Move the centre of the window, as a fraction of the viewport's height. */
+        void slide(double fraction);
+    }
+
+    /**
      * Wire the viewport.
      *
      * @param viewport the node carrying the marched image; drags on it and wheels over it steer the camera
+     * @param axis     the turn axis's own window, which the same two gestures steer with Ctrl held
      */
-    static void install(Gui gui, Node viewport, Motion motion) {
+    static void install(Gui gui, Node viewport, Motion motion, Axis axis) {
         gui.cursor(viewport, CursorShape.GRAB);
 
-        // Every drag is a pan, with or without the modifier -- SHIFT+drag meant pan and still does, so a user
-        // who learned it does not find it dead. START and END carry no delta and there is no longer any state
-        // to keep between them, a pan being the only thing a hand can do here.
+        // The pointer is held for the length of a drag, which is the declaration this viewport has always
+        // qualified for and never made. Both of its drags are displacements -- a pan and a slide of the turn
+        // window, neither of which ever asks where the pointer IS -- and that is exactly the promise
+        // dragLocksPointer asks for: "a handler that differences x() instead of reading its dx() reads
+        // nothing at all once locked". Both read dx/dy, and did before this line.
+        //
+        // It matters more at HAND than it did at full travel: half the rate is twice the desk, and the
+        // window's edge was already the end of a gesture that has no natural one. Locked, the cursor stops
+        // travelling and the motion keeps arriving.
+        //
+        // The other side of the seam is the framework's, as of today: Shell owns a PointerLock and installs
+        // the sink the dispatcher has been firing into nothing. Nothing is needed here to tune it -- it locks
+        // in RAW mode, which does not warp, so the cursor comes back exactly where it went, and it waits for
+        // two pixels of real device travel, so a click on the viewport never blinks the cursor. If this
+        // machine turns out to have no raw-input plumbing, shell.pointerLock().mode(RECENTER) is the knob and
+        // it belongs at the wiring, not here.
+        gui.dragLocksPointer(viewport, true);
+
+        // Every drag is a pan, with or without SHIFT -- SHIFT+drag meant pan and still does, so a user who
+        // learned it does not find it dead. START and END carry no delta and there is no state to keep
+        // between them. CTRL is the one that means something else: it slides the turn window instead, which
+        // is the gesture that takes a reader from the zero rule to the omega one without moving the eye.
         gui.onDrag(viewport, e -> {
-            if (e.phase() == DragEvent.Phase.MOVE) {
-                motion.pan(e.dx(), e.dy());
+            if (e.phase() != DragEvent.Phase.MOVE) {
+                return;
+            }
+            if (held(gui, Modifier.CONTROL)) {
+                axis.slide(HAND * e.dy() / Math.max(1, height(viewport)));
+            } else {
+                motion.pan(HAND * e.dx(), HAND * e.dy());
             }
         });
 
         gui.bus().subscribe(InputTopics.INPUT, event -> {
             if (event instanceof InputEvent.Scrolled s && over(viewport, s.x(), s.y())) {
-                motion.zoom(s.yOffset());
+                if (held(gui, Modifier.CONTROL)) {
+                    axis.magnify(s.yOffset());
+                } else {
+                    motion.zoom(s.yOffset());
+                }
             }
         });
+    }
+
+    /**
+     * Whether a modifier is down right now.
+     *
+     * <p>Asked of the {@code Gui} rather than read off the event, because neither a {@code DragEvent} nor a
+     * {@code Scrolled} carries modifiers — the note above about a stuck modifier is the risk that comes with
+     * it, and it is bounded here: the worst a stuck Ctrl can do is magnify an axis a user can put back with
+     * one control.
+     */
+    private static boolean held(Gui gui, Modifier modifier) {
+        Set<Modifier> now = gui.modifiers().value();
+        return now != null && now.contains(modifier);
+    }
+
+    private static double height(Node node) {
+        NodeLayout box = node.layout();
+        return box == null ? 1 : box.rect().h();
     }
 
     // The throw lived here: a smoothed pointer velocity at the moment of release, so a flung orbit left the

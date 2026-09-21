@@ -136,15 +136,10 @@ final class March implements Motion.Eye {
      */
     private static final boolean DEPTH = true;
 
-    /**
-     * How much vertex data the floor's canvas may produce, in floats.
-     *
-     * <p>{@code PanelTechnique}'s own default is a megabyte of floats, sized for a panel with text and artwork
-     * on it. A grid plane is a few dozen strokes and there are six of these, three per pass, so it is worth saying the
-     * smaller number — and saying it as a ceiling that a divisions slider cannot quietly walk through:
-     * {@code draw} refuses a batch that does not fit rather than overrunning the buffer.
-     */
-    private static final int GRID_FLOATS = 1 << 16;
+    // How much vertex data a grid canvas may produce is the plane's own business now, because the three are
+    // no longer the same kind of drawing -- see Grid.floats. It was one number here, sized for "a few dozen
+    // strokes", which is what two of them still are and what the plot's own plane stopped being when its
+    // sheet grew a fade.
 
     /** The probe spans the two passes are measured as. Constants, because a lane's tallies key on the name. */
     private static final String DRAFT_SPAN = "plot.march";
@@ -498,7 +493,7 @@ final class March implements Motion.Eye {
         List<PanelTechnique> grids = new ArrayList<>(Grid.values().length);
         for (Grid grid : Grid.values()) {
             grids.add(new PanelTechnique(new Canvas(grid.width(), grid.height()), grid.panel(),
-                    FOCAL_LENGTH, scene.clipDepth(), GRID_FLOATS));
+                    FOCAL_LENGTH, scene.clipDepth(), grid.floats()));
         }
         return new Pass(target, new ConeFieldTechnique(cones, vertex, fragment, scene, params), grids);
     }

@@ -90,6 +90,25 @@ final class Geometry {
     static final double TURN = Math.PI;
 
     /**
+     * How far outside the box the furniture is drawn, as a multiple of {@link #BOX}.
+     *
+     * <p>The grid sheet reaches this far in every direction and fades out on the way, which is what makes it
+     * read as a plane the plot is standing on rather than a mat the plot is standing in the middle of. The
+     * graduations are generated that far as well — a sheet whose lines stopped at the box edge would fade
+     * out with nothing in it, which is the same picture as not extending it at all.
+     *
+     * <p><b>Measured against the camera rather than chosen.</b> A pinhole at focal 2.5 sees about
+     * {@code d/2.5} world units either side of the axis at depth {@code d}, and the far plane is 14 — so the
+     * widest view this application can show is about three and a third boxes from the middle to a corner.
+     * The sheet reaches past that and its fade is well under way by then, which is the picture the fade is
+     * for: a plane running out of the frame, not a mat with an edge.
+     *
+     * <p>It is here rather than in {@link Grid} because both the marks and the sheet are generated against
+     * it, and two numbers would be a grid whose lines run out before its fade does.
+     */
+    static final double REACH = 4.5;
+
+    /**
      * The curve's radius in <b>world units</b>.
      *
      * <p>The prototype's Width control is in pixels, and a marched tube has no pixels — its apparent thickness
@@ -122,19 +141,21 @@ final class Geometry {
                      boolean gridXY, boolean gridXZ, boolean gridYZ, int divisions) {
 
         /**
-         * The axes, the circle and the named turns — and no grid plane at all.
+         * The axes, the named turns, the ruler between them — and the plane the plot is in.
          *
-         * <p>All three planes were on when a value needed three axes. Two of them now stand out of the plane
-         * the plot is in and cross the picture at right angles to everything in it. The third, the one the
-         * plot <em>is</em> in, is a worse problem than the other two: a square grid at six divisions is the
-         * picture of a scale, and this chart has none. Every value is on one circle at its own turn, so a
-         * reader counting squares out from the origin would be counting something that is not there.
+         * <p><b>The plot's own plane is back on, and the reason it was off is the reason it is on.</b> It was
+         * switched off with this argument: "a square grid at six divisions is the picture of a scale, and this
+         * chart has none. Every value is on one circle at its own turn, so a reader counting squares out from
+         * the origin would be counting something that is not there." That was right about the lattice and it
+         * is no longer true of the lines: {@link Grid} rules them at the graduations now — the inputs across,
+         * the named turns and {@link Turns}'s log ruler up — so counting lines counts values and inputs, which
+         * are exactly the things that are there.
          *
-         * <p>All three flags are kept and the LAYERS panel still offers them — a layer a user can switch on is
-         * not the same thing as a layer the model needs, and the plane behind the circle is a fair thing to
-         * want to see. It is the default that changed.
+         * <p>The other two stay off. They stand out of the plane the plot is in and cross the picture at right
+         * angles to everything in it, they carry no graduations of their own, and a reader who wants to see
+         * the plane edge-on can still ask for one.
          */
-        static final Furniture DEFAULT = new Furniture(true, true, true, false, false, false, 6);
+        static final Furniture DEFAULT = new Furniture(true, true, true, true, false, false, 6);
 
         // Named one-field changes, for the reason Scene.Draft gives at length: a seven-component record has a
         // seven-argument constructor, and a canonical call spelled out at every call site is how a field ends
@@ -219,16 +240,29 @@ final class Geometry {
      * {@link Labels} writes a number where {@link Grid} drew its mark and neither recomputes the other's
      * mapping.
      *
+     * <h2>And the ruler under the names, which is new</h2>
+     *
+     * <p>The eight names are landmarks and they are not a scale: between {@code 0} and {@code 1} lies every
+     * value of magnitude under one, and the axis said nothing about where. {@link #ladder} is that
+     * fineprint — the log ruler {@link Turns} prints for whatever arc the window is showing — and it is a
+     * third family rather than more entries in {@link #up} because the two are drawn differently and for
+     * different reasons: a name is a rule right across the plot, a rung is a graduation beside the axis.
+     *
      * @param across    where each input mark falls, {@code -BOX..BOX}
      * @param inputs    what each of those stands for, in the walked domain
      * @param step      the 1-2-5 step the inputs came out at, so they are written to a common precision
-     * @param up        where each named turn falls, {@code -BOX..BOX}
+     * @param pitch     the same step as a distance in the box, which is what carries the grid on past the
+     *                  walked domain — derived here rather than differenced out of {@code across}, which
+     *                  says nothing at all when the domain is narrow enough to hold one mark
+     * @param up        where each named turn falls, in box units — beyond {@code ±BOX} out on the sheet
      * @param turns     what each of those is called
+     * @param ladder    the graduations between the names, already placed in the box
      */
-    record Marks(double[] across, double[] inputs, double step, double[] up, String[] turns) {
+    record Marks(double[] across, double[] inputs, double step, double pitch, double[] up, String[] turns,
+                 List<Turns.Rung> ladder) {
 
         static final Marks NONE =
-                new Marks(new double[0], new double[0], 1, new double[0], new String[0]);
+                new Marks(new double[0], new double[0], 1, 0, new double[0], new String[0], List.of());
     }
 
     /**
@@ -267,13 +301,13 @@ final class Geometry {
      * @param samples the initial step count for the walk; the caller clamps this against the buffer ceiling
      */
     static Built of(Algebra.Reading reading, double x0, double x1, int samples,
-                    Furniture furniture, double radius, Ramp ramp) {
+                    Furniture furniture, double radius, Ramp ramp, Turns.Window window) {
         List<double[]> runs = Algebra.walk(reading, x0, x1, samples);
 
         // The axes and their graduations are drawn on the panels, like the grid, so what this contributes to
         // them is where the marks go. What is left in the field is the curve and, in point mode, the rule:
         // the things the plot is OF rather than the frame around it.
-        Marks marks = furniture.axes() && furniture.ticks() ? marks(x0, x1) : Marks.NONE;
+        Marks marks = furniture.axes() && furniture.ticks() ? marks(x0, x1, window) : Marks.NONE;
 
         List<Surface.Stroke> scene = new ArrayList<>();
         List<double[]> placed = new ArrayList<>(runs.size());
@@ -283,25 +317,39 @@ final class Geometry {
             // a stroke through one point draws nothing, and the value is no less real for having no
             // neighbour.
             if (run.length == 3) {
-                marker(scene, at(run[0], x0, x1), turn(run[1], run[2]), radius, ramp);
+                double y = turn(window, run[1], run[2]);
+                if (Math.abs(y) <= BOX) {
+                    marker(scene, at(run[0], x0, x1), y, radius, ramp);
+                }
             }
             // Twice, in two densities, and they are not the same list. The probe snaps to SAMPLES -- points
             // the engine actually answered -- and quotes them from an index-parallel array, so nothing may be
             // inserted into that one. The stroke wants the path BETWEEN them, which is mediants.
-            placed.add(world(run, x0, x1));
-            drawn.add(mediants(run, x0, x1));
+            placed.add(world(run, x0, x1, window));
+            drawn.add(mediants(run, x0, x1, window));
         }
         // One stroke per run, so a break in the curve is a break in the picture. See Algebra.walk. Split
-        // again here for the one break that is the CHART's and not the walk's: the half turn.
+        // again here for the one break that is the CHART's and not the walk's: the half turn -- and then
+        // again for the break that is the WINDOW's, where the curve leaves the arc being shown.
         for (double[] run : drawn) {
-            for (double[] piece : unwrapped(run)) {
-                if (piece.length >= 6) {
-                    scene.add(curve(piece, radius, ramp));
+            for (double[] piece : unwrapped(run, window)) {
+                for (double[] inside : clipped(piece)) {
+                    if (inside.length >= 6) {
+                        // Simplified on the way into the buffer and nowhere else: what the march is handed is
+                        // the fewest chords that stand for this path within CHORD, which is 25 for the default
+                        // entry against the 840 the walk and its mediants produced. See Chords for the
+                        // measurement that made this the first thing to fix, and for what it costs the
+                        // mediant claim.
+                        scene.add(curve(Chords.of(inside, CHORD), radius, ramp));
+                    }
                 }
             }
         }
         if (reading.drawsMarker()) {
-            rule(scene, turn(reading.coordinates()[0], reading.coordinates()[1]), radius, ramp);
+            double y = turn(window, reading.coordinates()[0], reading.coordinates()[1]);
+            if (Math.abs(y) <= BOX) {
+                rule(scene, y, radius, ramp);
+            }
         }
         return new Built(List.copyOf(scene), joined(placed), joined(runs), furniture, marks);
     }
@@ -318,11 +366,11 @@ final class Geometry {
      *
      * @param run interleaved {@code x, q, p}
      */
-    private static double[] world(double[] run, double x0, double x1) {
+    private static double[] world(double[] run, double x0, double x1, Turns.Window window) {
         double[] out = new double[run.length];
         for (int i = 0; i < run.length / 3; i++) {
             out[i * 3] = at(run[i * 3], x0, x1);
-            out[i * 3 + 1] = turn(run[i * 3 + 1], run[i * 3 + 2]);
+            out[i * 3 + 1] = turn(window, run[i * 3 + 1], run[i * 3 + 2]);
             out[i * 3 + 2] = 0;
         }
         return out;
@@ -371,17 +419,17 @@ final class Geometry {
      * @param run interleaved {@code x, q, p}, as the walk gave it
      * @return interleaved world {@code x, y, z}, with the mediants in place
      */
-    private static double[] mediants(double[] run, double x0, double x1) {
+    private static double[] mediants(double[] run, double x0, double x1, Turns.Window window) {
         List<Double> out = new ArrayList<>(run.length);
         int n = run.length / 3;
         if (n == 0) {
             return new double[0];
         }
-        emit(out, at(run[0], x0, x1), turn(run[1], run[2]));
+        emit(out, at(run[0], x0, x1), turn(window, run[1], run[2]));
         for (int i = 1; i < n; i++) {
             between(out, run[(i - 1) * 3], run[(i - 1) * 3 + 1], run[(i - 1) * 3 + 2],
-                    run[i * 3], run[i * 3 + 1], run[i * 3 + 2], x0, x1, 0);
-            emit(out, at(run[i * 3], x0, x1), turn(run[i * 3 + 1], run[i * 3 + 2]));
+                    run[i * 3], run[i * 3 + 1], run[i * 3 + 2], x0, x1, window, 0);
+            emit(out, at(run[i * 3], x0, x1), turn(window, run[i * 3 + 1], run[i * 3 + 2]));
         }
         double[] made = new double[out.size()];
         for (int i = 0; i < made.length; i++) {
@@ -392,7 +440,8 @@ final class Geometry {
 
     /** The mediants strictly between two samples, in order, down to where the segment goes flat. */
     private static void between(List<Double> into, double ax, double aq, double ap,
-                                double bx, double bq, double bp, double x0, double x1, int depth) {
+                                double bx, double bq, double bp, double x0, double x1,
+                                Turns.Window window, int depth) {
         double mq = aq + bq;
         double mp = ap + bp;
         if (mq == 0 && mp == 0) {
@@ -401,11 +450,17 @@ final class Geometry {
             // about to be cut at the half turn anyway. See unwrapped.
             return;
         }
-        double mediant = turn(mq, mp);
-        double straight = (turn(aq, ap) + turn(bq, bp)) / 2;
+        double mediant = theta(mq, mp);
+        double straight = (theta(aq, ap) + theta(bq, bp)) / 2;
         // Depth zero always splits: the mediant of two samples is the thing this method exists to draw, and a
         // flatness test would decline it at every ordinary sampling.
-        if (depth > 0 && (depth >= DEPTH || Math.abs(mediant - straight) <= CHORD)) {
+        //
+        // MEASURED IN TURNS, NOT IN THE BOX, which is a change the window forced and an improvement anyway.
+        // The test used to be a distance on the drawn picture, and under magnification the same fraction of a
+        // degree is a whole box -- so every segment would fail it, every segment would split to DEPTH, and a
+        // walk of 420 samples would arrive at the cone buffer as 26,000 vertices for a curve no better drawn.
+        // In turns it is the same test it always was at the whole circle, and the same cost at every zoom.
+        if (depth > 0 && (depth >= DEPTH || Math.abs(mediant - straight) <= CHORD / BOX * TURN)) {
             return;
         }
         double mx = (ax + bx) / 2;
@@ -413,9 +468,9 @@ final class Geometry {
         // weighted evenly between them rather than dragged toward whichever side was summed last.
         double hq = mq / 2;
         double hp = mp / 2;
-        between(into, ax, aq, ap, mx, hq, hp, x0, x1, depth + 1);
-        emit(into, at(mx, x0, x1), mediant);
-        between(into, mx, hq, hp, bx, bq, bp, x0, x1, depth + 1);
+        between(into, ax, aq, ap, mx, hq, hp, x0, x1, window, depth + 1);
+        emit(into, at(mx, x0, x1), window.at(mediant));
+        between(into, mx, hq, hp, bx, bq, bp, x0, x1, window, depth + 1);
     }
 
     private static void emit(List<Double> into, double x, double y) {
@@ -443,13 +498,26 @@ final class Geometry {
      * keeps the two ends of the model apart, since {@code ω} and {@code -ω} are a quarter turn either way
      * where the ratio has nothing to say about either.
      *
-     * <p>The origin cannot arrive here: {@code T(0,0)} is the one pair with no direction and it is read as a
-     * value before it is placed — {@code Algebra} applies {@code T.resolved()}, the table's {@code x ÷ x = 1},
-     * which puts it at {@code T(1,1)} and the eighth turn. {@code atan2(0, 0)} is zero rather than an error in
-     * any case, so nothing here divides by nothing.
+     * <p>The origin cannot arrive here: {@code T(0,0)} is the one pair with no direction, and {@code Algebra}
+     * declines it rather than placing it — a sample of it breaks the run, and a value that folds to it is
+     * reported without a marker. It used to be read as a value instead, by the table's {@code x ÷ x = 1},
+     * which put it at {@code T(1,1)} and the eighth turn; the type no longer applies that reading and a
+     * chart is not where it should be decided. {@code atan2(0, 0)} is zero rather than an error in any case,
+     * so nothing here divides by nothing.
      */
-    private static double turn(double q, double p) {
-        return Math.atan2(p, q) / TURN * BOX;
+    private static double turn(Turns.Window window, double q, double p) {
+        return window.at(theta(q, p));
+    }
+
+    /**
+     * The turn itself, in radians, before the window has said where in the box it stands.
+     *
+     * <p>Split out from {@link #turn} because two callers want the angle and not the height: the flatness
+     * test in {@link #between}, which is about how far the curve bends and not about how far it is drawn,
+     * and the cut in {@link #unwrapped}, which is looking for a jump of a whole circle.
+     */
+    private static double theta(double q, double p) {
+        return Math.atan2(p, q);
     }
 
     /**
@@ -468,17 +536,95 @@ final class Geometry {
      * <p>Cut here rather than in the walk, and separately from {@code placed}, because the probe's samples
      * have to stay index-parallel with the world points it projects.
      */
-    private static List<double[]> unwrapped(double[] run) {
+    private static List<double[]> unwrapped(double[] run, Turns.Window window) {
+        // Half the axis is half a turn at the whole circle and a great deal more than the axis under
+        // magnification -- so the threshold is written as the half turn it has always been, converted into
+        // whatever the window makes of it, rather than as the box's own half height. A genuine step cannot
+        // exceed it at any zoom, because it would be more than a half turn in one step.
+        double half = window.at(window.centre() + TURN / 2) - window.at(window.centre());
         List<double[]> pieces = new ArrayList<>();
         int from = 0;
         for (int i = 1; i < run.length / 3; i++) {
-            if (Math.abs(run[i * 3 + 1] - run[(i - 1) * 3 + 1]) > BOX) {
+            if (Math.abs(run[i * 3 + 1] - run[(i - 1) * 3 + 1]) > half) {
                 pieces.add(Arrays.copyOfRange(run, from * 3, i * 3));
                 from = i;
             }
         }
         pieces.add(Arrays.copyOfRange(run, from * 3, run.length));
         return pieces;
+    }
+
+    /**
+     * One placed run, with everything off the sheet cut away and the crossings put on the edge.
+     *
+     * <p><b>Only magnification makes this necessary, and then it is not optional.</b> At the whole circle no
+     * point can be outside the box, so every run passes through untouched. A window a hundredth of the
+     * circle wide puts a value a quarter turn away a hundred boxes off the top, and a stroke that long is
+     * cones spent on something nobody can see — a thousandth of the circle is a thousand boxes, and the
+     * buffer is not free.
+     *
+     * <p>Cut rather than clamped, and interpolated rather than dropped. Clamping would flatten everything
+     * above the sheet onto its edge and draw a horizontal line the expression never took; dropping a segment
+     * because one end is off the sheet would stop the curve short of an edge it plainly runs through, and
+     * would lose entirely the segment that crosses the whole picture with both ends outside it — which is
+     * what a steep curve looks like once the window is narrow.
+     */
+    private static List<double[]> clipped(double[] run) {
+        double edge = REACH * BOX;
+        List<double[]> pieces = new ArrayList<>();
+        List<Double> piece = new ArrayList<>();
+        for (int i = 1; i < run.length / 3; i++) {
+            double[] cut = segment(run[(i - 1) * 3], run[(i - 1) * 3 + 1], run[i * 3], run[i * 3 + 1], edge);
+            if (cut == null) {
+                pieces.add(flat(piece));
+                piece = new ArrayList<>();
+                continue;
+            }
+            if (piece.isEmpty()) {
+                emit(piece, cut[0], cut[1]);
+            }
+            emit(piece, cut[2], cut[3]);
+            if (cut[3] != run[i * 3 + 1]) {
+                pieces.add(flat(piece));           // it left the sheet here; anything further is a new piece
+                piece = new ArrayList<>();
+            }
+        }
+        pieces.add(flat(piece));
+        return pieces;
+    }
+
+    /**
+     * One segment against the sheet: the part of it inside, or {@code null} if none of it is.
+     *
+     * @return {@code ax, ay, bx, by} of the surviving part
+     */
+    private static double[] segment(double ax, double ay, double bx, double by, double edge) {
+        if (ay > edge && by > edge || ay < -edge && by < -edge) {
+            return null;
+        }
+        double t0 = 0;
+        double t1 = 1;
+        double dy = by - ay;
+        if (dy != 0) {
+            double toTop = (edge - ay) / dy;
+            double toFloor = (-edge - ay) / dy;
+            double lo = Math.min(toTop, toFloor);
+            double hi = Math.max(toTop, toFloor);
+            t0 = Math.max(t0, lo);
+            t1 = Math.min(t1, hi);
+        }
+        if (t0 > t1) {
+            return null;
+        }
+        return new double[]{ax + t0 * (bx - ax), ay + t0 * dy, ax + t1 * (bx - ax), ay + t1 * dy};
+    }
+
+    private static double[] flat(List<Double> values) {
+        double[] out = new double[values.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = values.get(i);
+        }
+        return out;
     }
 
     /** Every run end to end, for the {@link Probe}, which wants samples rather than strokes. */
@@ -540,8 +686,21 @@ final class Geometry {
     private static Surface.Stroke curve(double[] world, double radius, Ramp ramp) {
         int n = world.length / 3;
         List<Surface.Stroke.Vertex> vs = new ArrayList<>(n);
+        // ALONG THE PATH, not along the vertex list, which is a difference that did not exist until the
+        // vertices stopped being evenly spread. The ramp used to be i/(n-1): with a mediant between every
+        // sample that was uniform enough to pass for distance, and after Chords it is not — a straight run
+        // that collapses to two vertices would take the same share of the gradient as a bend that kept
+        // thirty. The colour is inert today (ConeField carries none; see the class note and FN-25), so this
+        // is a trap being disarmed rather than a bug being fixed: the day the buffer carries colour, the
+        // ramp is already a property of the curve rather than of how it happened to be sampled.
+        double[] along = new double[n];
+        for (int i = 1; i < n; i++) {
+            along[i] = along[i - 1] + Math.hypot(world[i * 3] - world[(i - 1) * 3],
+                    world[i * 3 + 1] - world[(i - 1) * 3 + 1]);
+        }
+        double length = along[n - 1];
         for (int i = 0; i < n; i++) {
-            double t = n == 1 ? 0 : i / (double) (n - 1);
+            double t = length <= 0 ? 0 : along[i] / length;
             double x = world[i * 3];
             double y = world[i * 3 + 1];
             double z = world[i * 3 + 2];
@@ -581,21 +740,43 @@ final class Geometry {
      * carries no input mark ({@code Ticks.between} excludes it) because the vertical axis is drawn there;
      * the turn zero is marked and named, because the value zero is a fact and not an origin.
      */
-    private static Marks marks(double x0, double x1) {
+    private static Marks marks(double x0, double x1, Turns.Window window) {
         double[] inputs = Ticks.between(x0, x1);
         double[] across = new double[inputs.length];
         for (int i = 0; i < inputs.length; i++) {
             across[i] = at(inputs[i], x0, x1);
         }
-        int n = Algebra.NAMED.size();
-        double[] up = new double[n];
-        String[] turns = new String[n];
-        for (int i = 0; i < n; i++) {
-            up[i] = Algebra.NAMED.get(i).theta() / TURN * BOX;
-            turns[i] = Algebra.NAMED.get(i).name();
+        // The named turns that are on the sheet. All eight always were, because the box was the whole
+        // circle; under magnification most of them are somewhere else, and a rule drawn for one that is
+        // fifty boxes above the top is a rule nobody will ever see, carrying a label the overlay would
+        // project off the screen.
+        List<Double> up = new ArrayList<>();
+        List<String> turns = new ArrayList<>();
+        for (Algebra.Named named : Algebra.NAMED) {
+            double y = window.at(named.theta());
+            if (Math.abs(y) <= REACH * BOX) {
+                up.add(y);
+                turns.add(named.name());
+            }
         }
-        return new Marks(across, inputs, Ticks.step(x1 - x0, Ticks.TARGET), up, turns);
+        double[] heights = new double[up.size()];
+        for (int i = 0; i < heights.length; i++) {
+            heights[i] = up.get(i);
+        }
+        double step = Ticks.step(x1 - x0, Ticks.TARGET);
+        return new Marks(across, inputs, step, x1 == x0 ? 0 : 2 * BOX * step / (x1 - x0), heights,
+                turns.toArray(new String[0]), Turns.ladder(window, REACH * BOX, RUNG_GAP));
     }
+
+    /**
+     * How close two graduations on the turn axis may stand, in box units.
+     *
+     * <p>Chosen against the label rather than against the line: the rungs are numbered, at tick size, and
+     * two numbers a fortieth of the box apart overlap. It is the one number in the ruler that is a taste
+     * rather than a consequence, and it is here rather than in {@link Turns} because it is a fact about how
+     * big this plot is drawn.
+     */
+    private static final double RUNG_GAP = 0.075;
 
     // ----------------------------------------------------------------- shared
 

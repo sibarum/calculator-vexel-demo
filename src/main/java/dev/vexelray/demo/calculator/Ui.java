@@ -100,7 +100,7 @@ final class Ui {
         bar.field().onSubmit(model::submit);
 
         bar.show(model.scene().reading());
-        readout.show(Math.toRadians(38), Math.toRadians(26), 1.0, 0);
+        readout.show(Math.toRadians(38), Math.toRadians(26), 1.0, 0, model.scene().window());
     }
 
     /**

@@ -6,6 +6,9 @@ import dev.vexelray.gui.draw.Picture;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -47,7 +50,7 @@ class FurnitureTest {
     /** What the geometry builds for a scene, which is where the graduations come from. */
     private static Geometry.Built built(Scene scene) {
         return Geometry.of(scene.reading(), scene.x0(), scene.x1(), scene.samples(),
-                scene.effectiveFurniture(), scene.lineWidth(), scene.ramp());
+                scene.effectiveFurniture(), scene.lineWidth(), scene.ramp(), scene.window());
     }
 
     /** How many marks the overlay puts out for a scene. */
@@ -89,13 +92,38 @@ class FurnitureTest {
 
         assertFalse(point.reading().drawsCurve(), "the premise: this is a value, not a curve");
         assertTrue(point.reading().understood(), "the premise: and it is understood");
-        assertEquals(2 + graduations(point), marks(point), "a single value's axes went ungraduated");
+        assertTrue(written(point).containsAll(graduations(point)),
+                "a single value's axes went ungraduated");
     }
 
     /** Numbers along the input axis plus names up the turn axis: every mark the overlay owes a scene. */
-    private static int graduations(Scene scene) {
+    private static List<String> graduations(Scene scene) {
         Geometry.Marks marks = built(scene).marks();
-        return marks.inputs().length + marks.turns().length;
+        List<String> owed = new ArrayList<>(List.of(marks.turns()));
+        for (double input : marks.inputs()) {
+            owed.add(Ticks.label(input, marks.step()));
+        }
+        return owed;
+    }
+
+    /**
+     * What the overlay actually wrote.
+     *
+     * <p>The tests below count marks where they can and read them where they cannot, and the ruler on the
+     * turn axis is why: how many of its rungs fit is a question about pixels — the overlay drops one that
+     * would land on top of the number above it — so a count is a statement about the camera and the box,
+     * where "every name is written" is a statement about the chart.
+     */
+    private static List<String> written(Scene scene) {
+        Geometry.Built built = built(scene);
+        Picture picture = Labels.of(lens(), box(), scene.reading(), built.furniture(), built.marks());
+        List<String> out = new ArrayList<>();
+        for (Picture.Mark mark : picture.marks()) {
+            if (mark instanceof Picture.Text text) {
+                out.add(text.text());
+            }
+        }
+        return out;
     }
 
     @Test
@@ -117,9 +145,30 @@ class FurnitureTest {
         assertEquals(Algebra.NAMED.size(), built(scene).marks().turns().length,
                 "the premise: the turn axis is graduated by the named turns");
 
-        // Two axis letters, a number per input mark, a name per turn. Fewer is a graduation going unwritten,
-        // and on the turn axis the names are the whole scale -- there are no numbers on it to fall back on.
-        assertEquals(2 + graduations(scene), marks(scene), "the overlay did not write every graduation");
+        // A number per input mark and a name per turn. Fewer is a graduation going unwritten, and on the
+        // turn axis the names are the landmarks -- the ruler between them yields to them rather than the
+        // other way round, so a missing name is a missing landmark and not a crowded column.
+        assertTrue(written(scene).containsAll(graduations(scene)),
+                "the overlay did not write every graduation");
+    }
+
+    @Test
+    @DisplayName("magnifying the turn axis puts the ruler on it, and the names keep their places")
+    void theRulerArrivesWithTheMagnification() {
+        Scene whole = Scene.initial();
+        Scene close = Scene.with(whole, w -> w.window(t -> t.centredOn(0).magnifiedBy(1000)));
+
+        // The fineprint: at a thousand times, the arc around the zero rule is graduated in thousandths, and
+        // those graduations are written where a reader can see them.
+        assertTrue(written(close).contains("1÷1000"), "the magnified axis was left without its ruler");
+        assertFalse(written(whole).contains("1÷1000"), "the whole circle has no room for a thousandth");
+
+        // And the names that are still in view are still written, because a rung never displaces one.
+        assertTrue(written(close).containsAll(List.of(built(close).marks().turns())),
+                "a rung crowded out a named turn");
+
+        // The input axis is untouched by any of it: this is the vertical axis's own window.
+        assertArrayEquals(built(whole).marks().inputs(), built(close).marks().inputs(), 1e-12);
     }
 
     /**
@@ -168,7 +217,13 @@ class FurnitureTest {
         assertFalse(f.labels(), "the component asked for did not change");
         assertTrue(f.axes(), "axes was carried away by a labels change");
         assertTrue(f.ticks(), "ticks was carried away by a labels change");
-        assertFalse(f.gridXY() || f.gridXZ() || f.gridYZ(), "a grid plane turned itself on");
+        // Against the default's own planes rather than against false: what is being tested is that a wither
+        // carries what it did not touch, and writing the default's value into the assertion instead makes
+        // this a test of which planes open switched on -- which is a decision, and has changed once.
+        Geometry.Furniture was = Geometry.Furniture.DEFAULT;
+        assertEquals(was.gridXY(), f.gridXY(), "a grid plane changed under a labels change");
+        assertEquals(was.gridXZ(), f.gridXZ(), "a grid plane changed under a labels change");
+        assertEquals(was.gridYZ(), f.gridYZ(), "a grid plane changed under a labels change");
         assertEquals(Geometry.Furniture.DEFAULT.divisions(), f.divisions(), "divisions was carried away");
     }
 

@@ -53,9 +53,25 @@ final class Readout {
      * camera by hand, and the third decimal of an azimuth is noise that changes every frame of an orbit — which
      * would also make the landmark's name useless to wait on.
      */
-    void show(double yawRadians, double pitchRadians, double zoom, int samples) {
-        text.text(String.format(Locale.ROOT, "az %.0f    el %.0f    zoom %.2f    %d²",
-                normalise(Math.toDegrees(yawRadians)), Math.toDegrees(pitchRadians), zoom, samples));
+    void show(double yawRadians, double pitchRadians, double zoom, int samples, Turns.Window window) {
+        // The turn axis's own magnification, and only when there is one. It is not the camera's zoom and must
+        // not be read as it: the camera moves the eye, and this narrows the arc of the circle the box is
+        // showing, which is the only one of the two that can reach the fineprint. A reader who has magnified
+        // the axis and then orbited away has no other way to find out how deep they are.
+        String turn = window.magnification() > 1.0001
+                ? String.format(Locale.ROOT, "    turn ×%s", magnification(window.magnification()))
+                : "";
+        text.text(String.format(Locale.ROOT, "az %.0f    el %.0f    zoom %.2f    %d²%s",
+                normalise(Math.toDegrees(yawRadians)), Math.toDegrees(pitchRadians), zoom, samples, turn));
+    }
+
+    /** A magnification as a person would say it: {@code 40} up close, {@code 1e6} once it stops being a number. */
+    private static String magnification(double times) {
+        if (times >= 1e5) {
+            return String.format(Locale.ROOT, "1e%.0f", Math.log10(times));
+        }
+        return times >= 100 ? String.format(Locale.ROOT, "%.0f", times)
+                : String.format(Locale.ROOT, "%.1f", times);
     }
 
     /** Azimuth reads as a compass bearing, so it wraps into {@code [0, 360)} rather than running to -700. */

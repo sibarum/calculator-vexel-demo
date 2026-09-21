@@ -231,11 +231,32 @@ final class Panels {
                 Property.number("X DOMAIN", "min", 0.5, -1000, 1000,
                         () -> scene().x0(), v -> edit(s -> with(s, w -> w.x0(Math.min(v, s.x1() - 0.5))))),
                 Property.number("X DOMAIN", "max", 0.5, -1000, 1000,
-                        () -> scene().x1(), v -> edit(s -> with(s, w -> w.x1(Math.max(v, s.x0() + 0.5))))));
+                        () -> scene().x1(), v -> edit(s -> with(s, w -> w.x1(Math.max(v, s.x0() + 0.5))))),
+                // The turn axis's own domain, which is the same kind of control and belongs beside it: the
+                // horizontal axis shows the inputs between two numbers and the vertical one shows the turns
+                // within an arc. In DECADES rather than in a magnification, because the whole point of the
+                // control is that the interesting range spans twelve orders and a linear slider over that
+                // has one useful notch at the left-hand end.
+                Property.range("TURN AXIS", "magnify 10ⁿ", 0, 12, 0.5,
+                        () -> Math.log10(scene().window().magnification()),
+                        v -> edit(s -> with(s, w -> w.window(t ->
+                                new Turns.Window(t.centre(), Math.PI / Math.pow(10, v)))))),
+                Property.number("TURN AXIS", "centre°", 5, -180, 180,
+                        () -> Math.toDegrees(scene().window().centre()),
+                        v -> edit(s -> with(s, w -> w.window(t -> t.centredOn(Math.toRadians(v)))))));
         into.append(actions(g,
                 action("Symmetric ±3", () -> edit(s -> with(s, w -> w.x0(-3).x1(3)))),
                 action("±2π", () -> edit(s -> with(s, w -> w.x0(-2 * Math.PI).x1(2 * Math.PI)))),
                 action("Unit box", () -> edit(s -> with(s, w -> w.x0(-1).x1(1))))));
+        // The three arcs worth standing in, by the name of the turn at the middle of each -- and the whole
+        // circle, which is what every one of them is a magnification of. Buttons rather than a second number
+        // field because the centres a reader wants are the named turns, and typing 90 to mean ω is asking
+        // somebody to know the chart's coordinates to use the chart.
+        into.append(actions(g,
+                action("Whole circle", () -> edit(s -> with(s, w -> w.window(t -> Turns.Window.WHOLE)))),
+                action("On 0", () -> edit(s -> with(s, w -> w.window(t -> t.centredOn(0))))),
+                action("On 1", () -> edit(s -> with(s, w -> w.window(t -> t.centredOn(Math.PI / 4))))),
+                action("On ω", () -> edit(s -> with(s, w -> w.window(t -> t.centredOn(Math.PI / 2)))))));
     }
 
     private void crop(Gui g, Node into) {
@@ -281,9 +302,13 @@ final class Panels {
 
     private void help(Gui g, Node into) {
         String[][] rows = {
-                {"drag", "Orbit — azimuth free, elevation clamped to ±75°"},
-                {"shift + drag", "Pan the plot"},
+                // "drag — Orbit" until now, which it has not been since the plot became a plane and the hand
+                // stopped being able to tip it by accident. The two Ctrl rows are the turn axis's own window:
+                // the camera moves the eye, and those two move which arc of the circle the box is drawn from.
+                {"drag", "Pan the plot — with or without shift"},
                 {"scroll", "Zoom about the center"},
+                {"ctrl + scroll", "Magnify the turn axis — the fineprint between the named turns"},
+                {"ctrl + drag", "Slide the turn axis: which arc of the circle the box shows"},
                 {"R / F", "Reset view · fit to frame"},
                 {"T / S", "Top view · front view"},
                 {"space", "Toggle auto-orbit"},

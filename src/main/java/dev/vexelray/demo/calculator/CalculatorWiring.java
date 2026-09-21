@@ -175,7 +175,7 @@ final class CalculatorWiring extends Wiring {
         // because every control's handler is. The GUI thread never samples anything; it takes a float[].
         model.onChange(s -> {
             Geometry.Built built = Geometry.of(s.reading(), s.x0(), s.x1(),
-                    s.samples(), s.effectiveFurniture(), s.lineWidth(), s.ramp());
+                    s.samples(), s.effectiveFurniture(), s.lineWidth(), s.ramp(), s.window());
             march.geometry(built);
             graduations = built.marks();
             ui.probe().samples(built.curve(), built.samples(), s.reading().axisNames());
@@ -189,13 +189,33 @@ final class CalculatorWiring extends Wiring {
         // And once at startup, for the scene nobody has changed yet.
         Scene start = model.scene();
         Geometry.Built first = Geometry.of(start.reading(), start.x0(), start.x1(),
-                start.samples(), start.effectiveFurniture(), start.lineWidth(), start.ramp());
+                start.samples(), start.effectiveFurniture(), start.lineWidth(), start.ramp(), start.window());
         march.geometry(first);
         graduations = first.marks();
         ui.probe().samples(first.curve(), first.samples(), start.reading().axisNames());
         ui.probe().install(ui.viewport(), march::lens);
 
-        Gestures.install(gui, ui.viewport(), motion);
+        Gestures.install(gui, ui.viewport(), motion, new Gestures.Axis() {
+
+            @Override
+            public void magnify(double notches) {
+                // The same ratio per notch the camera's wheel uses, so the two zooms feel like one gesture
+                // with two targets rather than two gestures with two speeds.
+                window(w -> w.magnifiedBy(Math.pow(1 / 0.88, notches)));
+            }
+
+            @Override
+            public void slide(double fraction) {
+                // A drag moves the picture with the hand, so dragging down shows the turns that were above:
+                // the window's centre goes up by however much of the box the hand crossed. The box is two
+                // spans tall, and the viewport is near enough the box at the home camera for a gesture.
+                window(w -> w.centredOn(w.centre() + fraction * 2 * w.span()));
+            }
+
+            private void window(java.util.function.UnaryOperator<Turns.Window> change) {
+                model.change(s -> Scene.with(s, d -> d.window(change)));
+            }
+        });
 
         // The application's own per-frame work, in the one stage an application should be writing hooks in.
         // APP runs after CLOCK, which is the ordering this used to state longhand: a camera animation settles
@@ -224,7 +244,7 @@ final class CalculatorWiring extends Wiring {
         Labels.show(ui.viewport(), Labels.of(march.lens(), ui.viewport().layout(),
                 now.reading(), now.effectiveFurniture(), graduations));
         Motion.View eye = motion.now();
-        ui.readout().show(eye.yaw(), eye.pitch(), eye.zoom(), march.cones());
+        ui.readout().show(eye.yaw(), eye.pitch(), eye.zoom(), march.cones(), now.window());
     }
 
     /**

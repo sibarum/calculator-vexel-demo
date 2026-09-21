@@ -69,7 +69,7 @@ final class Model {
      */
     void submit(String expression) {
         change(s -> new Scene(expression, Algebra.read(expression),
-                s.omega(), s.x0(), s.x1(), s.samples(), s.lineWidth(), s.furniture(), s.ramp(),
+                s.omega(), s.x0(), s.x1(), s.window(), s.samples(), s.lineWidth(), s.furniture(), s.ramp(),
                 s.cards(), s.cropping(), s.spinning()));
     }
 
