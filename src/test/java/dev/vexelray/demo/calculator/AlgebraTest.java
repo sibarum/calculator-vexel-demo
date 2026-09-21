@@ -106,7 +106,21 @@ class AlgebraTest {
         assertEquals("1", Algebra.projection(T.of(1, 1)));
         assertEquals("-1", Algebra.projection(T.of(1, -1)), "_1 projects as -1, as the table says");
         assertEquals("1", Algebra.projection(T.of(-1, -1)), "-_1 projects as 1, as the table says");
-        assertEquals("1", Algebra.projection(T.of(0, 0)), "0w is read as a value by x÷x = 1");
+        assertEquals("NaN", Algebra.projection(T.of(0, 0)),
+                "0w names no number; x÷x = 1 is a reading and the type no longer applies it");
+    }
+
+    /**
+     * The origin folds and is not drawn. It has no direction, and this chart is a circle of directions, so it
+     * is reported beside the entry rather than placed at an angle it does not stand at.
+     */
+    @Test
+    @DisplayName("0w is an answer with no place on the circle")
+    void theOriginIsReportedAndNotPlaced() {
+        Algebra.Reading reading = read("0·ω");
+        assertTrue(reading.understood(), "0·ω folds, so it is not a refusal");
+        assertEquals("T(0,0)", reading.answer());
+        assertFalse(reading.drawsMarker(), "the origin stands at no angle, so nothing is placed");
     }
 
     /**

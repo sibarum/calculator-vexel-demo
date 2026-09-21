@@ -231,21 +231,27 @@ final class Algebra {
             return mode == Mode.CURVE && refusal == null;
         }
 
-        /** Whether there is a marker to place: an entry that folded to one pair. */
+        /**
+         * Whether there is a marker to place: an entry that folded to one pair, and to a pair that stands
+         * somewhere.
+         *
+         * <p>{@code T(0,0)} folds and does not stand anywhere. It is the origin, it has no direction, and
+         * this chart is a circle of directions — so it is reported and not drawn, the same answer a sample
+         * that does not fold to a pair gets. The type used to read it as a value by {@code x ÷ x = 1} and
+         * hand back {@code T(1,1)}; it no longer does, and a chart is not the place to decide that it should.
+         */
         boolean drawsMarker() {
-            return value != null;
+            return value != null && !value.isZeroOmega();
         }
 
         /**
          * Where the value stands, as {@code (q, p)}.
          *
          * <p>Horizontal first, because the point is {@code q + pi} and the horizontal axis is the one the
-         * angle is measured from. {@code T(0,0)} answers as {@link T#resolved()} does — the table reads it as
-         * a value by {@code x ÷ x = 1}, and a plot is exactly the place that reads a pair as a value.
+         * angle is measured from.
          */
         double[] coordinates() {
-            T at = value.resolved();
-            return new double[]{at.q().doubleValue(), at.p().doubleValue()};
+            return new double[]{value.q().doubleValue(), value.p().doubleValue()};
         }
 
         /**
@@ -312,6 +318,16 @@ final class Algebra {
         }
         T at = value.get();
         String answer = folded.show();
+        if (at.isZeroOmega()) {
+            // The entry folded, and what it folded to is the origin: no direction, so no angle, and no
+            // number, so no projection. Reported rather than placed. Not a refusal -- the answer is the pair,
+            // and quoting NaN twice beside it would be the readout pretending to two readings it does not
+            // have.
+            return new Reading(Mode.POINT, term, null, answer,
+                    List.of(term.show(), "= " + answer, "at  " + coordinates(at) + "    no angle"),
+                    at, answer + "  at  " + coordinates(at) + "  ·  the origin, which stands at no angle",
+                    null);
+        }
         List<String> lines = List.of(
                 term.show(),
                 "= " + answer,
@@ -433,7 +449,12 @@ final class Algebra {
             if (value.isEmpty()) {
                 return null;
             }
-            T pair = value.get().resolved();
+            T pair = value.get();
+            if (pair.isZeroOmega()) {
+                // The origin has no direction and this chart draws directions, so the sample has nowhere to
+                // go. It breaks the run, which is what every sample with no point does.
+                return null;
+            }
             double q = pair.q().doubleValue();
             double p = pair.p().doubleValue();
             // A coordinate that has outgrown a double is a real coordinate the picture cannot hold. Breaking
@@ -497,8 +518,9 @@ final class Algebra {
      * class could not have served: {@code T} answers the four points on the axes from their signs and divides
      * the coordinates exactly for everything else, where this divided the two doubles — so a pair whose
      * coordinates have outgrown a double projects to the number it names rather than to infinity over
-     * infinity. And it reads {@code T(0,0)} as a value by {@code x ÷ x}, which is the table's rule and not
-     * one a chart should be applying on its own.
+     * infinity. And {@code T(0,0)} is declined there rather than read as a value by {@code x ÷ x} — the
+     * spelling of that decline is {@code NaN}, which reaches {@link #spell} and comes out as written, since a
+     * readout quoting a number it does not have would be worse than one saying so.
      *
      * <p>What is left is spelling. {@code inf} rather than {@code ∞} for a reason that is not aesthetic: the
      * text atlas this application draws with has no {@code U+221E}, and a missing glyph draws as a box. The
@@ -512,7 +534,7 @@ final class Algebra {
      * As {@link #projection(T)}, from a pair already read as doubles — which is what a sampled curve carries.
      *
      * <p>A sample arrives as two doubles rather than as a pair, so the division happens here; every sample
-     * has already been through {@code T.resolved()} in {@link #place}, which is what the type does first.
+     * that {@link #place} has already declined if it was the origin, so the division here has a divisor.
      * One spelling for both, because the probe quotes this over a curve and the subtitle quotes it over a
      * value, and a chart whose bubble and whose caption disagreed about what something projects to would be
      * worse than one that offered neither.
@@ -534,8 +556,7 @@ final class Algebra {
 
     /** Where the point stands, as the chart writes it: the coordinates of {@code q + pi}, horizontal first. */
     private static String coordinates(T value) {
-        T at = value.resolved();
-        return "(" + at.q() + ", " + at.p() + ")";
+        return "(" + value.q() + ", " + value.p() + ")";
     }
 
     /**
