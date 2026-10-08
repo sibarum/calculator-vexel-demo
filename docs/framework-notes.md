@@ -61,3 +61,21 @@ the lanes, the appearance, and the rule.
 cott-engine's `Limits` labels contain `≤`, which renders as an empty box. `SettingsWindow.label` spells it as
 `<=`. Same family as the missing ⌫, ⊥, square and chevron glyphs noted elsewhere.
 
+## FN-4 · Closing the settings window crashed the application 🔬 (fixed upstream)
+
+Closing the settings window crashed the calculator a few frames later, every time:
+`NativeException: GetWindowRect failed`, thrown from `WindowMemory.poll` inside `FrameHooks.run`. `claim`
+had called `memory.watch(KEY, w)` from `onCreated`, and nothing called the matching `forget` when the window
+closed. The next poll read a destroyed window, and the frame loop let that one failure take the whole
+application down with it.
+
+Fixed in three places upstream, so nothing here works around it:
+
+- `WindowMemory.remember(key, spec, w, h)` pairs the watch with its `forget`. `claim` now uses it, which also
+  remembers this window's zoom.
+- A destroyed `Win32Window` answers with its last values instead of calling into Win32.
+- `FrameHooks` stops a hook that throws and logs it, rather than ending the run.
+
+The component witness now opens and closes a remembered second window. See the framework's
+`docs/architecture.md`, under *the frame loop is the lifecycle*.
+

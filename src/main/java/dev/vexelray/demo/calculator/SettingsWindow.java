@@ -107,15 +107,15 @@ final class SettingsWindow implements AutoCloseable {
     /**
      * Claim the window this tree is shown in, under its name. Main thread, and once: the handle that comes back
      * is safe from any thread, and its {@code show} is what the gear does.
+     *
+     * <p>{@code remember} rather than a watch from {@code onCreated}: the window closes long before the
+     * application does, and a watch left behind read it after it was gone (framework notes, FN-4). It also
+     * remembers this tree's zoom, which its chords change.
      */
     AppWindow claim(GuiApp app, WindowMemory memory) {
-        return app.window(KEY, () -> bar.commands(
+        return app.window(KEY, () -> memory.remember(KEY, bar.commands(
                         WindowSpec.of(memory.config(KEY, TITLE, W, H).decorations(Decorations.CLIENT), gui))
-                .standing(Standing.SATELLITE)
-                .onCreated(w -> {
-                    memory.restoreBounds(KEY, w, W, H);
-                    memory.watch(KEY, w);
-                }));
+                .standing(Standing.SATELLITE), W, H));
     }
 
     /** The tree's own {@code Gui}, for what the application adds to every window, such as the zoom chords. */
