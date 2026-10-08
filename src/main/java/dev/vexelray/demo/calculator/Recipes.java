@@ -97,6 +97,8 @@ final class Recipes {
     @Provides
     SettingsWindow settingsWindow(Appearance look, Lanes lanes, Model model) {
         SettingsWindow settings = new SettingsWindow(look, lanes, model);
+        // Its own Gui, so its own zoom: the look gave it the range, and the chords are given here.
+        zoomShortcuts(settings.gui());
         model.onChange(settings::show);
         settings.show(model.doc());
         return settings;
@@ -119,7 +121,7 @@ final class Recipes {
     }
 
     /**
-     * Ctrl+= / Ctrl+- / Ctrl+0, and the numpad's three.
+     * Ctrl+= / Ctrl+- / Ctrl+0, and the numpad's three, on every window's {@code Gui}: each has its own zoom.
      *
      * <p>An application decision, which is why it is here: which chord zooms, or whether zooming exists at all, is
      * not something a framework should choose. <b>How far the zoom goes is</b>, and it is not stated here — that is

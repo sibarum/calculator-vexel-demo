@@ -41,6 +41,12 @@ final class Type {
     /** A note, a subtitle, a hint. */
     static final Length SMALL = Length.rem(0.6875f);
 
+    /** A heading over a section of a page meant to be read, such as the settings window. */
+    static final Length SECTION = Length.rem(1.25f);
+
+    /** Paragraphs meant to be read rather than glanced at: the settings window's explanations. */
+    static final Length PROSE = Length.rem(0.875f);
+
     // --------------------------------------------------------------- gutters
 
     /** The outer inset of a region. */

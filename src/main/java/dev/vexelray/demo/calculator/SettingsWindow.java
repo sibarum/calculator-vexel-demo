@@ -46,8 +46,8 @@ final class SettingsWindow implements AutoCloseable {
     private static final String KEY = "settings";
 
     private static final String TITLE = "Settings";
-    private static final int W = 420;
-    private static final int H = 520;
+    private static final int W = 500;
+    private static final int H = 640;
 
     private final Gui gui;
     private final TitleBar bar;
@@ -86,12 +86,12 @@ final class SettingsWindow implements AutoCloseable {
             gui.landmark(Landmarks.setting(modeset), select.node());
             selects.put(modeset, select);
 
-            Node detail = gui.text("").font(Type.UI).textSize(Type.SMALL)
+            Node detail = gui.text("").font(Type.UI).textSize(Type.PROSE)
                     .textColor(gui.theme().color(Role.DIM));
             details.put(modeset, detail);
 
             body.append(gui.column().width(Length.FILL).height(Length.AUTO).gap(Type.TIGHT).children(
-                    gui.text(modeset.label()).font(Type.UI).textSize(Type.HEADING)
+                    gui.text(modeset.label()).font(Type.UI).textSize(Type.SECTION)
                             .textColor(gui.theme().color(Role.INK)),
                     select.node(),
                     detail,
@@ -118,6 +118,11 @@ final class SettingsWindow implements AutoCloseable {
                 }));
     }
 
+    /** The tree's own {@code Gui}, for what the application adds to every window, such as the zoom chords. */
+    Gui gui() {
+        return gui;
+    }
+
     /** The tree's own subscriptions. The lanes are the application's, so they stay up. */
     @Override
     public void close() {
@@ -137,7 +142,7 @@ final class SettingsWindow implements AutoCloseable {
     }
 
     private Node prose(String text) {
-        return gui.text(text).width(Length.FILL).font(Type.UI).textSize(Type.SMALL)
+        return gui.text(text).width(Length.FILL).font(Type.UI).textSize(Type.PROSE)
                 .textColor(gui.theme().color(Role.FAINT));
     }
 
