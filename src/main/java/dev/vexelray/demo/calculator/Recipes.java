@@ -2,8 +2,13 @@ package dev.vexelray.demo.calculator;
 
 import dev.vexelray.framework.api.Configuration;
 import dev.vexelray.framework.api.Provides;
+import dev.vexelray.framework.core.Lanes;
 import dev.vexelray.framework.shell.Appearance;
 import dev.vexelray.gui.core.Gui;
+import dev.vexelray.framework.api.MainThread;
+import dev.vexelray.gui.core.app.AppWindow;
+import dev.vexelray.gui.core.app.GuiApp;
+import dev.vexelray.gui.core.app.WindowMemory;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.widget.TitleBar;
 import sibarum.tactroller.api.Key;
@@ -82,6 +87,35 @@ final class Recipes {
         ui.show(model.doc());
         zoomShortcuts(gui);
         return ui;
+    }
+
+    /**
+     * The settings window's tree, kept in step with the document the same way the main one is. It is a tree of
+     * its own rather than the framework's {@code Gui}, so it takes the look and the threads to build one with and
+     * needs no window; the framework closes it, being {@code AutoCloseable}.
+     */
+    @Provides
+    SettingsWindow settingsWindow(Appearance look, Lanes lanes, Model model) {
+        SettingsWindow settings = new SettingsWindow(look, lanes, model);
+        model.onChange(settings::show);
+        settings.show(model.doc());
+        return settings;
+    }
+
+    /**
+     * The window that tree is shown in, and the gear that opens it.
+     *
+     * <p>A part of its own, a phase later, because a second window is claimed through the {@code GuiApp} and
+     * there is none while the trees are built. {@code @MainThread} because the processor will not hand the
+     * {@code GuiApp} to anything else — although the {@code AppWindow} it returns is safe from any thread, and
+     * nothing injects it. See {@code docs/framework-notes.md}, FN-1.
+     */
+    @Provides
+    @MainThread
+    AppWindow settingsHost(GuiApp app, WindowMemory memory, SettingsWindow settings, Ui ui) {
+        AppWindow window = settings.claim(app, memory);
+        ui.onSettings(window::show);
+        return window;
     }
 
     /**

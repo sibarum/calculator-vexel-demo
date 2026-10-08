@@ -7,9 +7,13 @@ import sibarum.cott.calculator.Calculator;
 import sibarum.cott.calculator.CalculatorException;
 import sibarum.cott.calculator.Escapes;
 import sibarum.cott.calculator.Limits;
+import sibarum.cott.calculator.Mode;
+import sibarum.cott.calculator.Modeset;
 import sibarum.cott.calculator.Result;
 import sibarum.cott.notation.SyntaxException;
 
+import java.util.EnumMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
@@ -29,7 +33,9 @@ final class Model {
     private final Committer<Doc, UnaryOperator<Doc>> edit;
 
     Model() {
-        State.Builder<Doc> builder = State.of(Doc.initial(calc.arithmetic().label(), calc.limits().key()));
+        Map<Modeset, Mode> modes = new EnumMap<>(Modeset.class);
+        for (Modeset m : Modeset.values()) modes.put(m, calc.mode(m));
+        State.Builder<Doc> builder = State.of(Doc.initial(modes));
         this.edit = builder.mutation("doc.edit", (current, change) -> change.apply(current));
         this.state = builder.build();
     }
@@ -61,23 +67,15 @@ final class Model {
         }
     }
 
-    /** Move to the next arithmetic. Definitions are kept, so the tape's next lines read them in the new one. */
-    void nextArithmetic() {
+    /**
+     * Run the next lines in {@code mode}, in place of whatever its modeset was in. Definitions are kept, so a
+     * new arithmetic reads them afresh. Choosing the mode already in force changes nothing and tells nobody.
+     */
+    void set(Mode mode) {
         synchronized (calc) {
-            Arithmetic[] all = Arithmetic.values();
-            Arithmetic next = all[(calc.arithmetic().ordinal() + 1) % all.length];
-            calc.set(next);
-            state.commit(edit, d -> d.withArithmetic(next.label()));
-        }
-    }
-
-    /** Move to the next recursion limits: how far the descent behind {@code cos} and {@code sin} may go. */
-    void nextLimits() {
-        synchronized (calc) {
-            Limits[] all = Limits.values();
-            Limits next = all[(calc.limits().ordinal() + 1) % all.length];
-            calc.set(next);
-            state.commit(edit, d -> d.withLimits(next.key()));
+            if (calc.mode(mode.modeset()) == mode) return;
+            calc.set(mode);
+            state.commit(edit, d -> d.with(mode));
         }
     }
 

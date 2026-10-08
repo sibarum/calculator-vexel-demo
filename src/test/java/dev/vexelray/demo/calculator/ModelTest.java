@@ -1,6 +1,10 @@
 package dev.vexelray.demo.calculator;
 
 import org.junit.jupiter.api.Test;
+import sibarum.cott.calculator.Arithmetic;
+import sibarum.cott.calculator.Limits;
+import sibarum.cott.calculator.Mode;
+import sibarum.cott.calculator.Modeset;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -57,20 +61,26 @@ class ModelTest {
     @Test
     void theArithmeticCanBeChanged() {
         Model model = new Model();
-        String first = model.doc().arithmetic();
-        model.nextArithmetic();
-        assertNotEquals(first, model.doc().arithmetic());
+        Mode first = model.doc().mode(Modeset.ARITHMETIC);
+        model.set(Arithmetic.IEEE_FLOATING_POINT);
+        assertNotEquals(first, model.doc().mode(Modeset.ARITHMETIC));
+        assertEquals(Arithmetic.IEEE_FLOATING_POINT, model.doc().mode(Modeset.ARITHMETIC));
+    }
+
+    @Test
+    void everyModesetStartsWhereTheEngineDoes() {
+        Model model = new Model();
+        for (Modeset m : Modeset.values()) assertEquals(m.initial(), model.doc().mode(m), m.label());
     }
 
     @Test
     void theLimitsCanBeChangedAndBoundTheDescent() {
         Model model = new Model();
-        assertEquals("standard", model.doc().limits());
+        assertEquals(Limits.STANDARD, model.doc().mode(Modeset.LIMITS));
         assertTrue(model.enter("cos(1/500)"));
-        model.nextLimits();
-        assertEquals("deep", model.doc().limits());
-        model.nextLimits();
-        assertEquals("shallow", model.doc().limits());
+        model.set(Limits.SHALLOW);
+        assertEquals(Limits.SHALLOW, model.doc().mode(Modeset.LIMITS));
+        assertEquals(Modeset.ARITHMETIC.initial(), model.doc().mode(Modeset.ARITHMETIC));
         assertFalse(model.enter("cos(1/500)"));
         assertTrue(model.doc().error().contains("360"), model.doc().error());
     }
@@ -89,7 +99,8 @@ class ModelTest {
         AtomicInteger seen = new AtomicInteger();
         model.onChange(doc -> seen.incrementAndGet());
         model.enter("2+2");
-        model.nextArithmetic();
+        model.set(Arithmetic.IEEE_FLOATING_POINT);
+        model.set(Arithmetic.IEEE_FLOATING_POINT);   // already in force: nothing changed, nobody told
         assertEquals(2, seen.get());
     }
 }

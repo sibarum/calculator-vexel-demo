@@ -79,7 +79,7 @@ class GraphTest {
     @Test
     void ieeeMarksInfinityToo() {
         Model model = new Model();
-        while (!model.doc().arithmetic().startsWith("IEEE")) model.nextArithmetic();
+        model.set(sibarum.cott.calculator.Arithmetic.IEEE_FLOATING_POINT);
         model.enter("1/x");
         Graph g = model.doc().tape().getFirst().graph();
         assertTrue(at(g, "0").marker());
@@ -89,12 +89,12 @@ class GraphTest {
     @Test
     void everyArithmeticPutsARealCurveOnTheAxis() {
         Model model = new Model();
-        for (int i = 0; i < sibarum.cott.calculator.Arithmetic.values().length; i++) {
+        for (sibarum.cott.calculator.Arithmetic a : sibarum.cott.calculator.Arithmetic.values()) {
+            model.set(a);
             model.enter("x^2 - 1");
             Graph g = model.doc().tape().getLast().graph();
-            assertNotNull(g, model.doc().arithmetic());
-            assertEquals(8.0, at(g, "3").y(), model.doc().arithmetic());
-            model.nextArithmetic();
+            assertNotNull(g, a.label());
+            assertEquals(8.0, at(g, "3").y(), a.label());
         }
     }
 
