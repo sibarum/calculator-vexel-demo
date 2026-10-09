@@ -1,7 +1,5 @@
 package dev.vexelray.demo.calculator;
 
-import dev.vexelray.framework.api.VexelApp;
-import dev.vexelray.framework.automation.AutomationStarter;
 import dev.vexelray.framework.shell.VexelApplication;
 
 
@@ -18,30 +16,30 @@ import dev.vexelray.framework.shell.VexelApplication;
  * that, near-identically to every other application on this stack.
  *
  * <p>What this application actually builds is in {@link Recipes}, one method per part. {@code CalculatorAppWiring},
- * which builds those parts in order, is generated from them and from the annotation on this class while the project
- * compiles — so the facts below are stated once, here, and the wiring reads them. Everything above that is in
- * {@link Ui}; everything the application <em>knows</em> is in {@link Model}. This class holds no state of its own,
- * and that is a rule worth keeping: the moment the edge starts remembering things, there are two places a value can
- * live.
+ * which builds those parts in order, is generated from them and from the {@code @VexelApp} on {@code CalculatorApp}
+ * while the project compiles — so the facts below are stated once, here, and the wiring reads them. Everything above
+ * that is in {@link Ui}; everything the application <em>knows</em> is in {@link Model}. This class holds no state of
+ * its own, and that is a rule worth keeping: the moment the edge starts remembering things, there are two places a
+ * value can live.
  *
  * <pre>
- * CalculatorApp                     the window, interactively
- * CalculatorApp &lt;frames&gt;            run a fixed number of frames and quit (a script, not a session)
- * CalculatorApp --key=value         override a setting for this launch
+ * Calculator                     the window, interactively
+ * Calculator &lt;frames&gt;            run a fixed number of frames and quit (a script, not a session)
+ * Calculator --key=value         override a setting for this launch
  * </pre>
  *
  * <p>A misspelled flag is refused by name with the alternatives listed, rather than a stack trace before any
  * window. Needs {@code --enable-native-access=ALL-UNNAMED}.
  *
- * <p><b>{@code starters} is everything configuring this application beyond {@link Recipes}</b>, listed rather
- * than discovered. {@link AutomationStarter} is the driving socket — off unless {@code --automation} or
- * {@code -Dautomation} asks, and loopback-only when it is, because it hands whoever reaches it full control of the
- * application's input. Delete it here, and the {@code vexelray-framework-automation} dependency in the pom, and the
+ * <p><b>Two editions declare the application.</b> {@code CalculatorApp} is in {@code src/edition-debug} and
+ * {@code src/edition-release}, and the pom compiles one of them. Its {@code starters} is everything configuring this
+ * application beyond {@link Recipes}, listed rather than discovered. The debug edition's names
+ * {@code AutomationStarter}, the driving socket — off unless {@code --automation} or {@code -Dautomation} asks, and
+ * loopback-only when it is, because it hands whoever reaches it full control of the application's input. The release
+ * edition names none, and {@code -Pnative-release} drops the automation modules from the classpath, so the shipped
  * binary links no socket at all.
  */
-@VexelApp(name = CalculatorApp.APP, title = CalculatorApp.TITLE, width = CalculatorApp.W, height = CalculatorApp.H,
-        starters = AutomationStarter.class)
-public final class CalculatorApp {
+public final class Calculator {
 
     /** The application's own name, which is what its settings directory is called. Stable across releases. */
     static final String APP = "calculator-vexel-demo";
@@ -75,6 +73,6 @@ public final class CalculatorApp {
         VexelApplication.run(new CalculatorAppWiring(), cleaned);
     }
 
-    private CalculatorApp() {
+    private Calculator() {
     }
 }

@@ -26,9 +26,9 @@ import sibarum.tactroller.api.Modifier;
  * {@code Gui} and its title bar. There is no phase to declare and none to get wrong: a part asking for something
  * that does not exist yet is not a part that can be written.
  *
- * <p>The driving socket is not here either. It comes from {@code AutomationStarter}, which {@link CalculatorApp}
- * names in its {@code @VexelApp} — so this application is drivable because it says so in one place, and a
- * {@code @Provides Driver} method here would replace the starter's with this application's own.
+ * <p>The driving socket is not here either. It comes from {@code AutomationStarter}, which the debug edition's
+ * {@code CalculatorApp} names in its {@code @VexelApp} — so this application is drivable because it says so in one
+ * place, and a {@code @Provides Driver} method here would replace the starter's with this application's own.
  *
  * <h2>What is not here is the point</h2>
  *
@@ -57,7 +57,7 @@ final class Recipes {
      */
     @Provides
     Appearance look() {
-        return Appearance.of(Look.THEME, Length.em(CalculatorApp.MIN_W_EM), Length.em(CalculatorApp.MIN_H_EM));
+        return Appearance.of(Look.THEME, Length.em(Calculator.MIN_W_EM), Length.em(Calculator.MIN_H_EM));
     }
 
     /** The one authoritative state, built before the tree because every control is a view onto it. */

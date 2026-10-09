@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "id": "calculator",
+  "name": "Calculator",
+  "publisher": "sibarum",
+  "description": "A small calculator window onto cott-engine.",
+  "repo": "sibarum/calculator-vexel-demo",
+  "latest": "0.1.0",
+  "tools": {
+    "install.ps1": {
+      "url": "https://raw.githubusercontent.com/sibarum/calculator-vexel-demo/main/install.ps1",
+      "sha256": "3da47fd2ea4d0c17d33774519bdfaf896e52d244c3eb6c5c6bc490b4147cef61"
+    },
+    "uninstall.ps1": {
+      "url": "https://raw.githubusercontent.com/sibarum/calculator-vexel-demo/main/uninstall.ps1",
+      "sha256": "0aa06fa10731a3b26b10ba8e945cd94b0a1e0797f715f97f6826b8a672de629a"
+    },
+    "update.ps1": {
+      "url": "https://raw.githubusercontent.com/sibarum/calculator-vexel-demo/main/update.ps1",
+      "sha256": "a8374bc7968b53fab9e23c7ccc4d1f8ba20eb05db36a47baa969e9d6cb2afa84"
+    }
+  },
+  "versions": [
+    {
+      "version": "0.1.0",
+      "publishedAt": "2026-10-09T23:09:15Z",
+      "notes": "",
+      "installer": {
+        "install.ps1": "3da47fd2ea4d0c17d33774519bdfaf896e52d244c3eb6c5c6bc490b4147cef61",
+        "uninstall.ps1": "0aa06fa10731a3b26b10ba8e945cd94b0a1e0797f715f97f6826b8a672de629a",
+        "update.ps1": "a8374bc7968b53fab9e23c7ccc4d1f8ba20eb05db36a47baa969e9d6cb2afa84"
+      },
+      "platforms": {
+        "windows": {
+          "installDir": "%LOCALAPPDATA%\\Programs\\Calculator",
+          "binaries": [
+            {
+              "name": "calculator",
+              "version": "0.1.0",
+              "kind": "native",
+              "file": "calculator.exe",
+              "url": "https://github.com/sibarum/calculator-vexel-demo/releases/download/v0.1.0/calculator.exe",
+              "sha256": "31b092481d5c3c68a974b2c1e6557924ac316d77f2635a67b5b5cb3d738c777b",
+              "size": 38060032,
+              "installPath": "{installDir}\\calculator.exe",
+              "executable": true,
+              "addToPath": true,
+              "icon": {
+                "file": "calculator.ico",
+                "url": "https://github.com/sibarum/calculator-vexel-demo/releases/download/v0.1.0/calculator.ico",
+                "sha256": "f99401daa560521c29abfdc6601fbb743593db52496356f6d410f9d3699caa0b",
+                "size": 25285,
+                "installPath": "{installDir}\\calculator.ico"
+              },
+              "shortcuts": {
+                "desktop": true,
+                "startMenu": true,
+                "label": "Calculator",
+                "gui": false
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -47,7 +47,7 @@ Four files carry the whole shape, and it is worth reading them in this order.
 | `Doc.java` | what the application knows, as one immutable record. Add fields here rather than adding state elsewhere. |
 | `Ui.java` | the tree. Holds no state; `show(Doc)` writes everything derived from the document. |
 
-`CalculatorApp.java` is the entry point and the constants, and nothing else. What used to be there — the
+`Calculator.java` is the entry point and the constants, and nothing else. What used to be there — the
 **application edge**: input, the clipboard, window memory, the clock, the frame loop with its wakes and its
 pacing, the dialogs, the command line and the shutdown order — is `vexelray-framework`'s. It was three hundred
 lines, and it was very nearly the same three hundred lines in every application on this stack.
@@ -105,6 +105,30 @@ ottermate --window settings shot settings.png --launch ...               # anoth
 `ottermate windows` lists the windows the application has open; `ottermate help` lists every verb. A zoom outside
 the range this application allows is clamped as its own zoom control would clamp it, and the reply says so.
 `docs/framework-notes.md` is where a picture that needs something `ottermate` cannot do belongs.
+
+## Native builds
+
+Windows, GraalVM 25 as `JAVA_HOME`, from a Visual Studio developer prompt (or after `vcvars64.bat`) so `link.exe` is
+MSVC's and not Git Bash's. Two profiles build the same code as two editions:
+
+```
+mvn -Pnative-release package -DskipTests   # target/calculator.exe        what ships and is signed
+mvn -Pnative package -DskipTests           # target/calculator-debug.exe  for ottermate
+```
+
+- **release** (`installer.json` points at this one): linked as a Windows GUI subsystem program, so no console window
+  ever appears, and built without the automation module: the source root `src/edition-release` is compiled instead
+  of `src/edition-debug` and `vexelray-*-automation` is not on its classpath, so the binary cannot open a driving
+  socket (`--automation` is accepted and does nothing). stdout and stderr go nowhere; the log files are still written.
+- **debug**: console subsystem, automation present: `calculator-debug.exe --automation=0` prints
+  `automation: localhost:<port>` for `ottermate --launch`.
+
+The two editions differ only in `CalculatorApp`, the `@VexelApp` declaration (one in each edition's source root);
+`Calculator.java` is shared. Both profiles link `src/main/rc/calculator.rc`, the executable's icon:
+`calculator.svg`, drawn after the suite icon canvas's primaries on a hue of its own, rendered to `calculator.ico` by
+`vex-suite-common`'s `tools/Ico.java`. The reachability metadata under
+`src/main/resources/META-INF/native-image/` is only what is this program's (its `main`, the launcher, the locale
+data); the libraries bring their own.
 
 ## Logging
 
