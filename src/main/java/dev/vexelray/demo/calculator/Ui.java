@@ -30,8 +30,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * entry with a settings gear beside it at the bottom. The settings themselves are in {@link SettingsWindow}.
  *
  * <p>The tape only grows, so {@link #show} appends the entries it has not drawn yet rather than rebuilding the
- * column; {@code shown} is the one thing this class remembers, and it is a count of nodes rather than a value
- * anything is derived from.
+ * column; {@code shown} is a count of nodes rather than a value anything is derived from.
+ *
+ * <p>Putting past lines back in the entry is {@link Reuse}'s; this only tells it about each line it draws.
  */
 final class Ui {
 
@@ -44,6 +45,7 @@ final class Ui {
     private final Tooltip tips;
     private volatile Runnable settings = () -> { };
     private final List<Plot> plots = new CopyOnWriteArrayList<>();
+    private final Reuse reuse;
     private int shown;
 
     Ui(Gui gui, Model model, TitleBar titleBar) {
@@ -65,17 +67,20 @@ final class Ui {
 
         TextField entry = new TextField(gui);
         entry.node().width(Length.grow(1f)).font(Type.MONO).textSize(Type.LABEL);
+        gui.landmark(Landmarks.ENTRY, entry.node());
+
+        tips = new Tooltip(gui);
+        reuse = new Reuse(gui, model, entry, tips);
         // A refused line stays where it is, to be fixed; a taken one is cleared with replace rather than text,
         // so Ctrl+Z brings it back.
         entry.onSubmit(line -> {
             if (model.enter(line)) {
+                reuse.submitted();
                 entry.replace("");
                 tape.scrollToEdge();
             }
         });
-        gui.landmark(Landmarks.ENTRY, entry.node());
 
-        tips = new Tooltip(gui);
         Node gear = gear();
         gui.landmark(Landmarks.SETTINGS, gear);
         gui.shortcut(Key.COMMA, this::openSettings, Modifier.CONTROL);
@@ -105,15 +110,20 @@ final class Ui {
 
     /** One line of the tape: what was typed, dim; the answer; and its other readings, small. */
     private Node line(Doc.Entry e) {
-        Node node = gui.column().width(Length.FILL).height(Length.AUTO).gap(Type.TIGHT).children(
-                gui.text(e.input()).font(Type.MONO).textSize(Type.LABEL)
-                        .textColor(gui.theme().color(Role.DIM)));
+        Node input = gui.text(e.input()).font(Type.MONO).textSize(Type.LABEL)
+                .textColor(gui.theme().color(Role.DIM));
+        Node node = gui.column().width(Length.FILL).height(Length.AUTO).gap(Type.TIGHT).children(input);
+        Node value = null;
         // A plotted line's answer is the expression back again; worth showing only when substitution changed it.
         boolean echo = e.graph() != null && e.answer().replace(" ", "").equals(e.input().replace(" ", ""));
         if (!echo) {
-            node.append(gui.text(e.answer()).font(Type.MONO).textSize(Type.HEADING)
-                    .textColor(gui.theme().color(Role.INK)));
+            Node answer = gui.text(e.answer()).font(Type.MONO).textSize(Type.HEADING)
+                    .textColor(gui.theme().color(Role.INK));
+            node.append(answer);
+            // A value reads "= 1/3"; anything else (a refusal, an expression left standing) is not a value to reuse.
+            if (e.answer().startsWith("= ")) value = answer;
         }
+        reuse.row(node, input, e.input(), value, value == null ? null : e.answer().substring(2));
         if (e.graph() != null) {
             Plot plot = new Plot(gui, e.graph());
             plots.add(plot);
