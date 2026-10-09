@@ -1,0 +1,23 @@
+{
+  "id": "calculator",
+  "name": "Calculator",
+  "publisher": "sibarum",
+  "description": "A small calculator window onto cott-engine.",
+  "version": "0.1.0",
+
+  "repo": "sibarum/calculator-vexel-demo",
+  "branch": "main",
+  "releasesRepo": "sibarum/calculator-vexel-demo",
+  "tagFormat": "v{version}",
+
+  "windows": {
+    "binaries": [
+      {
+        "name": "calculator",
+        "source": "target/calculator.exe",
+        "addToPath": true,
+        "shortcuts": { "desktop": true, "startMenu": true, "label": "Calculator" }
+      }
+    ]
+  }
+}
