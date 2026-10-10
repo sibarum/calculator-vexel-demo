@@ -16,6 +16,7 @@ import dev.vexelray.gui.core.style.Role;
 import dev.vexelray.gui.widget.Select;
 import dev.vexelray.gui.widget.TitleBar;
 import dev.vexelray.os.Decorations;
+import dev.vexelray.os.Icon;
 import sibarum.atchung.Atchung;
 import sibarum.cott.algebra.NumberType;
 import sibarum.cott.calculator.Mode;
@@ -111,10 +112,15 @@ final class SettingsWindow implements AutoCloseable {
      * <p>{@code remember} rather than a watch from {@code onCreated}: the window closes long before the
      * application does, and a watch left behind read it after it was gone (framework notes, FN-4). It also
      * remembers this tree's zoom, which its chords change.
+     *
+     * <p>{@code mark} is the suite's window icon, the Calculator's band over its glyph: worn on the taskbar and in
+     * the bar, so the window is told from the Calculator itself and still reads as its own.
      */
-    AppWindow claim(GuiApp app, WindowMemory memory) {
+    AppWindow claim(GuiApp app, WindowMemory memory, Icon mark) {
+        bar.icon(app, mark);
         return app.window(KEY, () -> memory.remember(KEY, bar.commands(
-                        WindowSpec.of(memory.config(KEY, TITLE, W, H).decorations(Decorations.CLIENT), gui))
+                        WindowSpec.of(memory.config(KEY, TITLE, W, H).decorations(Decorations.CLIENT).icon(mark),
+                                gui))
                 .standing(Standing.SATELLITE), W, H));
     }
 

@@ -4,6 +4,7 @@ import dev.vexelray.framework.api.Configuration;
 import dev.vexelray.framework.api.Provides;
 import dev.vexelray.framework.core.Lanes;
 import dev.vexelray.framework.shell.Appearance;
+import dev.vexelray.framework.shell.Shell;
 import dev.vexelray.gui.core.Gui;
 import dev.vexelray.framework.api.MainThread;
 import dev.vexelray.gui.core.app.AppWindow;
@@ -114,8 +115,8 @@ final class Recipes {
      */
     @Provides
     @MainThread
-    AppWindow settingsHost(GuiApp app, WindowMemory memory, SettingsWindow settings, Ui ui) {
-        AppWindow window = settings.claim(app, memory);
+    AppWindow settingsHost(GuiApp app, Shell shell, WindowMemory memory, SettingsWindow settings, Ui ui) {
+        AppWindow window = settings.claim(app, memory, shell.windowMark());
         ui.onSettings(window::show);
         return window;
     }

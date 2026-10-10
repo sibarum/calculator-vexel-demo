@@ -129,6 +129,7 @@
                 <directory>src/main/rc</directory>
                 <includes>
                     <include>calculator.ico</include>
+                    <include>calculator-window.ico</include>
                 </includes>
             </resource>
         </resources>
