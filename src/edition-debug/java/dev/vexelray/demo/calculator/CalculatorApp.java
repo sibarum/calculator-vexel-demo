@@ -12,7 +12,7 @@ import dev.vexelray.framework.automation.AutomationStarter;
  * one is compiled (property {@code edition.src}); keep the two annotations identical apart from {@code starters}.
  */
 @VexelApp(name = Calculator.APP, title = Calculator.TITLE, width = Calculator.W, height = Calculator.H,
-        starters = AutomationStarter.class)
+        icon = "/calculator.ico", starters = AutomationStarter.class)
 final class CalculatorApp {
 
     private CalculatorApp() {

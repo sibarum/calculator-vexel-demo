@@ -8,7 +8,8 @@ import dev.vexelray.framework.api.VexelApp;
  * {@code -Pnative-release}, so a shipped binary cannot open a driving socket. The debug edition is
  * {@code src/edition-debug}; keep the two annotations identical apart from {@code starters}.
  */
-@VexelApp(name = Calculator.APP, title = Calculator.TITLE, width = Calculator.W, height = Calculator.H)
+@VexelApp(name = Calculator.APP, title = Calculator.TITLE, width = Calculator.W, height = Calculator.H,
+        icon = "/calculator.ico")
 final class CalculatorApp {
 
     private CalculatorApp() {
