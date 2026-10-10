@@ -10,7 +10,7 @@ import java.util.Map;
 
 /**
  * Everything the application knows, in one immutable value: the tape of lines entered so far, the mode of each
- * of cott-engine's modesets the next line will run in (its arithmetic, its recursion limits, and whatever else
+ * of cott-engine's modesets the next line will run in (its number type, its recursion limits, and whatever else
  * the engine comes to offer), and what was wrong with the last line, if anything was.
  *
  * <p>A snapshot rather than a set of fields somebody mutates, so the frame loop and the handlers can never see

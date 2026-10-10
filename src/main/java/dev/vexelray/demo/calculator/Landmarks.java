@@ -23,7 +23,7 @@ final class Landmarks {
     static final String SETTINGS = "button.settings";
 
     /**
-     * The drop-down for one of cott-engine's modesets, in the settings window: {@code setting.arithmetic},
+     * The drop-down for one of cott-engine's modesets, in the settings window: {@code setting.number_type},
      * {@code setting.limits}. Derived from the modeset's name, since the window offers whatever modesets the
      * engine has.
      */

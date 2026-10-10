@@ -1,7 +1,7 @@
 package dev.vexelray.demo.calculator;
 
 import org.junit.jupiter.api.Test;
-import sibarum.cott.calculator.Arithmetic;
+import sibarum.cott.algebra.NumberType;
 import sibarum.cott.calculator.Limits;
 import sibarum.cott.calculator.Mode;
 import sibarum.cott.calculator.Modeset;
@@ -22,14 +22,14 @@ class ModelTest {
         assertTrue(model.enter("1/0"));
         Doc.Entry e = model.doc().tape().getFirst();
         assertEquals("1/0", e.input());
-        assertEquals("= ω", e.answer());
+        assertEquals("= Q(1, 0)", e.answer());
     }
 
     @Test
     void escapesAreExpanded() {
         Model model = new Model();
         assertTrue(model.enter("\\o"));
-        assertEquals("= ω", model.doc().tape().getFirst().answer());
+        assertEquals("= Q(1, 0)", model.doc().tape().getFirst().answer());
     }
 
     @Test
@@ -59,12 +59,12 @@ class ModelTest {
     }
 
     @Test
-    void theArithmeticCanBeChanged() {
+    void theNumberTypeCanBeChanged() {
         Model model = new Model();
-        Mode first = model.doc().mode(Modeset.ARITHMETIC);
-        model.set(Arithmetic.IEEE_FLOATING_POINT);
-        assertNotEquals(first, model.doc().mode(Modeset.ARITHMETIC));
-        assertEquals(Arithmetic.IEEE_FLOATING_POINT, model.doc().mode(Modeset.ARITHMETIC));
+        Mode first = model.doc().mode(Modeset.NUMBER_TYPE);
+        model.set(NumberType.IEEE);
+        assertNotEquals(first, model.doc().mode(Modeset.NUMBER_TYPE));
+        assertEquals(NumberType.IEEE, model.doc().mode(Modeset.NUMBER_TYPE));
     }
 
     @Test
@@ -80,7 +80,7 @@ class ModelTest {
         assertTrue(model.enter("cos(1/500)"));
         model.set(Limits.SHALLOW);
         assertEquals(Limits.SHALLOW, model.doc().mode(Modeset.LIMITS));
-        assertEquals(Modeset.ARITHMETIC.initial(), model.doc().mode(Modeset.ARITHMETIC));
+        assertEquals(Modeset.NUMBER_TYPE.initial(), model.doc().mode(Modeset.NUMBER_TYPE));
         assertFalse(model.enter("cos(1/500)"));
         assertTrue(model.doc().error().contains("360"), model.doc().error());
     }
@@ -99,8 +99,8 @@ class ModelTest {
         AtomicInteger seen = new AtomicInteger();
         model.onChange(doc -> seen.incrementAndGet());
         model.enter("2+2");
-        model.set(Arithmetic.IEEE_FLOATING_POINT);
-        model.set(Arithmetic.IEEE_FLOATING_POINT);   // already in force: nothing changed, nobody told
+        model.set(NumberType.IEEE);
+        model.set(NumberType.IEEE);   // already in force: nothing changed, nobody told
         assertEquals(2, seen.get());
     }
 }

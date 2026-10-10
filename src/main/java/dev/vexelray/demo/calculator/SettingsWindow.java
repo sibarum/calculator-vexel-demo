@@ -17,7 +17,7 @@ import dev.vexelray.gui.widget.Select;
 import dev.vexelray.gui.widget.TitleBar;
 import dev.vexelray.os.Decorations;
 import sibarum.atchung.Atchung;
-import sibarum.cott.calculator.Arithmetic;
+import sibarum.cott.algebra.NumberType;
 import sibarum.cott.calculator.Mode;
 import sibarum.cott.calculator.Modeset;
 
@@ -152,9 +152,16 @@ final class SettingsWindow implements AutoCloseable {
      */
     private static String about(Modeset modeset) {
         return switch (modeset) {
-            case ARITHMETIC -> "What a number is, and how + - * / and ^ act on it. The notation, the definitions "
-                    + "and the substitution are the same in every arithmetic; only the evaluation of a closed "
-                    + "expression differs, so a definition made in one arithmetic is read afresh in another.";
+            case NUMBER_TYPE -> "The numbers at the bottom of every value. A pair such as Q(1, 2) or C(3, 4) is "
+                    + "a pair of these, and the algebra its constructor names says what + and * do with it. "
+                    + "Definitions are kept as written, so a definition made under one number type is read "
+                    + "afresh under another.";
+            case SIZE_LIMIT -> "How large one of those numbers may be. An Integer over the limit is refused, "
+                    + "since rounding it would change the pair it is in; a Decimal is rounded to the limit's "
+                    + "digits, and the answer says that it was. IEEE 64-bit is a double whatever the limit.";
+            case FORM -> "Which way a sum and a product nest when they meet: Q(1, 2) + C(3, 4) is a C of Q's, "
+                    + "a sum of products, or a Q of C's, a product of sums. Both hold the same value and pay "
+                    + "for division in different places.";
             case LIMITS -> "How far a recursion may go before it is stopped: the mediant descent behind cos and "
                     + "sin. Each bound is a count of steps rather than a time, so a line gives the same answer on "
                     + "every machine. Deeper limits give tighter answers and can take far longer; a line that "
@@ -165,11 +172,15 @@ final class SettingsWindow implements AutoCloseable {
 
     /** What is particular to the chosen mode, beyond its name. Empty where the name says it all. */
     private static String detail(Mode mode) {
-        if (mode instanceof Arithmetic a) {
-            return (a.hasOmega() ? "ω (type \\o) is a value here. " : "ω is refused here. ")
-                    + (a.hasDecimals() ? "Decimals like 0.5 are values." : "Decimals are refused, so write 1/2.");
-        }
-        return "";
+        if (!(mode instanceof NumberType t)) return "";
+        return switch (t) {
+            case INTEGER -> "Exact: 1/2 is the pair Q(1, 2), never reduced. Decimals are refused, so write 1/2. "
+                    + "cos, sin and e^x are dialed to a bracket.";
+            case DECIMAL -> "Decimals like 0.5 are values, and a division can bring an expression down to one "
+                    + "number. cos, sin and e^x are refused here.";
+            case IEEE -> "Every number is a double: 1/0 is infinity and 0/0 is NaN. With e = e, cos and sin count "
+                    + "in radians.";
+        };
     }
 
     /**

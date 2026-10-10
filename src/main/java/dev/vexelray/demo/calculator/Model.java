@@ -2,14 +2,13 @@ package dev.vexelray.demo.calculator;
 
 import sibarum.atchung.Committer;
 import sibarum.atchung.State;
-import sibarum.cott.calculator.Arithmetic;
 import sibarum.cott.calculator.Calculator;
 import sibarum.cott.calculator.CalculatorException;
 import sibarum.cott.calculator.Escapes;
-import sibarum.cott.calculator.Limits;
 import sibarum.cott.calculator.Mode;
 import sibarum.cott.calculator.Modeset;
 import sibarum.cott.calculator.Result;
+import sibarum.cott.notation.Printer;
 import sibarum.cott.notation.SyntaxException;
 
 import java.util.EnumMap;
@@ -56,7 +55,7 @@ final class Model {
         if (line.isBlank()) return false;
         synchronized (calc) {
             try {
-                Doc.Entry entry = entry(line, calc.enter(Escapes.expand(line)), calc.arithmetic(), calc.limits());
+                Doc.Entry entry = entry(line, calc.enter(Escapes.expand(line)));
                 state.commit(edit, d -> d.with(entry));
                 return true;
             } catch (SyntaxException | CalculatorException e) {
@@ -69,7 +68,7 @@ final class Model {
 
     /**
      * Run the next lines in {@code mode}, in place of whatever its modeset was in. Definitions are kept, so a
-     * new arithmetic reads them afresh. Choosing the mode already in force changes nothing and tells nobody.
+     * new number type reads them afresh. Choosing the mode already in force changes nothing and tells nobody.
      */
     void set(Mode mode) {
         synchronized (calc) {
@@ -82,12 +81,17 @@ final class Model {
     /**
      * What the tape shows for a result. A line left with one free name is plotted over it; with more than one it
      * stays as written and says why there is no plot.
+     *
+     * <p>Each sample is a closed line given back to the same calculator, under the lock already held, so it is
+     * evaluated in every current mode and with the current {@code e}. The expression is already substituted, and an
+     * expression defines nothing, so the samples leave the calculator as they found it.
      */
-    private static Doc.Entry entry(String line, Result result, Arithmetic arithmetic, Limits limits) {
+    private Doc.Entry entry(String line, Result result) {
         if (result instanceof Result.Unevaluated u) {
             Set<String> free = Graph.free(u.expr());
             if (free.size() == 1) {
-                Graph graph = Graph.of(u.expr(), free.iterator().next(), arithmetic, limits);
+                Graph graph = Graph.of(u.expr(), free.iterator().next(),
+                        closed -> (Result.Value) calc.enter(Printer.print(closed)));
                 return graph.empty()
                         ? new Doc.Entry(line, u.text(), "nothing to plot: " + graph.refusal())
                         : new Doc.Entry(line, u.text(), "", graph);

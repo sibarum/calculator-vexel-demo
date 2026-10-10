@@ -38,7 +38,7 @@ class GraphTest {
         Graph g = plotted("1/x");
         Graph.Sample zero = at(g, "0");
         assertTrue(zero.marker());
-        assertEquals("ω", zero.value());
+        assertEquals("Q(1, 0)", zero.value());
         assertEquals(0.5, at(g, "2").y());
     }
 
@@ -57,12 +57,13 @@ class GraphTest {
         assertTrue(e.readings().contains("nothing to plot"));
     }
 
-    /** The engine takes only whole-number exponents, so 2^x has values at x = 0, 1, … 10 and nowhere else. */
+    /** The engine takes only whole-number exponents, so 2^x has values at x = -10, -9, … 10 and nowhere else. */
     @Test
     void aRefusedSampleIsAGap() {
         Graph g = plotted("2^x");
         assertNotNull(g);
-        assertEquals(11, g.samples().stream().filter(Graph.Sample::onCurve).count());
+        assertEquals(21, g.samples().stream().filter(Graph.Sample::onCurve).count());
+        assertEquals(0.5, at(g, "-1").y());
         assertEquals(1024.0, at(g, "10").y());
         assertTrue(at(g, "0.5").refused());
     }
@@ -79,7 +80,7 @@ class GraphTest {
     @Test
     void ieeeMarksInfinityToo() {
         Model model = new Model();
-        model.set(sibarum.cott.calculator.Arithmetic.IEEE_FLOATING_POINT);
+        model.set(sibarum.cott.algebra.NumberType.IEEE);
         model.enter("1/x");
         Graph g = model.doc().tape().getFirst().graph();
         assertTrue(at(g, "0").marker());
@@ -87,9 +88,9 @@ class GraphTest {
     }
 
     @Test
-    void everyArithmeticPutsARealCurveOnTheAxis() {
+    void everyNumberTypePutsARealCurveOnTheAxis() {
         Model model = new Model();
-        for (sibarum.cott.calculator.Arithmetic a : sibarum.cott.calculator.Arithmetic.values()) {
+        for (sibarum.cott.algebra.NumberType a : sibarum.cott.algebra.NumberType.values()) {
             model.set(a);
             model.enter("x^2 - 1");
             Graph g = model.doc().tape().getLast().graph();
