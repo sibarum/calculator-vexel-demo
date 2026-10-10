@@ -338,7 +338,7 @@
                     <version>${vexelray.version}</version>
                     <scope>runtime</scope>
                 </dependency>
-                <!-- Presenting through DXGI (-Dvexelray.present=dxgi): a window resize is the OS's buffer
+                <!-- Presenting through DXGI, the default (-Dvexelray.present=vulkan opts out): a window resize is the OS's buffer
                      resize, not a new Vulkan swapchain. Found by ServiceLoader; absent, windows use a swapchain. -->
                 <dependency>
                     <groupId>dev.vexelray</groupId>
