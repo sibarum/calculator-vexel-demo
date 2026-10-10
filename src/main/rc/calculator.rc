@@ -2,6 +2,6 @@
 //
 // Ordinal 1, and it is the only icon here, because Windows shows a program's *lowest-numbered* icon resource
 // wherever it shows the program itself -- Explorer, the taskbar's pinned button, a shortcut, the Apps entry.
-// calculator.ico is calculator.svg (drawn after the suite icon canvas's primaries, on hue 145 deg, which no other
-// application uses) rendered at 16 to 256 px by vex-suite-common's tools/Ico.java.
+// calculator.ico is calculator.svg (the suite icon canvas's Calculator primary, dark) rendered at 16 to 256 px by
+// vex-suite-common's tools/Ico.java. The window, file and light variants are kept beside it.
 1 ICON "calculator.ico"

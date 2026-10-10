@@ -125,8 +125,8 @@ mvn -Pnative package -DskipTests           # target/calculator-debug.exe  for ot
 
 The two editions differ only in `CalculatorApp`, the `@VexelApp` declaration (one in each edition's source root);
 `Calculator.java` is shared. Both profiles link `src/main/rc/calculator.rc`, the executable's icon:
-`calculator.svg`, drawn after the suite icon canvas's primaries on a hue of its own, rendered to `calculator.ico` by
-`vex-suite-common`'s `tools/Ico.java`. The reachability metadata under
+`calculator.svg`, the suite icon canvas's Calculator primary, rendered to `calculator.ico` by `vex-suite-common`'s
+`tools/Ico.java`; the window, file and light variants are beside it. The reachability metadata under
 `src/main/resources/META-INF/native-image/` is only what is this program's (its `main`, the launcher, the locale
 data); the libraries bring their own.
 
