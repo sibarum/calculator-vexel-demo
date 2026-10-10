@@ -338,14 +338,6 @@
                     <version>${vexelray.version}</version>
                     <scope>runtime</scope>
                 </dependency>
-                <!-- Presenting through DXGI, the default (-Dvexelray.present=vulkan opts out): a window resize is the OS's buffer
-                     resize, not a new Vulkan swapchain. Found by ServiceLoader; absent, windows use a swapchain. -->
-                <dependency>
-                    <groupId>dev.vexelray</groupId>
-                    <artifactId>vexelray-present-dxgi</artifactId>
-                    <version>${vexelray.version}</version>
-                    <scope>runtime</scope>
-                </dependency>
                 <dependency>
                     <groupId>sibarum.tactroller</groupId>
                     <artifactId>tactroller-windows</artifactId>
