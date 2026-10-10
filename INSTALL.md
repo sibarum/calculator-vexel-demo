@@ -40,7 +40,7 @@ Set these in the same PowerShell window *before* the install command:
 
 | File | Kind | Version | Size | Installed to |
 | --- | --- | --- | --- | --- |
-| `calculator.exe` | native executable | 0.1.0 | 36.3 MB | `%LOCALAPPDATA%\Programs\Calculator\calculator.exe` |
+| `calculator.exe` | native executable | 0.1.0 | 36.5 MB | `%LOCALAPPDATA%\Programs\Calculator\calculator.exe` |
 
 Everything installed is recorded in `%LOCALAPPDATA%\Programs\Calculator\install-manifest.json`, and a copy
 in `%LOCALAPPDATA%\vexelray-installer\installs\calculator.json`.

@@ -40,16 +40,16 @@
               "kind": "native",
               "file": "calculator.exe",
               "url": "https://github.com/sibarum/calculator-vexel-demo/releases/download/v0.1.0/calculator.exe",
-              "sha256": "31b092481d5c3c68a974b2c1e6557924ac316d77f2635a67b5b5cb3d738c777b",
-              "size": 38060032,
+              "sha256": "7a1137686475384f9fea0888ffe3c9803b9f08e902fd088a810303fd666762e4",
+              "size": 38240256,
               "installPath": "{installDir}\\calculator.exe",
               "executable": true,
               "addToPath": true,
               "icon": {
                 "file": "calculator.ico",
                 "url": "https://github.com/sibarum/calculator-vexel-demo/releases/download/v0.1.0/calculator.ico",
-                "sha256": "f99401daa560521c29abfdc6601fbb743593db52496356f6d410f9d3699caa0b",
-                "size": 25285,
+                "sha256": "c93ef49f4a01767da7dcfd7ee7cba8a4fe0cdd30abf29694570fd649875f0582",
+                "size": 26499,
                 "installPath": "{installDir}\\calculator.ico"
               },
               "shortcuts": {
@@ -61,7 +61,8 @@
             }
           ]
         }
-      }
+      },
+      "updatedAt": "2026-10-10T04:14:25Z"
     }
   ]
 }
