@@ -2,14 +2,10 @@ package dev.vexelray.demo.calculator;
 
 import dev.vexelray.framework.api.Configuration;
 import dev.vexelray.framework.api.Provides;
-import dev.vexelray.framework.core.Lanes;
 import dev.vexelray.framework.shell.Appearance;
-import dev.vexelray.framework.shell.Shell;
+import dev.vexelray.framework.shell.Window;
+import dev.vexelray.framework.shell.Windows;
 import dev.vexelray.gui.core.Gui;
-import dev.vexelray.framework.api.MainThread;
-import dev.vexelray.gui.core.app.AppWindow;
-import dev.vexelray.gui.core.app.GuiApp;
-import dev.vexelray.gui.core.app.WindowMemory;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.widget.TitleBar;
 import sibarum.tactroller.api.Key;
@@ -91,34 +87,22 @@ final class Recipes {
     }
 
     /**
-     * The settings window's tree, kept in step with the document the same way the main one is. It is a tree of
-     * its own rather than the framework's {@code Gui}, so it takes the look and the threads to build one with and
-     * needs no window; the framework closes it, being {@code AutoCloseable}.
+     * The settings window, kept in step with the document the same way the main one is, and the gear that opens it.
+     *
+     * <p>One declaration: the framework builds the window's tree now, beside the main one, and claims the window
+     * once there is a device, so this needs no window and is not main-thread. The window's handle is safe from any
+     * thread, and its {@code show} is what the gear does.
      */
     @Provides
-    SettingsWindow settingsWindow(Appearance look, Lanes lanes, Model model) {
-        SettingsWindow settings = new SettingsWindow(look, lanes, model);
+    SettingsWindow settingsWindow(Windows windows, Model model, Ui ui) {
+        Window window = windows.named(SettingsWindow.DECLARED);
+        SettingsWindow settings = new SettingsWindow(window, model);
         // Its own Gui, so its own zoom: the look gave it the range, and the chords are given here.
-        zoomShortcuts(settings.gui());
+        zoomShortcuts(window.gui());
         model.onChange(settings::show);
         settings.show(model.doc());
-        return settings;
-    }
-
-    /**
-     * The window that tree is shown in, and the gear that opens it.
-     *
-     * <p>A part of its own, a phase later, because a second window is claimed through the {@code GuiApp} and
-     * there is none while the trees are built. {@code @MainThread} because the processor will not hand the
-     * {@code GuiApp} to anything else — although the {@code AppWindow} it returns is safe from any thread, and
-     * nothing injects it. See {@code docs/framework-notes.md}, FN-1.
-     */
-    @Provides
-    @MainThread
-    AppWindow settingsHost(GuiApp app, Shell shell, WindowMemory memory, SettingsWindow settings, Ui ui) {
-        AppWindow window = settings.claim(app, memory, shell.windowMark());
         ui.onSettings(window::show);
-        return window;
+        return settings;
     }
 
     /**

@@ -31,7 +31,7 @@ The markers are a filter, not decoration:
 
 ## Findings
 
-## FN-1 · A part that only claims a window must still be `@MainThread` 🔬
+## FN-1 · A part that only claims a window must still be `@MainThread` 🔬 (fixed upstream)
 
 The settings window is a named `AppWindow`, which is claimed through `GuiApp.window(...)`. `AppWindow` is safe
 from any thread (every command only posts to the frame loop), but the processor's T2.2 rule refuses a
@@ -44,6 +44,12 @@ What it costs: every app with a second window writes this same split. What the f
 `AppWindow`s itself, e.g. a `WindowRegistry` root that wraps `GuiApp.window` and is not main-thread, or a
 `@Window("settings")` recipe whose value is the tree and whose claim is generated.
 
+Fixed by the first of those: the framework's `Windows` root, from `GUI`, which is not main-thread. `Recipes.settingsWindow`
+declares the window (`windows.named(SettingsWindow.DECLARED)`) and gets a `Window` whose tree the framework has built.
+The framework claims the window at `ATTACH`, so `settingsHost`, its `@MainThread` and the `GuiApp` are gone, and
+`SettingsWindow` builds into the tree it is handed. See the framework's `docs/architecture.md`, *what the two-window
+witness found*.
+
 ## FN-2 · `Popout` puts its second tree on the host's bus, which `Gui` forbids 🔬
 
 `Gui(Atchung)`'s javadoc says never to share one bus between two `Gui`s, because the topics are static and each
@@ -54,7 +60,8 @@ was thrown, and the main window was simply wrong from the first frame.
 What was done here: the settings tree gets `new Gui(Atchung.create(), lanes.handlers(), lanes.offload())`, which
 gives it its own bus while still using the application's threads. `Popout` likely has the same defect whenever a
 panel is popped out. Separately, the framework could build the tree for a named window itself, since it knows
-the lanes, the appearance, and the rule.
+the lanes, the appearance, and the rule. It does now (see FN-1), so the settings window no longer makes a `Gui` at
+all, and the line that could be copied wrong is gone from this application.
 
 ## FN-3 · The atlas font has no `≤` 📋
 

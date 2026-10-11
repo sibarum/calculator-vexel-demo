@@ -1,23 +1,13 @@
 package dev.vexelray.demo.calculator;
 
-import dev.vexelray.framework.core.Lanes;
-import dev.vexelray.framework.shell.Appearance;
+import dev.vexelray.framework.shell.NamedWindow;
+import dev.vexelray.framework.shell.Window;
 import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.Node;
-import dev.vexelray.gui.core.WindowControls;
-import dev.vexelray.gui.core.app.AppWindow;
-import dev.vexelray.gui.core.app.GuiApp;
-import dev.vexelray.gui.core.app.Standing;
-import dev.vexelray.gui.core.app.WindowMemory;
-import dev.vexelray.gui.core.app.WindowSpec;
 import dev.vexelray.gui.core.layout.LayoutEnums.Direction;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.style.Role;
 import dev.vexelray.gui.widget.Select;
-import dev.vexelray.gui.widget.TitleBar;
-import dev.vexelray.os.Decorations;
-import dev.vexelray.os.Icon;
-import sibarum.atchung.Atchung;
 import sibarum.cott.algebra.NumberType;
 import sibarum.cott.calculator.Mode;
 import sibarum.cott.calculator.Modeset;
@@ -35,39 +25,30 @@ import java.util.Map;
  * {@link #about}. A setting that is the application's own rather than the engine's would be a section added
  * beside them, reading its value from {@link Doc} the same way.
  *
- * <p>A named {@link AppWindow}, so asking for it twice raises the one already open, and its tree outlives the
- * window: closing and reopening shows the same controls rather than building new ones. It stands as a
- * {@link Standing#SATELLITE} of the main window, above it and minimized with it, because it belongs to it. It wears
- * the application's own title bar for the reason {@code Popout} gives: a second window of the same program in the
- * desktop's caption is the one arrangement that looks like a mistake.
+ * <p>A named {@link Window}, so asking for it twice raises the one already open, and its tree outlives the
+ * window: closing and reopening shows the same controls rather than building new ones. It stands as a satellite of
+ * the main window, above it and minimized with it, because it belongs to it.
+ *
+ * <p><b>The window and its tree are the framework's.</b> This class builds into the {@code Gui} it is handed and
+ * places the title bar it is handed; the bus of its own, the look, the mark, the placement and zoom remembered under
+ * {@link #KEY} and the controls in the bar are all the framework's, which is why nothing here takes the
+ * {@code GuiApp} (framework notes, FN-1 and FN-2).
  */
 final class SettingsWindow implements AutoCloseable {
 
-    /** The window's name in the settings file, where its placement is remembered. */
-    private static final String KEY = "settings";
-
-    private static final String TITLE = "Settings";
-    private static final int W = 500;
-    private static final int H = 640;
+    /** The window, as {@link Recipes} declares it: its name is where its placement is remembered. */
+    static final NamedWindow DECLARED = NamedWindow.of("settings", "Settings", 500, 640).satellite();
 
     private final Gui gui;
-    private final TitleBar bar;
     private final Map<Modeset, Select<Mode>> selects = new EnumMap<>(Modeset.class);
     private final Map<Modeset, Node> details = new EnumMap<>(Modeset.class);
 
     /**
-     * The tree, which needs no window: built beside the main window's, and shown in a window of its own once
-     * {@link #claim} has named one.
+     * The tree, which needs no window: built beside the main window's, and shown in its own window when the gear
+     * asks. Whatever the two windows have to agree about goes through the {@link Model}.
      */
-    SettingsWindow(Appearance look, Lanes lanes, Model model) {
-        // A bus of its own, which is Gui's rule and not a preference: its topics are static, so two trees on one
-        // bus each receive the other's mutations -- the main window drew this tree. The threads are still the
-        // application's, so a second window is not a second set of them. Whatever the two windows have to agree
-        // about goes through the Model.
-        this.gui = new Gui(Atchung.create(), lanes.handlers(), lanes.offload());
-        look.applyTo(gui);
-
-        TitleBar bar = new TitleBar(gui, WindowControls.NONE, TITLE);
+    SettingsWindow(Window window, Model model) {
+        this.gui = window.gui();
 
         Node body = gui.column()
                 .width(Length.FILL).height(Length.grow(1f))
@@ -101,39 +82,13 @@ final class SettingsWindow implements AutoCloseable {
 
         gui.root().direction(Direction.COLUMN)
                 .background(gui.theme().color(Role.PAGE))
-                .children(bar.node(), body);
-        this.bar = bar;
+                .children(window.titleBar().node(), body);
     }
 
-    /**
-     * Claim the window this tree is shown in, under its name. Main thread, and once: the handle that comes back
-     * is safe from any thread, and its {@code show} is what the gear does.
-     *
-     * <p>{@code remember} rather than a watch from {@code onCreated}: the window closes long before the
-     * application does, and a watch left behind read it after it was gone (framework notes, FN-4). It also
-     * remembers this tree's zoom, which its chords change.
-     *
-     * <p>{@code mark} is the suite's window icon, the Calculator's band over its glyph: worn on the taskbar and in
-     * the bar, so the window is told from the Calculator itself and still reads as its own.
-     */
-    AppWindow claim(GuiApp app, WindowMemory memory, Icon mark) {
-        bar.icon(app, mark);
-        return app.window(KEY, () -> memory.remember(KEY, bar.commands(
-                        WindowSpec.of(memory.config(KEY, TITLE, W, H).decorations(Decorations.CLIENT).icon(mark),
-                                gui))
-                .standing(Standing.SATELLITE), W, H));
-    }
-
-    /** The tree's own {@code Gui}, for what the application adds to every window, such as the zoom chords. */
-    Gui gui() {
-        return gui;
-    }
-
-    /** The tree's own subscriptions. The lanes are the application's, so they stay up. */
+    /** The drop-downs' subscriptions. The tree is the framework's, and it closes it. */
     @Override
     public void close() {
         selects.values().forEach(Select::close);
-        gui.close();
     }
 
     /** Write everything derived from the document: which mode each drop-down shows, and what that mode means. */
