@@ -78,8 +78,8 @@ application down with it.
 
 Fixed in three places upstream, so nothing here works around it:
 
-- `WindowMemory.remember(key, spec, w, h)` pairs the watch with its `forget`. `claim` now uses it, which also
-  remembers this window's zoom.
+- `WindowMemory.remember(key, spec, w, h)` pairs the watch with its `forget`. The framework claims the settings window
+  with it now (`Windows.named`, see FN-1), which also remembers this window's zoom.
 - A destroyed `Win32Window` answers with its last values instead of calling into Win32.
 - `FrameHooks` stops a hook that throws and logs it, rather than ending the run.
 

@@ -14,10 +14,10 @@ Keep an entry short enough that it does not need editing, and delete it when it 
 - [ ] Replace the palette anchors in `Look.java` with the design's, measured in Oklab. See the note in that
       file about which authored colours the construction can reproduce and which have to be declared.
 - [ ] Decide what closing the window means. Closing currently closes, which is the right default; an
-      application with unsaved state registers `shell.onClose` from a `@Provides` method in `Recipes` that takes
-      the `Shell` — which puts it in the last phase, where a close gate can be registered — and answers the
-      `CloseRequest` when it knows. One gate per application -- a second registration is refused, because the
-      one it replaced is as likely as not the one that knew about the unsaved documents.
+      application with unsaved state gives the window a `CloseGate` — `windows.main().onClose((proceed, cancel)
+      -> ...)` from any recipe that takes `Windows` — and runs one of the two when it knows. The settings window
+      can have a gate of its own the same way. One gate per window -- a second is refused, because the one it
+      replaced is as likely as not the one that knew about the unsaved documents.
 
 ## Later
 
