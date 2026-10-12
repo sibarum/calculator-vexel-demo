@@ -14,6 +14,7 @@ import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.style.Role;
 import dev.vexelray.gui.draw.Picture;
 import dev.vexelray.gui.draw.Sketch;
+import dev.vexelray.gui.krono.KronoGui;
 import dev.vexelray.gui.widget.TextField;
 import dev.vexelray.gui.widget.TitleBar;
 import dev.vexelray.gui.widget.Tooltip;
@@ -48,13 +49,13 @@ final class Ui {
     private final Reuse reuse;
     private int shown;
 
-    Ui(Gui gui, Model model, TitleBar titleBar) {
+    Ui(Gui gui, Model model, TitleBar titleBar, KronoGui krono) {
         this.gui = gui;
 
         tape = gui.column()
                 .width(Length.FILL).height(Length.grow(1f))
                 .gap(Type.WIDE)
-                .padding(Type.WIDE, Type.EDGE)
+                .padding(Type.WIDE, Type.TAPE_EDGE)
                 .scroll(false, true)
                 .scrollLock(ScrollLock.BOTTOM);
         gui.landmark(Landmarks.TAPE, tape);
@@ -70,7 +71,7 @@ final class Ui {
         gui.landmark(Landmarks.ENTRY, entry.node());
 
         tips = new Tooltip(gui);
-        reuse = new Reuse(gui, model, entry, tips);
+        reuse = new Reuse(gui, model, entry, tips, krono);
         // A refused line stays where it is, to be fixed; a taken one is cleared with replace rather than text,
         // so Ctrl+Z brings it back.
         entry.onSubmit(line -> {
@@ -110,15 +111,17 @@ final class Ui {
 
     /** One line of the tape: what was typed, dim; the answer; and its other readings, small. */
     private Node line(Doc.Entry e) {
-        Node input = gui.text(e.input()).font(Type.MONO).textSize(Type.LABEL)
-                .textColor(gui.theme().color(Role.DIM));
+        Node input = chip(gui.text(e.input()).font(Type.MONO).textSize(Type.LABEL)
+                .textColor(gui.theme().color(Role.DIM)));
+        // Stretched, so long text wraps; the wash is therefore a row's width rather than the text's. Hugging the
+        // text would need a width capped at the row's, which the layout cannot say.
         Node node = gui.column().width(Length.FILL).height(Length.AUTO).gap(Type.TIGHT).children(input);
         Node value = null;
         // A plotted line's answer is the expression back again; worth showing only when substitution changed it.
         boolean echo = e.graph() != null && e.answer().replace(" ", "").equals(e.input().replace(" ", ""));
         if (!echo) {
-            Node answer = gui.text(e.answer()).font(Type.MONO).textSize(Type.HEADING)
-                    .textColor(gui.theme().color(Role.INK));
+            Node answer = chip(gui.text(e.answer()).font(Type.MONO).textSize(Type.HEADING)
+                    .textColor(gui.theme().color(Role.INK)));
             node.append(answer);
             // A value reads "= 1/3"; anything else (a refusal, an expression left standing) is not a value to reuse.
             if (e.answer().startsWith("= ")) value = answer;
@@ -127,13 +130,22 @@ final class Ui {
         if (e.graph() != null) {
             Plot plot = new Plot(gui, e.graph());
             plots.add(plot);
-            node.append(plot.node());
+            node.append(plot.node().padding(Length.ZERO, Type.WASH));
         }
         if (!e.readings().isEmpty()) {
             node.append(gui.text(e.readings()).font(Type.MONO).textSize(Type.SMALL)
-                    .textColor(gui.theme().color(Role.FAINT)));
+                    .textColor(gui.theme().color(Role.FAINT)).padding(Length.ZERO, Type.WASH));
         }
         return node;
+    }
+
+    /**
+     * A line's text with room round it for {@link Reuse}'s hover wash, and the panel's corners. Given to every
+     * input and answer, reusable or not, so the tape's rhythm does not depend on which lines are; the tape's
+     * {@link Type#TAPE_EDGE} gives the sideways room back, so the text itself sits where it always did.
+     */
+    private static Node chip(Node text) {
+        return text.padding(Type.WASH_Y, Type.WASH).corner(Type.CORNER);
     }
 
     /** Write everything derived from the document. */

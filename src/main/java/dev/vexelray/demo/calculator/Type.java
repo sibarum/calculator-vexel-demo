@@ -61,6 +61,13 @@ final class Type {
     /** A tight gap. */
     static final Length TIGHT = Length.dp(5.6f);
 
+    /** How far a tape line's hover wash reaches past its text, sideways and up and down. */
+    static final Length WASH = Length.dp(5.6f);
+    static final Length WASH_Y = Length.dp(2);
+
+    /** The tape's side inset: the edge, less the wash its lines carry, so their text still sits on the edge. */
+    static final Length TAPE_EDGE = Length.dp(22.4f - 5.6f);
+
     /** A border. Not scaled by zoom; a hairline is a hairline. */
     static final Length RULE = Length.dp(1);
 

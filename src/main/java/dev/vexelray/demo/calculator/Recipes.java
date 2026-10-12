@@ -7,6 +7,7 @@ import dev.vexelray.framework.shell.Window;
 import dev.vexelray.framework.shell.Windows;
 import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.layout.Length;
+import dev.vexelray.gui.krono.KronoGui;
 import dev.vexelray.gui.widget.TitleBar;
 import sibarum.tactroller.api.Key;
 import sibarum.tactroller.api.Modifier;
@@ -76,8 +77,8 @@ final class Recipes {
      * node and supplies every colour in it.
      */
     @Provides
-    Ui ui(Gui gui, Model model, TitleBar titleBar) {
-        Ui ui = new Ui(gui, model, titleBar);
+    Ui ui(Gui gui, Model model, TitleBar titleBar, KronoGui krono) {
+        Ui ui = new Ui(gui, model, titleBar, krono);
         // Every change to the state redraws what is derived from it, on the committing thread -- which is a
         // worker, because every control's handler is. The GUI thread never reads the model.
         model.onChange(ui::show);

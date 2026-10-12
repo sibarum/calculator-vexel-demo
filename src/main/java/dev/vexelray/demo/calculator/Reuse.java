@@ -6,12 +6,19 @@ import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.input.ClaimScope;
 import dev.vexelray.gui.core.input.CursorShape;
 import dev.vexelray.gui.core.input.InputTopics;
+import dev.vexelray.gui.core.input.InteractionState;
 import dev.vexelray.gui.core.input.Shortcut;
 import dev.vexelray.gui.core.layout.NodeLayout;
 import dev.vexelray.gui.core.style.Role;
 import dev.vexelray.gui.draw.Sketch;
+import dev.vexelray.gui.krono.Colors;
+import dev.vexelray.gui.krono.KronoGui;
+import dev.vexelray.gui.widget.Cue;
+import dev.vexelray.gui.widget.Cues;
 import dev.vexelray.gui.widget.TextField;
 import dev.vexelray.gui.widget.Tooltip;
+import sibarum.kronometer.Dur;
+import sibarum.kronometer.anim.Ease;
 import sibarum.tactroller.api.InputEvent;
 import sibarum.tactroller.api.Key;
 import sibarum.tactroller.api.Modifier;
@@ -34,6 +41,11 @@ import java.util.regex.Pattern;
  *       Ctrl+Shift+1…9 inserts that. Ctrl+0 is left alone: it is the zoom reset.</li>
  * </ul>
  *
+ * <p>Nothing on the tape says in words that it can be clicked; it shows it. A line that can be reused takes an
+ * accent wash under the pointer, faded in and out rather than switched, deepens while the button is held on it,
+ * and pulses a ring when it is used, while the entry it went to takes a sweep. Ctrl+number plays the same two, so
+ * either way the eye is shown where the text came from and where it went.
+ *
  * <p>Anything added beside other text goes in brackets unless it is one number or one name, so {@code 2·} and
  * {@code x+1} make {@code 2·(x+1)}, not {@code 2·x+1}. Every change is one undo step.
  *
@@ -49,6 +61,16 @@ final class Reuse {
             Key.DIGIT_6, Key.DIGIT_7, Key.DIGIT_8, Key.DIGIT_9};
     private static final Key[] PAD = {Key.NUMPAD_1, Key.NUMPAD_2, Key.NUMPAD_3, Key.NUMPAD_4, Key.NUMPAD_5,
             Key.NUMPAD_6, Key.NUMPAD_7, Key.NUMPAD_8, Key.NUMPAD_9};
+
+    /** How long a wash takes to follow the pointer: quick enough that sweeping down the tape never trails. */
+    private static final Dur FADE = Dur.ms(120);
+
+    /** How long the ring and the sweep take: an acknowledgement has to be long enough to be noticed. */
+    private static final Dur CUE = Dur.ms(240);
+
+    /** The wash's alpha under the pointer, and while the button is held on it. */
+    private static final float HOVER_ALPHA = 0.14f;
+    private static final float PRESS_ALPHA = 0.30f;
 
     /** One number or one name: safe to drop beside anything without brackets. */
     private static final Pattern ATOM = Pattern.compile("[\\p{L}\\p{N}_.]+");
@@ -69,6 +91,8 @@ final class Reuse {
     private final Model model;
     private final TextField entry;
     private final Tooltip tips;
+    private final KronoGui krono;
+    private final Cues cues;
     private final List<Row> rows = new ArrayList<>();
 
     /** How far back Up has gone: an index into the tape, or -1 for the line being written. */
@@ -82,11 +106,13 @@ final class Reuse {
     private boolean numbered;
     private boolean numberedTyped;
 
-    Reuse(Gui gui, Model model, TextField entry, Tooltip tips) {
+    Reuse(Gui gui, Model model, TextField entry, Tooltip tips, KronoGui krono) {
         this.gui = gui;
         this.model = model;
         this.entry = entry;
         this.tips = tips;
+        this.krono = krono;
+        this.cues = new Cues((progress, done) -> krono.ramp(CUE, Ease.LINEAR, progress, done));
 
         // Claims are heard before the field's own keys, and the field is one line, so Up and Down are free.
         Node field = entry.node();
@@ -147,17 +173,69 @@ final class Reuse {
         gui.onClick(node, () -> {
             entry.replace(join(entry.text(), entry.text().length(), text));
             gui.focus(entry.node());
+            used(node);
         });
         gui.cursor(node, CursorShape.POINTER);
-        tips.attach(node, "Click to add this to the entry. Ctrl+number inserts at the caret.");
+        gui.onState(node, new Wash(node)::to);
+        // The click is shown rather than said; only the chord, which nothing on screen can show, is in words.
+        tips.attach(node, "Ctrl+number inserts at the caret.");
+    }
+
+    /** {@code from} has just gone into the entry: it pulses once, and the entry takes a sweep. */
+    private void used(Node from) {
+        Color accent = gui.theme().color(Role.ACCENT);
+        cues.play(from, Cue.ring(accent, 1));
+        cues.play(entry.node(), Cue.scanline(Color.withAlpha(accent, 0.5f)));
+    }
+
+    /**
+     * A reusable line's background, following the pointer: clear at rest, a light accent wash under it, a deeper
+     * one while pressed. Each change fades from wherever the wash is drawn now, so a pointer that crosses a line
+     * and comes back never makes it jump.
+     */
+    private final class Wash {
+
+        private final Node node;
+        private final Color accent = gui.theme().color(Role.ACCENT);
+        private Color drawn = Color.withAlpha(accent, 0f);
+        /** Which fade is the current one; a superseded fade's frames write nothing. */
+        private int epoch;
+
+        Wash(Node node) {
+            this.node = node;
+        }
+
+        void to(InteractionState state) {
+            Color target = Color.withAlpha(accent, switch (state) {
+                case NORMAL -> 0f;
+                case HOVER -> HOVER_ALPHA;
+                case PRESSED -> PRESS_ALPHA;
+            });
+            Color from;
+            int mine;
+            synchronized (this) {
+                from = drawn;
+                mine = ++epoch;
+            }
+            // Linear: a fade has nowhere to arrive at, and easing one reads as a delay and then a jump.
+            krono.ramp(FADE, Ease.LINEAR, p -> {
+                Color c = Colors.OKLAB.between(from, target, (float) p);
+                synchronized (this) {
+                    if (mine != epoch) return;
+                    drawn = c;
+                }
+                node.background(c);
+            }, () -> { });
+        }
     }
 
     // ---- Ctrl+number ----
 
     private synchronized void insert(int n, boolean typedOne) {
         if (n > rows.size()) return;
-        String text = rows.get(rows.size() - n).text(typedOne);
-        entry.insert(bracketed(entry.text(), text));
+        Row r = rows.get(rows.size() - n);
+        entry.insert(bracketed(entry.text(), r.text(typedOne)));
+        used(r.target(typedOne));
     }
 
     /** {@code line} with {@code text} put in at {@code at}, bracketed if it lands beside anything. */
