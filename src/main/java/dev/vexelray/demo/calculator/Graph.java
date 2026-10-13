@@ -123,6 +123,7 @@ record Graph(String name, List<Sample> samples, String refusal) {
                     case S -> p + q;
                     case Q -> q == 0 ? Double.NaN : quotient(pair, p, q);
                     case P -> p * q;
+                    case Z, E, B -> Double.NaN;
                 };
             }
             default -> Double.NaN;
