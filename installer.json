@@ -5,10 +5,11 @@
   "description": "A small calculator window onto cott-engine.",
   "version": "0.1.0",
 
-  "repo": "sibarum/calculator-vexel-demo",
+  "repo": "sibarum/vexelray-dist",
   "branch": "main",
-  "releasesRepo": "sibarum/calculator-vexel-demo",
-  "tagFormat": "v{version}",
+  "repoPath": "apps/calculator",
+  "releasesRepo": "sibarum/vexelray-dist",
+  "tagFormat": "calculator-v{version}",
 
   "windows": {
     "binaries": [
