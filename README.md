@@ -2,6 +2,8 @@
 
 A small calculator window onto cott-engine.
 
+**Install it** on Windows, with the other VexelRay applications, from [sibarum.github.io](https://sibarum.github.io/).
+
 A VexelRay desktop application. Generated from the `vexel-desktop` template, which is the reference
 implementation of this stack: every seam the framework offers is already wired in the tree you are
 reading.
