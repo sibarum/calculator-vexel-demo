@@ -55,7 +55,7 @@ final class Recipes {
      */
     @Provides
     Appearance look() {
-        return Appearance.of(Look.THEME, Length.em(Calculator.MIN_W_EM), Length.em(Calculator.MIN_H_EM));
+        return Appearance.of(Look.THEME, Length.rem(Calculator.MIN_W_EM), Length.rem(Calculator.MIN_H_EM));
     }
 
     /** The one authoritative state, built before the tree because every control is a view onto it. */
