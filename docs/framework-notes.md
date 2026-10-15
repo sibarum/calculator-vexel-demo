@@ -86,3 +86,31 @@ Fixed in three places upstream, so nothing here works around it:
 The component witness now opens and closes a remembered second window. See the framework's
 `docs/architecture.md`, under *the frame loop is the lifecycle*.
 
+## FN-5 · `IconButton`'s hover asks for a shadelet the default shader does not have 🔬
+
+The plot explorer's toolbar and the tape's pop-out button are `IconButton`s. The first hover over one logs
+`vexelray.diag - the modifier 'weight' — the application's canvas shader was not composed with it`. The theme's
+`IconEffects.STANDARD` thickens an icon under the pointer by `Effects.WEIGHT`, and the canvas shader every application
+gets from the framework is not composed with that modifier. Only `vexelray-gui-demo`'s `DemoShader` is. So the icon
+just doesn't thicken, which is cosmetic, but the warning appears in every application that uses an `IconButton`.
+
+Nothing is done about it here. What the framework could do: compose `WEIGHT` into the default shader, since a
+standard widget asks for it, or make `IconEffects.STILL` the default for a shader without it.
+
+## FN-6 · A tree whose only context menu is the application's own draws no menu 🔬
+
+`gui.onContextMenu(node, ...)` collects items, but a menu is only drawn once a `MenuPresenter` is installed, and the
+widgets install `ContextMenu` the first time one of them has a default menu, such as a text field's Copy and Paste.
+The plot explorer's tree has no text field. Its right-click menu was built on every click and never shown, and
+nothing reported it. `PlotExplorer` calls `ContextMenu.presentOn(gui)` itself.
+
+What the framework could do: install the presenter on the first `onContextMenu` call, or log once when a menu with
+items has no presenter.
+
+## FN-7 · Windows are declared before the tree, so a window per document is not possible yet 💡
+
+A plot explorer per popped-out plot would be the natural shape, but `Windows.named` refuses a declaration after
+`TREE`. So there is one explorer, and popping out a second plot replaces the first. An application that opens
+documents in windows (an image viewer, a second editor) needs windows made at run time. That could be a pool
+declared up front, or a `Windows.open(NamedWindow)` that claims at the next frame.
+

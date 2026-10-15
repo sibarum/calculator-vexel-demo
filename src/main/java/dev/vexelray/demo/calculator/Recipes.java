@@ -107,6 +107,19 @@ final class Recipes {
     }
 
     /**
+     * The plot explorer: a window a plot on the tape pops out into, to be panned, zoomed and read closely. Declared
+     * as the settings window is, and the tape's pop-out buttons open it.
+     */
+    @Provides
+    PlotExplorer plotExplorer(Windows windows, Model model, Ui ui) {
+        Window window = windows.named(PlotExplorer.DECLARED);
+        PlotExplorer explorer = new PlotExplorer(window, model);
+        zoomShortcuts(window.gui());
+        ui.onExplore(explorer::open);
+        return explorer;
+    }
+
+    /**
      * Ctrl+= / Ctrl+- / Ctrl+0, and the numpad's three, on every window's {@code Gui}: each has its own zoom.
      *
      * <p>An application decision, which is why it is here: which chord zooms, or whether zooming exists at all, is

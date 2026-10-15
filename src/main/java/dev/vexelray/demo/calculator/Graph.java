@@ -2,6 +2,8 @@ package dev.vexelray.demo.calculator;
 
 import sibarum.cott.algebra.Pair;
 import sibarum.cott.calculator.CalculatorException;
+import sibarum.cott.calculator.Mode;
+import sibarum.cott.calculator.Modeset;
 import sibarum.cott.calculator.Result;
 import sibarum.cott.notation.Expr;
 import sibarum.cott.notation.SyntaxException;
@@ -12,15 +14,21 @@ import java.math.MathContext;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
 /**
  * An expression in one free name, evaluated across a fixed range of it. Pure: no GUI, no window.
  *
- * <p>Every sample is an exact rational, {@code k/20} from {@link #FROM} to {@link #TO}, so the engine sees the
- * same kind of number a person would type, and {@code 0} is always one of them — which is where {@code 1/x}
- * shows what this calculator is about.
+ * <p>Every sample is an exact rational, a whole multiple of the {@link Grid}'s step — {@code k/20} from
+ * {@link #FROM} to {@link #TO} on the tape — so the engine sees the same kind of number a person would type, and
+ * {@code 0} is one of them wherever it is in range — which is where {@code 1/x} shows what this calculator is about.
+ *
+ * <p>A graph keeps what it was drawn from: the expression, already substituted, and the modes it was evaluated in.
+ * That is what lets the plot explorer sample it again over another range and get the same curve, whatever the
+ * settings have been changed to since.
  *
  * <p>Each sample is read on the real line. Where the value has a real number — a finite double, or a pair whose
  * algebra's meaning comes to one with no zero denominator and no imaginary part — that is its height. Where it has none, the sample is a
@@ -30,12 +38,67 @@ import java.util.function.Function;
  * @param name    the free name the curve is over
  * @param samples in increasing x; a sample the engine refused has a null {@code value}
  * @param refusal the engine's reason for the first sample it refused, or null if it refused none
+ * @param expr    the expression, with only {@code name} free
+ * @param modes   the mode of each modeset it was evaluated in
  */
-record Graph(String name, List<Sample> samples, String refusal) {
+record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<Modeset, Mode> modes) {
 
     static final int FROM = -10;
     static final int TO = 10;
     static final int PER_UNIT = 20;
+
+    /** The tape's samples: {@code k/20} from {@link #FROM} to {@link #TO}. */
+    static final Grid TAPE = new Grid(BigDecimal.valueOf(FROM), new BigDecimal("0.05"), (TO - FROM) * PER_UNIT + 1);
+
+    /**
+     * Where to sample: {@code count} points, {@code from + k·step}. Exact, so every position is a decimal the engine
+     * reads as a rational with no rounding.
+     */
+    record Grid(BigDecimal from, BigDecimal step, int count) {
+
+        /** The most samples one grid may ask for, however wide the range or fine the step. */
+        static final int MOST = 4000;
+
+        Grid {
+            if (step.signum() <= 0) throw new IllegalArgumentException("a grid steps forward");
+            count = Math.clamp(count, 1, MOST);
+        }
+
+        /**
+         * A grid covering {@code lo} to {@code hi} in steps of 1, 2 or 5 times a power of ten, as near as that
+         * comes to {@code target} samples, starting on a multiple of the step so that {@code 0} is on it when it is
+         * in range, and so that two grids of one step share their samples.
+         */
+        static Grid covering(double lo, double hi, int target) {
+            BigDecimal step = niceStep((hi - lo) / Math.max(1, target - 1));
+            BigDecimal first = BigDecimal.valueOf(lo).divide(step, 0, java.math.RoundingMode.FLOOR).multiply(step);
+            BigDecimal last = BigDecimal.valueOf(hi).divide(step, 0, java.math.RoundingMode.CEILING).multiply(step);
+            int count = last.subtract(first).divide(step, 0, java.math.RoundingMode.CEILING).intValueExact() + 1;
+            return new Grid(first, step, count);
+        }
+
+        /** 1, 2 or 5 times a power of ten: the one at or just above {@code raw}. */
+        static BigDecimal niceStep(double raw) {
+            if (!(raw > 0) || !Double.isFinite(raw)) raw = 1;
+            int exponent = (int) Math.floor(Math.log10(raw));
+            double m = raw / Math.pow(10, exponent);
+            int digit = m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10;
+            return BigDecimal.valueOf(digit).scaleByPowerOfTen(exponent).stripTrailingZeros();
+        }
+
+        /** The {@code k}th position. */
+        BigDecimal at(int k) {
+            return from.add(step.multiply(BigDecimal.valueOf(k)));
+        }
+
+        double lo() {
+            return from.doubleValue();
+        }
+
+        double hi() {
+            return at(count - 1).doubleValue();
+        }
+    }
 
     /**
      * One evaluation.
@@ -63,6 +126,7 @@ record Graph(String name, List<Sample> samples, String refusal) {
 
     Graph {
         samples = List.copyOf(samples);
+        modes = Map.copyOf(modes);
     }
 
     /** Whether the engine refused every sample, so there is nothing to draw and {@link #refusal} says why. */
@@ -70,27 +134,59 @@ record Graph(String name, List<Sample> samples, String refusal) {
         return samples.stream().allMatch(Sample::refused);
     }
 
+    /** The first sample's position: where the samples start. */
+    double from() {
+        return samples.getFirst().x();
+    }
+
+    /** The last sample's position. */
+    double to() {
+        return samples.getLast().x();
+    }
+
     /**
-     * Sample {@code expr} over {@code name}, which must be its only free name. {@code evaluate} answers a closed
-     * expression in the calculator's current modes, or throws the engine's refusal.
+     * Sample {@code expr} over {@code name}, which must be its only free name, across the tape's range.
+     * {@code evaluate} answers a closed expression in {@code modes}, or throws the engine's refusal.
      */
-    static Graph of(Expr expr, String name, Function<Expr, Result.Value> evaluate) {
-        List<Sample> out = new ArrayList<>();
+    static Graph of(Expr expr, String name, Map<Modeset, Mode> modes, Function<Expr, Result.Value> evaluate) {
+        return over(expr, name, modes, TAPE, evaluate, () -> false);
+    }
+
+    /**
+     * The same expression sampled again on {@code grid}, as {@code evaluate} answers it. {@code stale} is asked
+     * between samples, and once it says the answer is no longer wanted this stops and returns null.
+     */
+    Graph over(Grid grid, Function<Expr, Result.Value> evaluate, BooleanSupplier stale) {
+        return over(expr, name, modes, grid, evaluate, stale);
+    }
+
+    private static Graph over(Expr expr, String name, Map<Modeset, Mode> modes, Grid grid,
+                              Function<Expr, Result.Value> evaluate, BooleanSupplier stale) {
+        List<Sample> out = new ArrayList<>(grid.count());
         String refusal = null;
-        BigInteger per = BigInteger.valueOf(PER_UNIT);
-        for (int k = FROM * PER_UNIT; k <= TO * PER_UNIT; k++) {
-            BigInteger n = BigInteger.valueOf(k);
-            double x = (double) k / PER_UNIT;
-            String xText = new BigDecimal(n).divide(new BigDecimal(per)).stripTrailingZeros().toPlainString();
+        for (int k = 0; k < grid.count(); k++) {
+            if (stale.getAsBoolean()) return null;
+            BigDecimal at = grid.at(k);
+            double x = at.doubleValue();
+            String xText = at.signum() == 0 ? "0" : at.stripTrailingZeros().toPlainString();
             try {
-                Result.Value v = evaluate.apply(bind(expr, name, literal(n, per)));
+                Result.Value v = evaluate.apply(bind(expr, name, literal(at)));
                 out.add(new Sample(x, xText, v.shown(), real(v.value())));
             } catch (CalculatorException | SyntaxException | ArithmeticException refused) {
                 if (refusal == null) refusal = refused.getMessage();
                 out.add(new Sample(x, xText, null, Double.NaN));
             }
         }
-        return new Graph(name, out, refusal);
+        return new Graph(name, out, refusal, expr, modes);
+    }
+
+    /** A decimal as the rational it is: {@code 0.35} is {@code 7/20}. */
+    private static Expr literal(BigDecimal v) {
+        BigInteger n = v.unscaledValue();
+        BigInteger d = BigInteger.ONE;
+        if (v.scale() > 0) d = BigInteger.TEN.pow(v.scale());
+        else n = n.multiply(BigInteger.TEN.pow(-v.scale()));
+        return literal(n, d);
     }
 
     /** {@code n/d} in lowest terms, written as the parser would have built it. */

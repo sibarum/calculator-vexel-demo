@@ -110,16 +110,70 @@ class GraphTest {
 
     @Test
     void theFrameIgnoresThePoleButKeepsAParabola() {
-        double[] pole = Plot.range(plotted("1/x"));
+        double[] pole = Chart.range(plotted("1/x"));
         assertTrue(pole[1] < 10, "the samples beside 0 should run off the box, not set its height");
-        double[] parabola = Plot.range(plotted("x^2"));
+        double[] parabola = Chart.range(plotted("x^2"));
         assertTrue(parabola[1] >= 100, "the ends of a parabola are the curve, not outliers");
     }
 
     @Test
+    void aGridStepsInOnesTwosAndFivesAndKeepsZero() {
+        assertEquals(new java.math.BigDecimal("0.05"), Graph.Grid.niceStep(0.03));
+        assertEquals(new java.math.BigDecimal("0.1"), Graph.Grid.niceStep(0.1));
+        assertEquals(new java.math.BigDecimal("2E+2"), Graph.Grid.niceStep(150));
+        Graph.Grid g = Graph.Grid.covering(-1.03, 0.97, 21);
+        assertEquals(new java.math.BigDecimal("0.1"), g.step());
+        assertTrue(g.lo() <= -1.03 && g.hi() >= 0.97);
+        boolean zero = false;
+        for (int k = 0; k < g.count(); k++) zero |= g.at(k).signum() == 0;
+        assertTrue(zero, "0 is on any grid that reaches it");
+    }
+
+    @Test
+    void sampledAgainTheCurveIsTheSameWhereTheGridsMeet() {
+        Model model = new Model();
+        model.enter("x^2 - 1");
+        Graph tape = model.doc().tape().getLast().graph();
+        Graph fine = model.resample(tape, Graph.Grid.covering(2, 4, 201), () -> false);
+        assertEquals(8.0, at(fine, "3").y());
+        assertEquals(at(tape, "2.5").value(), at(fine, "2.5").value());
+        assertEquals(2.0, fine.from());
+    }
+
+    @Test
+    void aPlotIsSampledAgainInTheModesItWasDrawnIn() {
+        Model model = new Model();
+        model.enter("1/x");
+        Graph tape = model.doc().tape().getLast().graph();
+        model.set(sibarum.cott.algebra.NumberType.IEEE);
+        Graph again = model.resample(tape, Graph.Grid.covering(-1, 1, 21), () -> false);
+        assertEquals("1/0", at(again, "0").value(), "still the Integer reading, not IEEE's infinity");
+        assertEquals(sibarum.cott.algebra.NumberType.IEEE,
+                model.doc().mode(sibarum.cott.calculator.Modeset.NUMBER_TYPE), "and the setting is left as it was");
+        model.enter("1/0");
+        assertEquals("= ∞", model.doc().tape().getLast().answer());
+    }
+
+    @Test
+    void aStaleRequestStops() {
+        Model model = new Model();
+        model.enter("x");
+        Graph tape = model.doc().tape().getLast().graph();
+        assertNull(model.resample(tape, Graph.Grid.covering(0, 1, 11), () -> true));
+    }
+
+    @Test
+    void theNearestSampleIsFoundBySearch() {
+        Graph g = plotted("x");
+        assertEquals("0.05", PlotExplorer.nearest(g.samples(), 0.06).xText());
+        assertEquals("-10", PlotExplorer.nearest(g.samples(), -50).xText());
+        assertEquals("10", PlotExplorer.nearest(g.samples(), 50).xText());
+    }
+
+    @Test
     void ticksAreCleanDecimals() {
-        assertEquals(0.5, Plot.step(2.2));
-        assertEquals("0.3", Plot.decimal(0.1 + 0.2, 0.1));
-        assertEquals("-20", Plot.decimal(-20.000000001, 10));
+        assertEquals(0.5, Chart.step(2.2));
+        assertEquals("0.3", Chart.decimal(0.1 + 0.2, 0.1));
+        assertEquals("-20", Chart.decimal(-20.000000001, 10));
     }
 }

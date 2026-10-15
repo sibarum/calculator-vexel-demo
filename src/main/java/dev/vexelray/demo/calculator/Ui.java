@@ -25,6 +25,7 @@ import sibarum.tactroller.api.Modifier;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 
 /**
  * The tree: a tape of past lines filling the window, the reason the last line was refused under it, and an
@@ -45,6 +46,7 @@ final class Ui {
     private final Node error;
     private final Tooltip tips;
     private volatile Runnable settings = () -> { };
+    private volatile Consumer<Doc.Entry> explore = e -> { };
     private final List<Plot> plots = new CopyOnWriteArrayList<>();
     private final Reuse reuse;
     private int shown;
@@ -109,8 +111,11 @@ final class Ui {
         });
     }
 
-    /** One line of the tape: what was typed, dim; the answer; and its other readings, small. */
-    private Node line(Doc.Entry e) {
+    /**
+     * One line of the tape: what was typed, dim; the answer; its plot, if it has one; and its other readings, small.
+     * {@code index} is its place on the tape, from 0.
+     */
+    private Node line(Doc.Entry e, int index) {
         Node input = chip(gui.text(e.input()).font(Type.MONO).textSize(Type.LABEL)
                 .textColor(gui.theme().color(Role.DIM)));
         // Stretched, so long text wraps; the wash is therefore a row's width rather than the text's. Hugging the
@@ -128,7 +133,8 @@ final class Ui {
         }
         reuse.row(node, input, e.input(), value, value == null ? null : e.answer().substring(2));
         if (e.graph() != null) {
-            Plot plot = new Plot(gui, e.graph());
+            Plot plot = new Plot(gui, e.graph(), () -> explore.accept(e));
+            gui.landmark(Landmarks.explore(index + 1), plot.exploreButton());
             plots.add(plot);
             node.append(plot.node().padding(Length.ZERO, Type.WASH));
         }
@@ -151,7 +157,7 @@ final class Ui {
     /** Write everything derived from the document. */
     synchronized void show(Doc doc) {
         for (; shown < doc.tape().size(); shown++) {
-            tape.append(line(doc.tape().get(shown)));
+            tape.append(line(doc.tape().get(shown), shown));
         }
         error.text(doc.error());
     }
@@ -162,6 +168,14 @@ final class Ui {
      */
     void onSettings(Runnable action) {
         settings = action == null ? () -> { } : action;
+    }
+
+    /**
+     * What popping a plot out does, handed the line it is on: the plot explorer, which is a window, so it is handed in
+     * for the reason {@link #onSettings} gives.
+     */
+    void onExplore(Consumer<Doc.Entry> action) {
+        explore = action == null ? e -> { } : action;
     }
 
     private void openSettings() {

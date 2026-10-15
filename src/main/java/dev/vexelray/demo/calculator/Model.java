@@ -14,6 +14,7 @@ import sibarum.cott.notation.SyntaxException;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 
@@ -90,7 +91,7 @@ final class Model {
         if (result instanceof Result.Unevaluated u) {
             Set<String> free = Graph.free(u.expr());
             if (free.size() == 1) {
-                Graph graph = Graph.of(u.expr(), free.iterator().next(),
+                Graph graph = Graph.of(u.expr(), free.iterator().next(), modes(),
                         closed -> (Result.Value) calc.enter(Printer.print(closed)));
                 return graph.empty()
                         ? new Doc.Entry(line, u.text(), "nothing to plot: " + graph.refusal())
@@ -108,6 +109,35 @@ final class Model {
             return new Doc.Entry(line, "= " + v.shown(), readings.toString());
         }
         return new Doc.Entry(line, result.text(), "");
+    }
+
+    /**
+     * {@code graph} sampled again on {@code grid}, in the modes it was first drawn in rather than the ones in force
+     * now, so that a plot explored after the settings changed is still the curve on its line.
+     *
+     * <p>The lock is taken per sample rather than for the whole grid, because a grid can be thousands of samples
+     * and a line entered meanwhile should not wait for all of them; each sample puts the calculator back in its
+     * own modes before it lets go. Null once {@code stale} says the samples are no longer wanted.
+     */
+    Graph resample(Graph graph, Graph.Grid grid, BooleanSupplier stale) {
+        return graph.over(grid, closed -> {
+            synchronized (calc) {
+                Map<Modeset, Mode> now = modes();
+                graph.modes().values().forEach(calc::set);
+                try {
+                    return (Result.Value) calc.enter(Printer.print(closed));
+                } finally {
+                    now.values().forEach(calc::set);
+                }
+            }
+        }, stale);
+    }
+
+    /** The calculator's modes as they are. Called holding the lock. */
+    private Map<Modeset, Mode> modes() {
+        Map<Modeset, Mode> modes = new EnumMap<>(Modeset.class);
+        for (Modeset m : Modeset.values()) modes.put(m, calc.mode(m));
+        return modes;
     }
 
     /** React to every change, newest last; see the template's notes on {@code onCommitLatest}. */
