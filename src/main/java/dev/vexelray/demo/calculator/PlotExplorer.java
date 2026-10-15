@@ -18,7 +18,6 @@ import dev.vexelray.gui.draw.Picture;
 import dev.vexelray.gui.draw.Sketch;
 import dev.vexelray.gui.icons.Icon;
 import dev.vexelray.gui.widget.Button;
-import dev.vexelray.gui.widget.ContextMenu;
 import dev.vexelray.gui.widget.IconButton;
 import dev.vexelray.gui.widget.Segment;
 import dev.vexelray.gui.widget.StatusBar;
@@ -197,8 +196,6 @@ final class PlotExplorer implements AutoCloseable {
         gui.onResizeUi(c, this::laidOut);
         gui.onDrag(c, this::drag);
         gui.onKey(c, this::key);
-        // A tree's menus are drawn by whichever widget needs them first, and nothing else in this one has a menu.
-        ContextMenu.presentOn(gui);
         gui.onContextMenu(c, menu -> {
             boolean pinned;
             synchronized (this) {
