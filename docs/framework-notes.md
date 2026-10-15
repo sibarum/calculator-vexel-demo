@@ -50,7 +50,7 @@ The framework claims the window at `ATTACH`, so `settingsHost`, its `@MainThread
 `SettingsWindow` builds into the tree it is handed. See the framework's `docs/architecture.md`, *what the two-window
 witness found*.
 
-## FN-2 · `Popout` puts its second tree on the host's bus, which `Gui` forbids 🔬
+## FN-2 · `Popout` puts its second tree on the host's bus, which `Gui` forbids 🔬 (fixed upstream)
 
 `Gui(Atchung)`'s javadoc says never to share one bus between two `Gui`s, because the topics are static and each
 tree receives the other's mutations. `Popout` does `new Gui(host.bus())` anyway. The settings window copied that
@@ -58,8 +58,8 @@ line first, and the main window came up drawing the **settings tree** in place o
 was thrown, and the main window was simply wrong from the first frame.
 
 What was done here: the settings tree gets `new Gui(Atchung.create(), lanes.handlers(), lanes.offload())`, which
-gives it its own bus while still using the application's threads. `Popout` likely has the same defect whenever a
-panel is popped out. Separately, the framework could build the tree for a named window itself, since it knows
+gives it its own bus while still using the application's threads. `Popout` had the same defect whenever a
+panel was popped out, and now gives the popped-out tree a bus of its own (vexelray-gui `a93a661`). Separately, the framework could build the tree for a named window itself, since it knows
 the lanes, the appearance, and the rule. It does now (see FN-1), so the settings window no longer makes a `Gui` at
 all, and the line that could be copied wrong is gone from this application.
 
