@@ -1,6 +1,7 @@
 package dev.vexelray.demo.calculator;
 
 import sibarum.cott.algebra.Pair;
+import sibarum.cott.algebra.TractionAlgebra;
 import sibarum.cott.calculator.CalculatorException;
 import sibarum.cott.calculator.Mode;
 import sibarum.cott.calculator.Modeset;
@@ -34,6 +35,10 @@ import java.util.function.Function;
  * algebra's meaning comes to one with no zero denominator and no imaginary part — that is its height. Where it has none, the sample is a
  * {@linkplain Sample#marker() marker} carrying the engine's own text for the value ({@code ω}, {@code 0ω},
  * {@code ∞}, a point off the line), to be drawn as a label rather than as a gap or a spike.
+ *
+ * <p>A multiple of zero or of {@code ω} is read as its multiple, with its {@linkplain Order order} kept beside it:
+ * {@code Z(3, 1)} is {@code 0·3} and stands at 3, and {@code Q(3, 0)} and {@code Z(3, −1)} are {@code ω·3} and stand
+ * at 3 too, so {@code x/0} is a curve rather than a row of markers, told from the plain numbers by its colour.
  *
  * @param name    the free name the curve is over
  * @param samples in increasing x; a sample the engine refused has a null {@code value}
@@ -101,14 +106,27 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
     }
 
     /**
+     * The power of zero a reading is a multiple of: {@code 1·n}, {@code 0·n}, or {@code ω·n}, which is
+     * {@code 0^−1·n}. The {@code q} of a {@code Z(p, q)}.
+     */
+    enum Order {
+        ONE, ZERO, OMEGA
+    }
+
+    /**
      * One evaluation.
      *
      * @param x      the sample's position, as a number
      * @param xText  the same position written as a decimal, exactly
      * @param value  the engine's text for the answer, or null when it refused this one
-     * @param y      the real reading, or NaN when there is none
+     * @param y      the real reading, or NaN when there is none; for a multiple of zero or {@code ω}, the multiple
+     * @param order  what {@code y} is a multiple of
      */
-    record Sample(double x, String xText, String value, double y) {
+    record Sample(double x, String xText, String value, double y, Order order) {
+
+        Sample(double x, String xText, String value, double y) {
+            this(x, xText, value, y, Order.ONE);
+        }
 
         boolean refused() {
             return value == null;
@@ -171,7 +189,8 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
             String xText = at.signum() == 0 ? "0" : at.stripTrailingZeros().toPlainString();
             try {
                 Result.Value v = evaluate.apply(bind(expr, name, literal(at)));
-                out.add(new Sample(x, xText, v.shown(), real(v.value())));
+                Reading r = reading(v.value());
+                out.add(new Sample(x, xText, v.shown(), r.y(), r.order()));
             } catch (CalculatorException | SyntaxException | ArithmeticException refused) {
                 if (refusal == null) refusal = refused.getMessage();
                 out.add(new Sample(x, xText, null, Double.NaN));
@@ -198,6 +217,28 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
                 ? new Expr.Num(num)
                 : new Expr.Div(new Expr.Num(num), new Expr.Num(den));
         return n.signum() < 0 ? new Expr.Neg(magnitude) : magnitude;
+    }
+
+    private record Reading(double y, Order order) {
+    }
+
+    /**
+     * A value on the real line, with the power of zero it is a multiple of. {@code Z(p, q)} of order {@code q} = 0,
+     * 1 or −1 is {@code p} at that order, and {@code Q(p, 0)} is {@code ω·p}, except {@code Q(0, 0)}, which is a
+     * multiple of nothing. Anything else is its {@link #real} number at order one.
+     */
+    private static Reading reading(Object v) {
+        if (v instanceof Pair<?> pair && reading(pair.p()).order() == Order.ONE) {
+            double p = real(pair.p()), q = real(pair.q());
+            if (pair.algebra() == TractionAlgebra.Z) {
+                if (q == 0) return new Reading(p, Order.ONE);
+                if (q == 1) return new Reading(p, Order.ZERO);
+                if (q == -1) return new Reading(p, Order.OMEGA);
+            }
+            if (pair.algebra() == TractionAlgebra.Q && q == 0 && p != 0 && !Double.isNaN(p))
+                return new Reading(p, Order.OMEGA);
+        }
+        return new Reading(real(v), Order.ONE);
     }
 
     /**

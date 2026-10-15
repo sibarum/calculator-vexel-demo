@@ -3,6 +3,7 @@ package dev.vexelray.demo.calculator;
 import dev.vexelray.gui.core.style.Oklab;
 import dev.vexelray.gui.core.style.Palette;
 import dev.vexelray.gui.core.style.Relief;
+import dev.vexelray.gui.core.style.Role;
 import dev.vexelray.gui.core.style.Shading;
 import dev.vexelray.gui.core.style.Theme;
 
@@ -67,6 +68,14 @@ final class Look {
      * decisions to make against a real design rather than defaults to leave alone.
      */
     static final Theme THEME = Theme.of(PALETTE, Shading.ON_DARK, Relief.STANDARD, true, false);
+
+    // ---------------------------------------------------------------- roles of our own
+
+    /** A curve of multiples of zero, {@code 0·n}: the accent turned to green, so it sits beside the plain curve. */
+    static final Role ZERO_CURVE = p -> Oklab.polar(p.accent().l(), p.accent().chroma(), 150).toColor();
+
+    /** A curve of multiples of {@code ω}, {@code (1/0)·n}: the accent turned to amber. */
+    static final Role OMEGA_CURVE = p -> Oklab.polar(p.accent().l(), p.accent().chroma(), 70).toColor();
 
     private Look() {
     }

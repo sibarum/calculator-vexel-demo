@@ -102,7 +102,6 @@ final class Chart {
         Color grid = theme.color(Role.LINE);
         Color axis = theme.color(Role.EDGE);
         Color faint = theme.color(Role.FAINT);
-        Color curve = theme.color(Role.ACCENT);
         Color mark = theme.color(Role.INK);
 
         Sketch s = new Sketch().fill(0, 0, w, h, corner, well);
@@ -126,8 +125,17 @@ final class Chart {
         }
 
         if (style.places()) places(s, view, samples, w, h, text, well, mark);
-        curve(s, view, samples, style, w, h, curve);
+        curve(s, view, samples, style, w, h, theme);
         return s.picture();
+    }
+
+    /** The colour of a curve of multiples of {@code order}: the accent for plain numbers. */
+    static Color color(Graph.Order order, Theme theme) {
+        return theme.color(switch (order) {
+            case ONE -> Role.ACCENT;
+            case ZERO -> Look.ZERO_CURVE;
+            case OMEGA -> Look.OMEGA_CURVE;
+        });
     }
 
     /** Places with no real number: a dashed line, a dot on the top edge, and the value's own name. */
@@ -154,34 +162,37 @@ final class Chart {
     }
 
     /**
-     * The curve: a run of segments between neighbours both on it, broken where one jumps clean across the box (a
-     * pole between two samples); a sample with no neighbour on the curve is a dot.
+     * The curve: a run of segments between neighbours both on it and multiples of the same power of zero, in that
+     * order's {@link #color}, broken where one jumps clean across the box (a pole between two samples); a sample
+     * with no such neighbour is a dot.
      */
     private static void curve(Sketch s, View view, List<Graph.Sample> all, Style style, double w, double h,
-                              Color color) {
+                              Theme theme) {
         int n = all.size();
         double[] xs = new double[n];
         double[] ys = new double[n];
         int run = 0;
+        Graph.Order order = Graph.Order.ONE;
         for (int i = 0; i < n; i++) {
             Graph.Sample p = all.get(i);
-            boolean joins = run > 0 && p.onCurve() && !across(view, all.get(i - 1).y(), p.y());
+            boolean joins = run > 0 && p.onCurve() && p.order() == order && !across(view, all.get(i - 1).y(), p.y());
             if (!joins) {
-                flush(s, xs, ys, run, color);
+                flush(s, xs, ys, run, color(order, theme));
                 run = 0;
             }
             if (p.onCurve()) {
                 xs[run] = view.px(p.x(), w);
                 ys[run] = py(view, p.y(), h);
+                order = p.order();
                 run++;
             }
         }
-        flush(s, xs, ys, run, color);
+        flush(s, xs, ys, run, color(order, theme));
 
         if (style.points()) {
             for (Graph.Sample p : all) {
                 if (p.onCurve() && view.showsX(p.x()) && p.y() >= view.yLo() && p.y() <= view.yHi()) {
-                    s.circle(view.px(p.x(), w), view.py(p.y(), h), 2, color);
+                    s.circle(view.px(p.x(), w), view.py(p.y(), h), 2, color(p.order(), theme));
                 }
             }
         }

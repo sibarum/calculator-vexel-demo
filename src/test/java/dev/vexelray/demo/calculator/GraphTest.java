@@ -35,11 +35,49 @@ class GraphTest {
 
     @Test
     void whereThereIsNoRealNumberTheValueIsMarked() {
-        Graph g = plotted("1/x");
+        Graph g = plotted("x/x");
         Graph.Sample zero = at(g, "0");
         assertTrue(zero.marker());
+        assertEquals("0/0", zero.value());
+        assertEquals(1.0, at(g, "2").y());
+    }
+
+    /** {@code 1/0} is {@code ω·1}: on the curve at 1, as a multiple of ω, where the rest are plain numbers. */
+    @Test
+    void aMultipleOfOmegaStandsAtItsMultiple() {
+        Graph g = plotted("1/x");
+        Graph.Sample zero = at(g, "0");
+        assertTrue(zero.onCurve());
         assertEquals("1/0", zero.value());
+        assertEquals(1.0, zero.y());
+        assertEquals(Graph.Order.OMEGA, zero.order());
         assertEquals(0.5, at(g, "2").y());
+        assertEquals(Graph.Order.ONE, at(g, "2").order());
+    }
+
+    @Test
+    void xOverZeroIsACurveOfMultiplesOfOmega() {
+        Graph g = plotted("x/0");
+        assertEquals(3.0, at(g, "3").y());
+        // The wheel's (p/q)/0 is p/(q·0) = p/0: a fraction keeps only its numerator.
+        assertEquals("-1/0", at(g, "-0.5").value());
+        assertEquals(-1.0, at(g, "-0.5").y());
+        assertTrue(at(g, "0").marker(), "0/0 is a multiple of nothing");
+        assertTrue(g.samples().stream().filter(Graph.Sample::onCurve)
+                .allMatch(s -> s.order() == Graph.Order.OMEGA));
+    }
+
+    @Test
+    void zeroAndOmegaWrittenInZAreCurvesOfTheirOrder() {
+        Graph zero = plotted("Z(1, 1)x");
+        assertEquals(3.0, at(zero, "3").y());
+        assertEquals(0.5, at(zero, "0.5").y());
+        assertEquals(Graph.Order.ZERO, at(zero, "3").order());
+        Graph omega = plotted("x/Z(1, 1)");
+        assertEquals(-2.0, at(omega, "-2").y());
+        assertEquals(Graph.Order.OMEGA, at(omega, "-2").order());
+        Graph square = plotted("Z(1, 2)x");
+        assertTrue(at(square, "3").marker(), "0^2·n has no colour of its own yet");
     }
 
     @Test

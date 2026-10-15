@@ -49,7 +49,9 @@ final class Plot {
         long markers = graph.samples().stream().filter(Graph.Sample::marker).count();
         this.idle = graph.name() + " from " + Graph.FROM + " to " + Graph.TO
                 + (markers == 0 ? "" : "  ·  " + markers + (markers == 1 ? " place" : " places")
-                + " with no real number, marked");
+                + " with no real number, marked")
+                + (has(graph, Graph.Order.ZERO) ? "  ·  0·n in green" : "")
+                + (has(graph, Graph.Order.OMEGA) ? "  ·  ω·n in amber" : "");
 
         figure = gui.box().width(Length.FILL).height(HEIGHT).corner(Type.CORNER).textSize(Type.SMALL);
         readout = gui.text(idle).width(Length.grow(1f)).font(Type.MONO).textSize(Type.SMALL)
@@ -69,6 +71,11 @@ final class Plot {
 
     Node node() {
         return node;
+    }
+
+    /** Whether any sample on the curve is a multiple of {@code order}. */
+    private static boolean has(Graph graph, Graph.Order order) {
+        return graph.samples().stream().anyMatch(p -> p.onCurve() && p.order() == order);
     }
 
     /** The pop-out button, for a landmark. */
