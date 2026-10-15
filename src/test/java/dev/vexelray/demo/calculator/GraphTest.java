@@ -38,7 +38,7 @@ class GraphTest {
         Graph g = plotted("1/x");
         Graph.Sample zero = at(g, "0");
         assertTrue(zero.marker());
-        assertEquals("Q(1, 0)", zero.value());
+        assertEquals("1/0", zero.value());
         assertEquals(0.5, at(g, "2").y());
     }
 

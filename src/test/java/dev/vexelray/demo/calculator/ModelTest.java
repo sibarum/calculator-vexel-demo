@@ -22,14 +22,23 @@ class ModelTest {
         assertTrue(model.enter("1/0"));
         Doc.Entry e = model.doc().tape().getFirst();
         assertEquals("1/0", e.input());
-        assertEquals("= Q(1, 0)", e.answer());
+        assertEquals("= 1/0", e.answer());
+    }
+
+    @Test
+    void anAnswerIsWrittenTheWayItsLineWas() {
+        Model model = new Model();
+        assertTrue(model.enter("1/2 + (4 + 3i)"));
+        assertTrue(model.enter("Q(1, 2) + C(3, 4)"));
+        assertEquals("= 9/2 + 3i", model.doc().tape().get(0).answer());
+        assertEquals("= C(3, Q(9, 2))", model.doc().tape().get(1).answer());
     }
 
     @Test
     void escapesAreExpanded() {
         Model model = new Model();
         assertTrue(model.enter("\\o"));
-        assertEquals("= Q(1, 0)", model.doc().tape().getFirst().answer());
+        assertEquals("= 1/0", model.doc().tape().getFirst().answer());
     }
 
     @Test

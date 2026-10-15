@@ -105,7 +105,7 @@ final class Model {
                 if (!readings.isEmpty()) readings.append("    ");
                 readings.append(name).append(' ').append(text);
             });
-            return new Doc.Entry(line, "= " + v.text(), readings.toString());
+            return new Doc.Entry(line, "= " + v.shown(), readings.toString());
         }
         return new Doc.Entry(line, result.text(), "");
     }

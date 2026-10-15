@@ -84,7 +84,7 @@ record Graph(String name, List<Sample> samples, String refusal) {
             String xText = new BigDecimal(n).divide(new BigDecimal(per)).stripTrailingZeros().toPlainString();
             try {
                 Result.Value v = evaluate.apply(bind(expr, name, literal(n, per)));
-                out.add(new Sample(x, xText, v.text(), real(v.value())));
+                out.add(new Sample(x, xText, v.shown(), real(v.value())));
             } catch (CalculatorException | SyntaxException | ArithmeticException refused) {
                 if (refusal == null) refusal = refused.getMessage();
                 out.add(new Sample(x, xText, null, Double.NaN));
