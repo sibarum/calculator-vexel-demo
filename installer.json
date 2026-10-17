@@ -19,7 +19,8 @@
         "icon": "src/main/rc/calculator.ico",
         "addToPath": true,
         "shortcuts": { "desktop": true, "startMenu": true, "label": "Calculator" }
-      }
+      },
+      { "name": "notices", "source": "THIRD-PARTY-NOTICES.txt" }
     ]
   }
 }
