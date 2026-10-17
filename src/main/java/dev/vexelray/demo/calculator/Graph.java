@@ -17,6 +17,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
@@ -223,22 +224,81 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
     }
 
     /**
-     * A value on the real line, with the power of zero it is a multiple of. {@code Z(p, q)} of order {@code q} = 0,
-     * 1 or −1 is {@code p} at that order, and {@code Q(p, 0)} is {@code ω·p}, except {@code Q(0, 0)}, which is a
-     * multiple of nothing. Anything else is its {@link #real} number at order one.
+     * A value on the real line, with the power of zero it is a multiple of: its {@linkplain #series series} in
+     * {@code 0}, read at its leading order, the one that outweighs the rest. {@code (0 + 3)^2 = 9 + 6·0 + 0^2} stands at
+     * 9, {@code ω + 1} at {@code ω·1}, and {@code (−1/2)/0 = Q(−1, Z(2, 1))} at {@code ω·(−1/2)}. A leading order other
+     * than 0, 1 or −1 has no colour yet, and is marked, as a value with no series is. Every coefficient {@code 0} is
+     * the number {@code 0}.
      */
     private static Reading reading(Object v) {
-        if (v instanceof Pair<?> pair && reading(pair.p()).order() == Order.ONE) {
-            double p = real(pair.p()), q = real(pair.q());
-            if (pair.algebra() == TractionAlgebra.Z) {
-                if (q == 0) return new Reading(p, Order.ONE);
-                if (q == 1) return new Reading(p, Order.ZERO);
-                if (q == -1) return new Reading(p, Order.OMEGA);
-            }
-            if (pair.algebra() == TractionAlgebra.Q && q == 0 && p != 0 && !Double.isNaN(p))
-                return new Reading(p, Order.OMEGA);
+        TreeMap<Integer, Double> s = series(v);
+        if (s == null) return new Reading(Double.NaN, Order.ONE);
+        s.values().removeIf(c -> c == 0);
+        if (s.isEmpty()) return new Reading(0, Order.ONE);
+        Map.Entry<Integer, Double> lead = s.firstEntry();
+        return switch (lead.getKey()) {
+            case 0 -> new Reading(lead.getValue(), Order.ONE);
+            case 1 -> new Reading(lead.getValue(), Order.ZERO);
+            case -1 -> new Reading(lead.getValue(), Order.OMEGA);
+            default -> new Reading(Double.NaN, Order.ONE);
+        };
+    }
+
+    /**
+     * A value as a sum of real multiples of powers of {@code 0}, order to coefficient, or null where it is not one. A
+     * number is of order 0; {@code Z(p, q)} is {@code p} moved up {@code q} orders; {@code S}, {@code D} and {@code P}
+     * are the sum, difference and product; {@code C} is its real part where the imaginary part vanishes. A {@code Q}
+     * divides by a denominator of one order, and by the number {@code 0} as by {@code Z(1, 1)}, so {@code Q(p, 0)} is
+     * {@code ω·p}, but {@code Q(0, 0)} is none. Over a denominator of several orders it keeps only the leading term.
+     */
+    private static TreeMap<Integer, Double> series(Object v) {
+        if (!(v instanceof Pair<?> pair)) {
+            double x = real(v);
+            return Double.isNaN(x) ? null : new TreeMap<>(Map.of(0, x));
         }
-        return new Reading(real(v), Order.ONE);
+        TreeMap<Integer, Double> p = series(pair.p()), q = series(pair.q());
+        if (p == null || q == null) return null;
+        return switch (pair.algebra()) {
+            case Z -> {
+                double order = real(pair.q());
+                if (order != Math.rint(order) || Math.abs(order) > 1 << 16) yield null;
+                yield shifted(p, (int) order, 1);
+            }
+            case S -> plus(p, q, 1);
+            case D -> plus(q, p, -1);
+            case P -> times(p, q);
+            case C -> zero(p) ? q : null;
+            case Q -> {
+                q.values().removeIf(c -> c == 0);
+                if (q.isEmpty()) yield zero(p) ? null : shifted(p, -1, 1);
+                p.values().removeIf(c -> c == 0);
+                if (q.size() > 1 && !p.isEmpty()) p = new TreeMap<>(Map.of(p.firstKey(), p.firstEntry().getValue()));
+                yield shifted(p, -q.firstKey(), q.firstEntry().getValue());
+            }
+            case E, B -> null;
+        };
+    }
+
+    private static boolean zero(Map<Integer, Double> s) {
+        return s.values().stream().allMatch(c -> c == 0);
+    }
+
+    private static TreeMap<Integer, Double> shifted(Map<Integer, Double> s, int by, double divisor) {
+        TreeMap<Integer, Double> out = new TreeMap<>();
+        s.forEach((order, c) -> out.put(order + by, c / divisor));
+        return out;
+    }
+
+    private static TreeMap<Integer, Double> plus(Map<Integer, Double> a, Map<Integer, Double> b, int sign) {
+        TreeMap<Integer, Double> out = new TreeMap<>(a);
+        b.forEach((order, c) -> out.merge(order, sign * c, Double::sum));
+        return out;
+    }
+
+    private static TreeMap<Integer, Double> times(Map<Integer, Double> a, Map<Integer, Double> b) {
+        TreeMap<Integer, Double> out = new TreeMap<>();
+        a.forEach((m, c) -> b.forEach((n, d) -> out.merge(m + n, c * d, Double::sum)));
+        return out;
     }
 
     /**

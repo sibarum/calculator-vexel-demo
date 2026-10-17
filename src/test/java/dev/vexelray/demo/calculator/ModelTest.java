@@ -22,7 +22,7 @@ class ModelTest {
         assertTrue(model.enter("1/0"));
         Doc.Entry e = model.doc().tape().getFirst();
         assertEquals("1/0", e.input());
-        assertEquals("= 1/0", e.answer());
+        assertEquals("= Z(1/1, -1)", e.answer());
     }
 
     @Test
@@ -38,7 +38,7 @@ class ModelTest {
     void escapesAreExpanded() {
         Model model = new Model();
         assertTrue(model.enter("\\o"));
-        assertEquals("= 1/0", model.doc().tape().getFirst().answer());
+        assertEquals("= Z(1, -1)", model.doc().tape().getFirst().answer());
     }
 
     @Test
