@@ -2,6 +2,7 @@ package dev.vexelray.demo.calculator;
 
 import sibarum.atchung.Committer;
 import sibarum.atchung.State;
+import sibarum.cott.algebra.Simplifier;
 import sibarum.cott.calculator.Calculator;
 import sibarum.cott.calculator.CalculatorException;
 import sibarum.cott.calculator.Escapes;
@@ -106,7 +107,10 @@ final class Model {
                 if (!readings.isEmpty()) readings.append("    ");
                 readings.append(name).append(' ').append(text);
             });
-            return new Doc.Entry(line, "= " + v.shown(), readings.toString(), null, v.value(), v.constructed());
+            // The tape writes the value simplified, as a series in 0, unless the line wrote a constructor.
+            Object written = v.constructed() ? v.value()
+                    : Simplifier.simplify(v.value(), calc.cancellation()).orElse(v.value());
+            return new Doc.Entry(line, "= " + v.shown(), readings.toString(), null, written, v.constructed());
         }
         return new Doc.Entry(line, result.text(), "");
     }

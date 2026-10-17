@@ -1,6 +1,8 @@
 package dev.vexelray.demo.calculator;
 
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 import sibarum.cott.algebra.NumberType;
 import sibarum.cott.calculator.Limits;
 import sibarum.cott.calculator.Mode;
@@ -15,6 +17,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The state model over cott-engine. No GUI, no window, no device. */
 class ModelTest {
+
+    /** The tape writes a value simplified: like terms combined and quotients reduced, unless the line wrote a constructor. */
+    @Test
+    void theTapeWritesTheSimplifiedValue() {
+        Model model = new Model();
+        for (String line : List.of("(2+0+1/0)^2", "6/3", "Q(6, 3)")) model.enter(line);
+        List<Doc.Entry> tape = model.doc().tape();
+        assertEquals("ω^{2} + 4·ω + 6 + 4·0 + 0^{2}", written(tape.get(0)));
+        assertEquals("2", written(tape.get(1)));
+        assertEquals("Q(6, 3)", written(tape.get(2)));
+    }
+
+    private static String written(Doc.Entry e) {
+        return Expressions.of(e.value(), e.constructed(), Expressions.TEXT);
+    }
 
     @Test
     void aLineGoesOnTheTapeWithItsAnswer() {
