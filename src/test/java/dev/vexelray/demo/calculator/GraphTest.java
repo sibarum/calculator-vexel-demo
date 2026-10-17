@@ -88,6 +88,17 @@ class GraphTest {
                 .allMatch(s -> s.order() == Graph.Order.OMEGA));
     }
 
+    /** {@code ω·0} is {@code 0} at any order, so a zero of an amber curve is on it rather than breaking it. */
+    @Test
+    void aZeroTakesTheOrderOfTheCurveItIsOn() {
+        Graph g = plotted("(2x+3)(5x+7)/(0x)");
+        for (String x : List.of("-1.5", "-1.4")) {
+            assertEquals(0.0, at(g, x).y());
+            assertEquals(Graph.Order.OMEGA, at(g, x).order(), x);
+        }
+        assertEquals(Graph.Order.ONE, at(plotted("x - x"), "2").order(), "with no curve of an order, it is one");
+    }
+
     @Test
     void zeroAndOmegaWrittenInZAreCurvesOfTheirOrder() {
         Graph zero = plotted("Z(1, 1)x");

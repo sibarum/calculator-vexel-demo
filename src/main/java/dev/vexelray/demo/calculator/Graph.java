@@ -197,7 +197,34 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
                 out.add(new Sample(x, xText, null, Double.NaN));
             }
         }
-        return new Graph(name, out, refusal, expr, modes);
+        return new Graph(name, orderless(out), refusal, expr, modes);
+    }
+
+    /**
+     * Each {@code 0} with no order of its own given the order of the curve it lies on: the nearest sample before it on
+     * the curve with one, or else the nearest after it, or else order one. So the zeros of {@code ω·(x + 1)} are on
+     * the amber curve rather than breaking it.
+     */
+    private static List<Sample> orderless(List<Sample> samples) {
+        List<Sample> out = new ArrayList<>(samples);
+        for (int k = 0; k < out.size(); k++) {
+            Sample s = out.get(k);
+            if (s.order() != null) continue;
+            Order order = neighbour(out, k, -1);
+            if (order == null) order = neighbour(out, k, 1);
+            out.set(k, new Sample(s.x(), s.xText(), s.value(), s.y(), order == null ? Order.ONE : order));
+        }
+        return out;
+    }
+
+    /** The order of the nearest sample on the curve with one, stepping from {@code k} by {@code step}. */
+    private static Order neighbour(List<Sample> samples, int k, int step) {
+        for (int i = k + step; i >= 0 && i < samples.size(); i += step) {
+            Sample s = samples.get(i);
+            if (!s.onCurve()) return null;
+            if (s.order() != null) return s.order();
+        }
+        return null;
     }
 
     /** A decimal as the rational it is: {@code 0.35} is {@code 7/20}. */
@@ -227,14 +254,14 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
      * A value on the real line, with the power of zero it is a multiple of: its {@linkplain #series series} in
      * {@code 0}, read at its leading order, the one that outweighs the rest. {@code (0 + 3)^2 = 9 + 6·0 + 0^2} stands at
      * 9, {@code ω + 1} at {@code ω·1}, and {@code (−1/2)/0 = Q(−1, Z(2, 1))} at {@code ω·(−1/2)}. A leading order other
-     * than 0, 1 or −1 has no colour yet, and is marked, as a value with no series is. Every coefficient {@code 0} is
-     * the number {@code 0}.
+     * than 0, 1 or −1 has no colour yet, and is marked, as a value with no series is. A value whose every coefficient
+     * is {@code 0} is {@code 0} at any order, so it has none of its own (a null order), and takes its neighbours'.
      */
     private static Reading reading(Object v) {
         TreeMap<Integer, Double> s = series(v);
         if (s == null) return new Reading(Double.NaN, Order.ONE);
         s.values().removeIf(c -> c == 0);
-        if (s.isEmpty()) return new Reading(0, Order.ONE);
+        if (s.isEmpty()) return new Reading(0, null);
         Map.Entry<Integer, Double> lead = s.firstEntry();
         return switch (lead.getKey()) {
             case 0 -> new Reading(lead.getValue(), Order.ONE);
