@@ -21,8 +21,14 @@ record Doc(List<Entry> tape, Map<Modeset, Mode> modes, String error) {
     /**
      * One line of the tape: what was typed, what it answered, and the answer's other readings — and, when it left
      * exactly one name free, the curve over that name, as it was when the line was entered. Null otherwise.
+     * {@code value} is the engine's value when the line answered one, null otherwise, and {@code constructed} whether
+     * its line wrote a constructor, so the tape can typeset it in the same notation as {@code answer}.
      */
-    record Entry(String input, String answer, String readings, Graph graph) {
+    record Entry(String input, String answer, String readings, Graph graph, Object value, boolean constructed) {
+
+        Entry(String input, String answer, String readings, Graph graph) {
+            this(input, answer, readings, graph, null, false);
+        }
 
         Entry(String input, String answer, String readings) {
             this(input, answer, readings, null);

@@ -18,6 +18,13 @@ import dev.vexelray.gui.krono.KronoGui;
 import dev.vexelray.gui.widget.TextField;
 import dev.vexelray.gui.widget.TitleBar;
 import dev.vexelray.gui.widget.Tooltip;
+import dev.vexelray.gui.core.text.TextFaces;
+import dev.vexelray.gui.typeset.Box;
+import dev.vexelray.gui.typeset.FaceKeys;
+import dev.vexelray.gui.typeset.Profile;
+import dev.vexelray.gui.typeset.Recipes;
+import dev.vexelray.gui.typeset.Typeset;
+import dev.vexelray.gui.typeset.TypesetBlock;
 import dev.vexelray.gui.core.input.InputTopics;
 import sibarum.tactroller.api.InputEvent;
 import sibarum.tactroller.api.Key;
@@ -51,8 +58,14 @@ final class Ui {
     private final Reuse reuse;
     private int shown;
 
+    // The math typesetter a tape answer is written in, or null where the atlas it measures with is missing; then the
+    // answer is its text, as before.
+    private final Profile math = Profile.math();
+    private final Typeset typeset;
+
     Ui(Gui gui, Model model, TitleBar titleBar, KronoGui krono) {
         this.gui = gui;
+        this.typeset = typesetter(math);
 
         tape = gui.column()
                 .width(Length.FILL).height(Length.grow(1f))
@@ -125,8 +138,8 @@ final class Ui {
         // A plotted line's answer is the expression back again; worth showing only when substitution changed it.
         boolean echo = e.graph() != null && e.answer().replace(" ", "").equals(e.input().replace(" ", ""));
         if (!echo) {
-            Node answer = chip(gui.text(e.answer()).font(Type.MONO).textSize(Type.HEADING)
-                    .textColor(gui.theme().color(Role.INK)));
+            Node answer = chip(e.value() != null && typeset != null ? typeset(e) : gui.text(e.answer())
+                    .font(Type.MONO).textSize(Type.HEADING).textColor(gui.theme().color(Role.INK)));
             node.append(answer);
             // A value reads "= 1/3"; anything else (a refusal, an expression left standing) is not a value to reuse.
             if (e.answer().startsWith("= ")) value = answer;
@@ -150,6 +163,29 @@ final class Ui {
      * input and answer, reusable or not, so the tape's rhythm does not depend on which lines are; the tape's
      * {@link Type#TAPE_EDGE} gives the sideways room back, so the text itself sits where it always did.
      */
+    /**
+     * A value's answer typeset as an expression, {@code = 6·0 + 9 + 0²}, at the size the answer's text was. In a row
+     * of its own, since the block's children float against its box and a chip's padding belongs outside it.
+     */
+    private Node typeset(Doc.Entry e) {
+        Box answer = Box.row(Recipes.relation("="), Expressions.of(e.value(), e.constructed(), Expressions.boxes(math)))
+                .withSize(ANSWER_SIZE);
+        return gui.row().width(Length.FILL).height(Length.AUTO).alignItems(AlignItems.CENTER)
+                .children(new TypesetBlock(gui, typeset, answer).node());
+    }
+
+    /** A tape answer's size against the root em the typesetter solves at: {@link Type#HEADING}'s. */
+    private static final double ANSWER_SIZE = 1.125;
+
+    /** The typesetter, or null where it cannot measure: the answers are then their text. */
+    private static Typeset typesetter(Profile math) {
+        try {
+            return new Typeset(TextFaces.standard(), math, FaceKeys.single());
+        } catch (RuntimeException noAtlas) {
+            return null;
+        }
+    }
+
     private static Node chip(Node text) {
         return text.padding(Type.WASH_Y, Type.WASH).corner(Type.CORNER);
     }

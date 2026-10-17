@@ -75,6 +75,12 @@
             <artifactId>vexelray-gui-widget</artifactId>
             <version>${vexelray-gui.version}</version>
         </dependency>
+        <!-- Math layout: a tape answer is typeset as an expression, fractions stacked and powers raised. -->
+        <dependency>
+            <groupId>dev.vexelray.gui</groupId>
+            <artifactId>vexelray-gui-typeset</artifactId>
+            <version>${vexelray-gui.version}</version>
+        </dependency>
         <!-- The clock. Motion enters at the application edge and nowhere else: -widget declares seams shaped
              out of JDK types and this module satisfies them, so a widget animates without naming Kronometer. -->
         <dependency>
