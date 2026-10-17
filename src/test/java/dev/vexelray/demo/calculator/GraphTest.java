@@ -112,6 +112,20 @@ class GraphTest {
                 .allMatch(s -> s.order().equals(Graph.Order.OMEGA)));
     }
 
+    /** Where a later curve stands on an earlier one it is dashed: {@code ω·6x} on {@code 0·6x}, {@code ω²} on {@code 0²}. */
+    @Test
+    void aCurveOnAnEarlierOneIsDashed() {
+        List<Graph.Curve> curves = Graph.curves(plotted("(3x+0+1/0)^2").samples());
+        int n = curves.getFirst().samples().size();
+        for (int k = 0; k < curves.size(); k++) {
+            boolean[] dashed = Chart.coinciding(curves, k);
+            int count = 0;
+            for (boolean d : dashed) if (d) count++;
+            int power = curves.get(k).order().power();
+            assertEquals(power < 0 ? n : 0, count, curves.get(k).order().multiple());
+        }
+    }
+
     /** {@code (2x + 3)(5x + 7)(x + 0)} is a cubic plus {@code 0} times a quadratic: two curves, one at each order. */
     @Test
     void eachOrderIsACurveOfItsOwn() {

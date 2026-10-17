@@ -126,8 +126,30 @@ final class Chart {
         }
 
         if (style.places()) places(s, view, samples, w, h, text, well, mark);
-        for (Graph.Curve c : Graph.curves(samples)) curve(s, view, c.samples(), style, w, h, color(c.order(), theme));
+        List<Graph.Curve> curves = Graph.curves(samples);
+        for (int k = 0; k < curves.size(); k++) {
+            Graph.Curve c = curves.get(k);
+            curve(s, view, c.samples(), coinciding(curves, k), style, w, h, color(c.order(), theme));
+        }
         return s.picture();
+    }
+
+    /**
+     * For each sample, whether curve {@code k} stands where an earlier curve does, so that drawn solid it would hide
+     * that one: {@code (3x + 0 + ω)^2} has {@code 6x} at both {@code 0} and {@code ω}.
+     */
+    static boolean[] coinciding(List<Graph.Curve> curves, int k) {
+        List<Graph.Sample> mine = curves.get(k).samples();
+        boolean[] out = new boolean[mine.size()];
+        for (int i = 0; i < mine.size(); i++) {
+            Graph.Sample p = mine.get(i);
+            if (!p.onCurve()) continue;
+            for (int j = 0; j < k && !out[i]; j++) {
+                Graph.Sample q = curves.get(j).samples().get(i);
+                out[i] = q.onCurve() && Math.abs(q.y() - p.y()) <= 1e-9 * Math.max(1, Math.abs(p.y()));
+            }
+        }
+        return out;
     }
 
     /** The colour of a curve of multiples of {@code order}: the accent for plain numbers. */
@@ -161,28 +183,42 @@ final class Chart {
     /**
      * One {@linkplain Graph#curves curve}, in its order's {@link #color}: a run of segments between neighbours both on
      * it, broken where one jumps clean across the box (a pole between two samples); a sample with no such neighbour
-     * is a dot.
+     * is a dot. A segment between two samples both {@code coinciding} with an earlier curve is dashed, so that curve's
+     * colour shows through the gaps.
      */
-    private static void curve(Sketch s, View view, List<Graph.Sample> all, Style style, double w, double h,
-                              Color color) {
+    private static void curve(Sketch s, View view, List<Graph.Sample> all, boolean[] coinciding, Style style,
+                              double w, double h, Color color) {
         int n = all.size();
         double[] xs = new double[n];
         double[] ys = new double[n];
         int run = 0;
+        boolean linked = false;   // whether the run's first point ends a dashed segment, so it is no lone dot
+        double phase = 0;
         for (int i = 0; i < n; i++) {
             Graph.Sample p = all.get(i);
             boolean joins = run > 0 && p.onCurve() && !across(view, all.get(i - 1).y(), p.y());
             if (!joins) {
-                flush(s, xs, ys, run, color);
+                flush(s, xs, ys, run, linked, color);
                 run = 0;
+                linked = false;
+                phase = 0;
             }
-            if (p.onCurve()) {
-                xs[run] = view.px(p.x(), w);
-                ys[run] = py(view, p.y(), h);
-                run++;
+            if (!p.onCurve()) continue;
+            double x = view.px(p.x(), w);
+            double y = py(view, p.y(), h);
+            if (joins && coinciding[i - 1] && coinciding[i]) {
+                phase = dashed(s, xs[run - 1], ys[run - 1], x, y, phase, color);
+                if (run > 1) flush(s, xs, ys, run, true, color);
+                run = 0;
+                linked = true;
+            } else {
+                phase = 0;
             }
+            xs[run] = x;
+            ys[run] = y;
+            run++;
         }
-        flush(s, xs, ys, run, color);
+        flush(s, xs, ys, run, linked, color);
 
         if (style.points()) {
             for (Graph.Sample p : all) {
@@ -193,8 +229,34 @@ final class Chart {
         }
     }
 
-    private static void flush(Sketch s, double[] xs, double[] ys, int run, Color color) {
-        if (run == 1) {
+    /** A dash and a gap, in pixels, for a curve drawn over one it coincides with. */
+    private static final double DASH = 6;
+    private static final double GAP = 5;
+
+    /**
+     * The segment from {@code (x0, y0)} to {@code (x1, y1)} dashed, carrying on from {@code phase} pixels into the
+     * dash-and-gap cycle so that dashes run evenly across segments; returns the phase at its end.
+     */
+    private static double dashed(Sketch s, double x0, double y0, double x1, double y1, double phase, Color color) {
+        double length = Math.hypot(x1 - x0, y1 - y0);
+        double cycle = DASH + GAP;
+        double at = 0;
+        while (at < length) {
+            double into = (phase + at) % cycle;
+            double next = Math.min(length, at + (into < DASH ? DASH - into : cycle - into));
+            if (into < DASH) {
+                double t0 = at / length;
+                double t1 = next / length;
+                s.line(x0 + (x1 - x0) * t0, y0 + (y1 - y0) * t0, x0 + (x1 - x0) * t1, y0 + (y1 - y0) * t1, 2, color);
+            }
+            at = next;
+        }
+        return (phase + length) % cycle;
+    }
+
+    /** A run of points: a polyline, or a dot where it is one point that no dashed segment reaches. */
+    private static void flush(Sketch s, double[] xs, double[] ys, int run, boolean linked, Color color) {
+        if (run == 1 && !linked) {
             s.circle(xs[0], ys[0], 2.5, color);
         } else if (run > 1) {
             s.polyline(java.util.Arrays.copyOf(xs, run), java.util.Arrays.copyOf(ys, run), 2, color);
