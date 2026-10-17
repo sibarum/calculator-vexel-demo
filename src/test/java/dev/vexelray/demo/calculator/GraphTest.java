@@ -45,25 +45,45 @@ class GraphTest {
         assertEquals("0/0", two.value(), "a computed 0 over a computed 0 is a multiple of nothing");
     }
 
-    /** A sampled {@code 0} is written, so it is {@code Z(1, 1)}, and {@code 0/0 = 0·ω = 1}. */
+    /** A sampled {@code 0} is the number, not a written {@code 0}, so {@code x/x} there is {@code 0/0}. */
     @Test
-    void xOverXAtZeroIsOne() {
+    void xOverXAtZeroIsMarked() {
         Graph g = plotted("x/x");
         Graph.Sample zero = at(g, "0");
-        assertEquals("Z(1/1, 0)", zero.value());
-        assertEquals(1.0, zero.y());
-        assertEquals(Graph.Order.ONE, zero.order());
+        assertEquals("0/0", zero.value());
+        assertTrue(zero.marker());
         assertEquals(1.0, at(g, "2").y());
     }
 
-    /** {@code (0 + x)^2 = x^2 + 2·0·x + 0^2}: the residual is kept, and the curve is its leading order, {@code x^2}. */
+    /** {@code (0 + x)^2 = x^2 + 2·0·x + 0^2}: the residual is kept, and each order is a curve of its own. */
     @Test
-    void aWrittenZeroStaysAsAResidualAndTheCurveIsTheLeadingOrder() {
+    void aWrittenZeroStaysAsAResidualAndEachOrderIsACurve() {
         Graph g = plotted("(0+x)^2");
         assertEquals("S(Z(6, 1), S(9, Z(1, 2)))", at(g, "3").value());
         assertEquals(9.0, at(g, "3").y());
         assertEquals(Graph.Order.ONE, at(g, "3").order());
-        assertTrue(at(g, "0").marker(), "(0 + 0)^2 = 4·0^2, whose order has no colour yet");
+        assertEquals("Z(1, 2)", at(g, "0").value(), "the sampled 0 is the number, so only the written 0 is left");
+        List<Graph.Curve> curves = Graph.curves(g.samples());
+        assertEquals(List.of(Graph.Order.ONE, Graph.Order.ZERO, new Graph.Order(2)),
+                curves.stream().map(Graph.Curve::order).toList());
+        assertEquals(0.0, at(curves.get(0).samples(), "0").y());
+        assertEquals(0.0, at(curves.get(1).samples(), "0").y());
+        assertEquals(1.0, at(curves.get(2).samples(), "3").y());
+    }
+
+    /** {@code (3x + 0 + ω)^2 = ω^2 + 6x·ω + 9x^2 + 2 + 6x·0 + 0^2}: five orders, five curves, none of them marked. */
+    @Test
+    void aSquareOfThreeOrdersIsFiveCurves() {
+        Graph g = plotted("(3x+0+1/0)^2");
+        assertTrue(g.samples().stream().noneMatch(Graph.Sample::marker));
+        List<Graph.Curve> curves = Graph.curves(g.samples());
+        assertEquals(List.of(0, 1, -1, 2, -2), curves.stream().map(c -> c.order().power()).toList());
+        double[] atTwo = {38, 12, 12, 1, 1};
+        double[] atZero = {2, 0, 0, 1, 1};
+        for (int i = 0; i < curves.size(); i++) {
+            assertEquals(atTwo[i], at(curves.get(i).samples(), "2").y(), 1e-9, curves.get(i).order().multiple());
+            assertEquals(atZero[i], at(curves.get(i).samples(), "0").y(), 1e-9, curves.get(i).order().multiple());
+        }
     }
 
     /** {@code 1/0} is {@code ω·1}: on the curve at 1, as a multiple of ω, where the rest are plain numbers. */
@@ -72,7 +92,7 @@ class GraphTest {
         Graph g = plotted("1/x");
         Graph.Sample zero = at(g, "0");
         assertTrue(zero.onCurve());
-        assertEquals("Z(1/1, -1)", zero.value());
+        assertEquals("1/0", zero.value(), "the number 0 sampled, so the Q of a zero denominator");
         assertEquals(1.0, zero.y());
         assertEquals(Graph.Order.OMEGA, zero.order());
         assertEquals(0.5, at(g, "2").y());
@@ -87,9 +107,9 @@ class GraphTest {
         assertEquals("-1/Z(2, 1)", at(g, "-0.5").value());
         assertEquals(-0.5, at(g, "-0.5").y());
         assertEquals(Graph.Order.OMEGA, at(g, "-0.5").order());
-        assertEquals(1.0, at(g, "0").y(), "0/0 = 0·ω = 1");
-        assertTrue(g.samples().stream().filter(s -> s.onCurve() && !s.xText().equals("0"))
-                .allMatch(s -> s.order() == Graph.Order.OMEGA));
+        assertEquals(0.0, at(g, "0").y(), "the number 0 absorbs, so the curve passes through 0");
+        assertTrue(g.samples().stream().filter(Graph.Sample::onCurve)
+                .allMatch(s -> s.order().equals(Graph.Order.OMEGA)));
     }
 
     /** {@code (2x + 3)(5x + 7)(x + 0)} is a cubic plus {@code 0} times a quadratic: two curves, one at each order. */
@@ -101,7 +121,7 @@ class GraphTest {
         assertEquals(10 * 8 + 29 * 4 + 21 * 2, at(curves.get(0).samples(), "2").y(), 1e-9);
         assertEquals(10 * 4 + 29 * 2 + 21, at(curves.get(1).samples(), "2").y(), 1e-9);
         assertEquals(0.0, at(curves.get(0).samples(), "0").y(), "42·0 is 0 at order one");
-        assertEquals(42.0, at(curves.get(1).samples(), "0").y(), "x = 0 is a written 0, so x + 0 is 2·0");
+        assertEquals(21.0, at(curves.get(1).samples(), "0").y());
     }
 
     /** {@code 1/x} at {@code 0} is {@code ω}, off the curve at order one rather than a {@code 0} on it. */
@@ -134,7 +154,8 @@ class GraphTest {
         assertEquals(-2.0, at(omega, "-2").y());
         assertEquals(Graph.Order.OMEGA, at(omega, "-2").order());
         Graph square = plotted("Z(1, 2)x");
-        assertTrue(at(square, "3").marker(), "0^2·n has no colour of its own yet");
+        assertEquals(3.0, at(square, "3").y());
+        assertEquals(new Graph.Order(2), at(square, "3").order());
     }
 
     @Test
@@ -242,7 +263,7 @@ class GraphTest {
         Graph tape = model.doc().tape().getLast().graph();
         model.set(sibarum.cott.algebra.NumberType.IEEE);
         Graph again = model.resample(tape, Graph.Grid.covering(-1, 1, 21), () -> false);
-        assertEquals("Z(1/1, -1)", at(again, "0").value(), "still the Integer reading, not IEEE's infinity");
+        assertEquals("1/0", at(again, "0").value(), "still the Integer reading, not IEEE's infinity");
         assertEquals(sibarum.cott.algebra.NumberType.IEEE,
                 model.doc().mode(sibarum.cott.calculator.Modeset.NUMBER_TYPE), "and the setting is left as it was");
         model.enter("1/0");

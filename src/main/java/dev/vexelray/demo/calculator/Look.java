@@ -71,11 +71,42 @@ final class Look {
 
     // ---------------------------------------------------------------- roles of our own
 
-    /** A curve of multiples of zero, {@code 0·n}: the accent turned to green, so it sits beside the plain curve. */
-    static final Role ZERO_CURVE = p -> Oklab.polar(p.accent().l(), p.accent().chroma(), 150).toColor();
+    /**
+     * The curve of multiples of {@code 0^power}: the accent itself for plain numbers, and otherwise the accent turned to
+     * a hue of that order's own, at the accent's lightness and chroma so every curve sits beside the plain one. Green
+     * for {@code 0·n}, amber for {@code ω·n}, teal and red for their squares, blue and pink for their cubes.
+     */
+    static Role curve(int power) {
+        if (power == 0) return Role.ACCENT;
+        double hue = hue(power);
+        return p -> Oklab.polar(p.accent().l(), p.accent().chroma(), hue).toColor();
+    }
 
-    /** A curve of multiples of {@code ω}, {@code (1/0)·n}: the accent turned to amber. */
-    static final Role OMEGA_CURVE = p -> Oklab.polar(p.accent().l(), p.accent().chroma(), 70).toColor();
+    /** The name of {@link #curve}'s colour, for a caption. */
+    static String curveName(int power) {
+        return switch (power) {
+            case 0 -> "the accent";
+            case 1 -> "green";
+            case -1 -> "amber";
+            case 2 -> "teal";
+            case -2 -> "red";
+            case 3 -> "blue";
+            case -3 -> "pink";
+            default -> "its own colour";
+        };
+    }
+
+    private static double hue(int power) {
+        return switch (power) {
+            case 1 -> 150;
+            case -1 -> 70;
+            case 2 -> 195;
+            case -2 -> 25;
+            case 3 -> 255;
+            case -3 -> 330;
+            default -> Math.floorMod(150 + 45 * power, 360);
+        };
+    }
 
     private Look() {
     }

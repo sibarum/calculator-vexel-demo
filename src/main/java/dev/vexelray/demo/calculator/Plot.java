@@ -50,8 +50,7 @@ final class Plot {
         this.idle = graph.name() + " from " + Graph.FROM + " to " + Graph.TO
                 + (markers == 0 ? "" : "  ·  " + markers + (markers == 1 ? " place" : " places")
                 + " with no real number, marked")
-                + (has(graph, Graph.Order.ZERO) ? "  ·  0·n in green" : "")
-                + (has(graph, Graph.Order.OMEGA) ? "  ·  ω·n in amber" : "");
+                + legend(graph);
 
         figure = gui.box().width(Length.FILL).height(HEIGHT).corner(Type.CORNER).textSize(Type.SMALL);
         readout = gui.text(idle).width(Length.grow(1f)).font(Type.MONO).textSize(Type.SMALL)
@@ -73,9 +72,14 @@ final class Plot {
         return node;
     }
 
-    /** Whether the plot has a curve of multiples of {@code order}. */
-    private static boolean has(Graph graph, Graph.Order order) {
-        return Graph.curves(graph.samples()).stream().anyMatch(c -> c.order() == order);
+    /** Each curve but the plain one, and its colour: {@code   ·  0·n in green  ·  ω²·n in red}. */
+    private static String legend(Graph graph) {
+        StringBuilder out = new StringBuilder();
+        for (Graph.Curve c : Graph.curves(graph.samples())) {
+            if (c.order().power() == 0) continue;
+            out.append("  ·  ").append(c.order().multiple()).append(" in ").append(Look.curveName(c.order().power()));
+        }
+        return out.toString();
     }
 
     /** The pop-out button, for a landmark. */

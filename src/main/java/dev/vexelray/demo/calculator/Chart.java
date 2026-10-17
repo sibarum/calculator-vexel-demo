@@ -46,7 +46,7 @@ final class Chart {
      */
     static double[] range(List<Graph.Sample> samples, double xLo, double xHi) {
         double[] ys = samples.stream().filter(Graph.Sample::onCurve).filter(s -> s.x() >= xLo && s.x() <= xHi)
-                .flatMap(s -> s.terms().values().stream()).mapToDouble(Double::doubleValue)
+                .flatMap(s -> s.series().values().stream()).mapToDouble(Double::doubleValue)
                 .filter(Double::isFinite).sorted().toArray();
         if (ys.length == 0) return new double[]{-1, 1};
         double lo = ys[0];
@@ -132,11 +132,7 @@ final class Chart {
 
     /** The colour of a curve of multiples of {@code order}: the accent for plain numbers. */
     static Color color(Graph.Order order, Theme theme) {
-        return theme.color(switch (order) {
-            case ONE -> Role.ACCENT;
-            case ZERO -> Look.ZERO_CURVE;
-            case OMEGA -> Look.OMEGA_CURVE;
-        });
+        return theme.color(Look.curve(order.power()));
     }
 
     /** Places with no real number: a dashed line, a dot on the top edge, and the value's own name. */
