@@ -7,6 +7,7 @@ import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.layout.NodeLayout;
 import dev.vexelray.gui.core.style.Role;
+import dev.vexelray.gui.core.text.TextMetrics;
 import dev.vexelray.gui.draw.Sketch;
 import dev.vexelray.gui.icons.Icon;
 import dev.vexelray.gui.widget.IconButton;
@@ -16,7 +17,7 @@ import java.util.List;
 /**
  * A {@link Graph} on the tape: the curve in a box, and a line under it that reads out the sample under the
  * pointer, with a button at its end that pops the plot out into the {@link PlotExplorer}. A double-click on the box
- * does the same.
+ * does the same. The readout is always one line, cut to fit, so that what it says never moves the tape.
  *
  * <p>The box is one {@link Node#picture picture}, drawn by {@link Chart} and rebuilt whenever its size changes,
  * since a picture is in pixels. The pointer's mark is the box's {@link Node#overlay overlay}, so moving it never
@@ -34,10 +35,20 @@ final class Plot {
     private final View view;
     private final Node figure;
     private final Node readout;
+    private final Node line;
     private final Node node;
     private final IconButton explore;
     private final String idle;
     private int hovered = -1;
+
+    // The readout's line is one line high whatever it says, so that hovering never changes the tape's height. On a
+    // tape held to its bottom a taller readout moves the plot under a still pointer, onto a sample whose readout
+    // has another height, and the plot shakes. The text is cut to the line, as many characters as fit.
+    /** The line's height, in em of its own text size, until a layout says what one line really is. */
+    private static final float LINE_EM = 1.25f;
+    private String shown;
+    private float lineEm = LINE_EM;
+    private int fits = Integer.MAX_VALUE;
 
     /** @param explore what popping this plot out does */
     Plot(Gui gui, Graph graph, Runnable explore) {
@@ -53,15 +64,20 @@ final class Plot {
                 + legend(graph);
 
         figure = gui.box().width(Length.FILL).height(HEIGHT).corner(Type.CORNER).textSize(Type.SMALL);
-        readout = gui.text(idle).width(Length.grow(1f)).font(Type.MONO).textSize(Type.SMALL)
+        readout = gui.text(idle).width(Length.FILL).font(Type.MONO).textSize(Type.SMALL)
                 .textColor(gui.theme().color(Role.DIM));
+        line = gui.box().width(Length.grow(1f)).height(Length.em(LINE_EM)).textSize(Type.SMALL).clip(true)
+                .children(readout);
+        shown = idle;
         this.explore = new IconButton(gui, Icon.POP_OUT, "Open in the plot explorer")
                 .size(Length.rem(1.25f), Length.rem(0.875f))
                 .tip("Open in the plot explorer (or double-click the plot)")
                 .onPress(explore);
         node = gui.column().width(Length.FILL).height(Length.AUTO).gap(Type.TIGHT).children(figure,
                 gui.row().width(Length.FILL).gap(Type.GAP).alignItems(AlignItems.CENTER)
-                        .children(readout, this.explore.node()));
+                        .children(line, this.explore.node()));
+        gui.onResizeUi(line, layout -> fit());
+        gui.onResizeUi(readout, layout -> fit());
         gui.onResizeUi(figure, layout -> figure.picture(Chart.draw(view, graph.samples(), Chart.Style.TAPE,
                 gui.theme(), layout.rect().w(), layout.rect().h(),
                 layout.textSizePx() > 0 ? layout.textSizePx() : 11, layout.cornerTopPx())));
@@ -96,7 +112,7 @@ final class Plot {
             if (hovered != -1) {
                 hovered = -1;
                 figure.overlay(null);
-                readout.text(idle);
+                show(idle);
             }
             return;
         }
@@ -117,6 +133,47 @@ final class Plot {
             s.circle(sx, sy, 3.5, ink).ring(sx, sy, 6, 1.5, ink);
         }
         figure.overlay(s.picture());
-        readout.text(graph.name() + " = " + p.xText() + "   →   " + (p.refused() ? "no value" : p.value()));
+        show(graph.name() + " = " + p.xText() + "   →   " + (p.refused() ? "no value" : p.value()));
+    }
+
+    // ---- the readout's line ----
+
+    /** Put {@code text} on the readout, cut to the line. */
+    private synchronized void show(String text) {
+        shown = text;
+        readout.text(cut(text, fits));
+    }
+
+    /**
+     * The line or its text is laid out at a new size: work out from the readout's own text how high one line is
+     * and how many characters fit across the line, and size and cut to that. The font is monospaced, but a symbol
+     * it lacks comes from another face, so the widest step on the line is taken as every character's. Text that
+     * still runs over wraps out of sight below the line, and that resizes the readout, which measures again.
+     */
+    private synchronized void fit() {
+        NodeLayout layout = line.layout();
+        NodeLayout text = readout.layout();
+        if (!layout.present() || !text.present() || text.text() == null || text.textSizePx() <= 0) return;
+        TextMetrics.VisualLine first = text.text().lines().getFirst();
+        float em = first.height() / text.textSizePx();
+        if (em > 0 && Math.abs(em - lineEm) > 0.01f) {
+            lineEm = em;
+            line.height(Length.em(em));
+        }
+        float step = 0;
+        float[] xs = first.xs();
+        for (int k = 1; k < xs.length; k++) step = Math.max(step, xs[k] - xs[k - 1]);
+        int now = step > 0 ? Math.max(1, (int) (layout.content().w() / step)) : fits;
+        if (now != fits) {
+            fits = now;
+            readout.text(cut(shown, fits));
+        }
+    }
+
+    /** {@code text} in at most {@code fits} characters, ending in an ellipsis where some were left off. */
+    static String cut(String text, int fits) {
+        int n = text.codePointCount(0, text.length());
+        if (n <= fits) return text;
+        return text.substring(0, text.offsetByCodePoints(0, Math.max(0, fits - 1))) + "…";
     }
 }

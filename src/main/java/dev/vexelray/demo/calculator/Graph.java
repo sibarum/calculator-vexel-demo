@@ -1,6 +1,8 @@
 package dev.vexelray.demo.calculator;
 
+import sibarum.cott.algebra.Cancellation;
 import sibarum.cott.algebra.Pair;
+import sibarum.cott.algebra.Simplifier;
 import sibarum.cott.algebra.TractionAlgebra;
 import sibarum.cott.calculator.CalculatorException;
 import sibarum.cott.calculator.Mode;
@@ -147,7 +149,7 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
      *
      * @param x      the sample's position, as a number
      * @param xText  the same position written as a decimal, exactly
-     * @param value  the engine's text for the answer, or null when it refused this one
+     * @param value  the answer written simplified, or null when the engine refused this one
      * @param y      the real reading, or NaN when there is none: the multiple at the leading order
      * @param order  the leading order, what {@code y} is a multiple of
      * @param series the multiple at each order the value has a term at, power of {@code 0} to coefficient, with no
@@ -269,6 +271,7 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
     private static Graph over(Expr expr, String name, Map<Modeset, Mode> modes, Grid grid,
                               Function<Expr, Result.Value> evaluate, BooleanSupplier stale) {
         List<Sample> out = new ArrayList<>(grid.count());
+        Cancellation cancellation = (Cancellation) modes.get(Modeset.CANCELLATION);
         String refusal = null;
         for (int k = 0; k < grid.count(); k++) {
             if (stale.getAsBoolean()) return null;
@@ -278,13 +281,19 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
             try {
                 Result.Value v = evaluate.apply(bind(expr, name, literal(at)));
                 Reading r = reading(v.value());
-                out.add(new Sample(x, xText, v.shown(), r.y(), r.order(), r.series()));
+                out.add(new Sample(x, xText, written(v, cancellation), r.y(), r.order(), r.series()));
             } catch (CalculatorException | SyntaxException | ArithmeticException refused) {
                 if (refusal == null) refusal = refused.getMessage();
                 out.add(new Sample(x, xText, null, Double.NaN));
             }
         }
         return new Graph(name, orderless(out), refusal, expr, modes);
+    }
+
+    /** A sample's answer as the tape writes it: simplified, as a series in 0, unless the line wrote a constructor. */
+    private static String written(Result.Value v, Cancellation cancellation) {
+        if (v.constructed() || cancellation == null) return v.shown();
+        return Simplifier.written(v.value(), cancellation).orElse(v.shown());
     }
 
     /**

@@ -59,10 +59,10 @@ class GraphTest {
     @Test
     void aWrittenZeroStaysAsAResidualAndEachOrderIsACurve() {
         Graph g = plotted("(0+x)^2");
-        assertEquals("S(Z(6, 1), S(9, Z(1, 2)))", at(g, "3").value());
+        assertEquals("9 + 6·0 + 0^2", at(g, "3").value(), "written simplified, as the tape writes it");
         assertEquals(9.0, at(g, "3").y());
         assertEquals(Graph.Order.ONE, at(g, "3").order());
-        assertEquals("Z(1, 2)", at(g, "0").value(), "the sampled 0 is the number, so only the written 0 is left");
+        assertEquals("0^2", at(g, "0").value(), "the sampled 0 is the number, so only the written 0 is left");
         List<Graph.Curve> curves = Graph.curves(g.samples());
         assertEquals(List.of(Graph.Order.ONE, Graph.Order.ZERO, new Graph.Order(2)),
                 curves.stream().map(Graph.Curve::order).toList());
@@ -100,11 +100,18 @@ class GraphTest {
     }
 
     @Test
+    void theReadoutIsCutToItsLine() {
+        assertEquals("x = 2   →   4", Plot.cut("x = 2   →   4", 13));
+        assertEquals("x = 2   →…", Plot.cut("x = 2   →   4", 10));
+        assertEquals("ω²…", Plot.cut("ω² + 4·ω", 3));
+    }
+
+    @Test
     void xOverZeroIsACurveOfMultiplesOfOmega() {
         Graph g = plotted("x/0");
         assertEquals(3.0, at(g, "3").y());
         // (p/q)/0 is p/(q·0) = p/Z(q, 1): the fraction keeps its denominator, so it stands at p/q.
-        assertEquals("-1/Z(2, 1)", at(g, "-0.5").value());
+        assertEquals("-(1/2)·ω", at(g, "-0.5").value());
         assertEquals(-0.5, at(g, "-0.5").y());
         assertEquals(Graph.Order.OMEGA, at(g, "-0.5").order());
         assertEquals(0.0, at(g, "0").y(), "the number 0 absorbs, so the curve passes through 0");
