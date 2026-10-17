@@ -34,10 +34,17 @@ class ExpressionsTest {
 
     @Test
     void aQuotientIsAFraction() {
-        assertEquals("{1}/{1}·ω", written("1/0"));
+        assertEquals("ω", written("1/0"), "1/1·ω, with the 1/1 left out");
         assertEquals("{6}/{3}", written("6/3"));
         assertEquals("−{1}/{2·0}", written("(-1/2)/0"));
         assertEquals("{1}/{1 + 0}", written("1/(1 + 0)"));
+    }
+
+    @Test
+    void aFractionOverOneIsItsNumerator() {
+        assertEquals("4·0 + 4·ω + 2 + ω^{2} + 0^{2} + 4", written("(2+0+1/0)^2"));
+        assertEquals("−3·ω", written("-3/0"));
+        assertEquals("Q(4, 1)", written("Q(4, 1)"), "a line that wrote the constructor keeps it");
     }
 
     @Test

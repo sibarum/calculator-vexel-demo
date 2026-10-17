@@ -24,7 +24,7 @@ import java.util.List;
  *   out, so {@code 0²} and {@code ω}</td></tr>
  *   <tr><td>{@code S(p, q)}</td><td>{@code p + q}, nested sums flattened</td></tr>
  *   <tr><td>{@code D(p, q)}</td><td>{@code q − p}</td></tr>
- *   <tr><td>{@code Q(p, q)}</td><td>{@code p} over {@code q}</td></tr>
+ *   <tr><td>{@code Q(p, q)}</td><td>{@code p} over {@code q}, or {@code p} alone where {@code q} is 1</td></tr>
  *   <tr><td>{@code C(p, q)}</td><td>{@code q + p·i}</td></tr>
  *   <tr><td>{@code P(p, q)}</td><td>{@code p · q}</td></tr>
  *   <tr><td>{@code E(p, q)}</td><td>{@code q + log₀ p}</td></tr>
@@ -267,7 +267,8 @@ final class Expressions {
     private static <B> Written<B> magnitude(Object v, Make<B> make) {
         if (!(v instanceof Pair<?> pair)) return new Written<>(make.number(text(v)), Binding.ATOM);
         return switch (pair.algebra()) {
-            case Q -> new Written<>(make.fraction(meaning(pair.p(), make).out(), meaning(pair.q(), make).out()),
+            case Q -> one(pair.q()) ? meaning(pair.p(), make)
+                    : new Written<>(make.fraction(meaning(pair.p(), make).out(), meaning(pair.q(), make).out()),
                     Binding.ATOM);
             case Z -> zeroPower(pair, make);
             case P -> new Written<>(make.row(List.of(factor(meaning(pair.p(), make), make), make.operator("·"),
@@ -332,11 +333,13 @@ final class Expressions {
         };
     }
 
+    /** The number 1, or a {@code Q} of 1 over 1, which is written as 1: a coefficient of it is left out. */
     private static boolean one(Object v) {
         return switch (v) {
             case BigInteger n -> n.equals(BigInteger.ONE);
             case BigDecimal d -> d.compareTo(BigDecimal.ONE) == 0;
             case Double d -> d == 1;
+            case Pair<?> pair -> pair.algebra() == TractionAlgebra.Q && one(pair.p()) && one(pair.q());
             default -> false;
         };
     }
