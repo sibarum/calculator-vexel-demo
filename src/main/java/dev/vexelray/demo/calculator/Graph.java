@@ -111,7 +111,16 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
      * {@code 0^−1·n}. The {@code q} of a {@code Z(p, q)}.
      */
     enum Order {
-        ONE, ZERO, OMEGA
+        ONE, ZERO, OMEGA;
+
+        /** The power of {@code 0}: 0, 1 or −1. */
+        int power() {
+            return switch (this) {
+                case ONE -> 0;
+                case ZERO -> 1;
+                case OMEGA -> -1;
+            };
+        }
     }
 
     /**
@@ -122,8 +131,18 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
      * @param value  the engine's text for the answer, or null when it refused this one
      * @param y      the real reading, or NaN when there is none; for a multiple of zero or {@code ω}, the multiple
      * @param order  what {@code y} is a multiple of
+     * @param terms  the multiple at each order whose curve this sample is on: {@code (0 + 3)^2 = 9 + 6·0 + 0^2} is
+     *               9 at order one and 6 at order zero. See {@link #curves}.
      */
-    record Sample(double x, String xText, String value, double y, Order order) {
+    record Sample(double x, String xText, String value, double y, Order order, Map<Order, Double> terms) {
+
+        Sample {
+            terms = Map.copyOf(terms);
+        }
+
+        Sample(double x, String xText, String value, double y, Order order) {
+            this(x, xText, value, y, order, value != null && !Double.isNaN(y) ? Map.of(order, y) : Map.of());
+        }
 
         Sample(double x, String xText, String value, double y) {
             this(x, xText, value, y, Order.ONE);
@@ -141,6 +160,27 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
         boolean onCurve() {
             return value != null && !Double.isNaN(y);
         }
+    }
+
+    /** The samples on the curve of multiples of {@code order}, each standing at its multiple there. */
+    record Curve(Order order, List<Sample> samples) {
+    }
+
+    /**
+     * One curve for each order some sample has a multiple other than 0 at, in the order {@code 1}, {@code 0},
+     * {@code ω}: {@code (2x + 3)(5x + 7)(x + 0)} is the cubic at order one and {@code 10x^2 + 29x + 21} at order
+     * zero. A sample off an order's curve is in it as a marker would be, with no {@code y}.
+     */
+    static List<Curve> curves(List<Sample> samples) {
+        List<Curve> out = new ArrayList<>();
+        for (Order order : Order.values()) {
+            if (samples.stream().noneMatch(s -> s.terms().getOrDefault(order, 0.0) != 0)) continue;
+            out.add(new Curve(order, samples.stream().map(s -> {
+                Double y = s.terms().get(order);
+                return new Sample(s.x(), s.xText(), s.value(), y == null ? Double.NaN : y, order, s.terms());
+            }).toList()));
+        }
+        return out;
     }
 
     Graph {
@@ -191,7 +231,7 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
             try {
                 Result.Value v = evaluate.apply(bind(expr, name, literal(at)));
                 Reading r = reading(v.value());
-                out.add(new Sample(x, xText, v.shown(), r.y(), r.order()));
+                out.add(new Sample(x, xText, v.shown(), r.y(), r.order(), r.terms()));
             } catch (CalculatorException | SyntaxException | ArithmeticException refused) {
                 if (refusal == null) refusal = refused.getMessage();
                 out.add(new Sample(x, xText, null, Double.NaN));
@@ -212,7 +252,7 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
             if (s.order() != null) continue;
             Order order = neighbour(out, k, -1);
             if (order == null) order = neighbour(out, k, 1);
-            out.set(k, new Sample(s.x(), s.xText(), s.value(), s.y(), order == null ? Order.ONE : order));
+            out.set(k, new Sample(s.x(), s.xText(), s.value(), s.y(), order == null ? Order.ONE : order, s.terms()));
         }
         return out;
     }
@@ -247,7 +287,7 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
         return n.signum() < 0 ? new Expr.Neg(magnitude) : magnitude;
     }
 
-    private record Reading(double y, Order order) {
+    private record Reading(double y, Order order, Map<Order, Double> terms) {
     }
 
     /**
@@ -259,16 +299,32 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
      */
     private static Reading reading(Object v) {
         TreeMap<Integer, Double> s = series(v);
-        if (s == null) return new Reading(Double.NaN, Order.ONE);
+        if (s == null) return new Reading(Double.NaN, Order.ONE, Map.of());
         s.values().removeIf(c -> c == 0);
-        if (s.isEmpty()) return new Reading(0, null);
+        Map<Order, Double> terms = terms(s);
+        if (s.isEmpty()) return new Reading(0, null, terms);
         Map.Entry<Integer, Double> lead = s.firstEntry();
         return switch (lead.getKey()) {
-            case 0 -> new Reading(lead.getValue(), Order.ONE);
-            case 1 -> new Reading(lead.getValue(), Order.ZERO);
-            case -1 -> new Reading(lead.getValue(), Order.OMEGA);
-            default -> new Reading(Double.NaN, Order.ONE);
+            case 0 -> new Reading(lead.getValue(), Order.ONE, terms);
+            case 1 -> new Reading(lead.getValue(), Order.ZERO, terms);
+            case -1 -> new Reading(lead.getValue(), Order.OMEGA, terms);
+            default -> new Reading(Double.NaN, Order.ONE, terms);
         };
+    }
+
+    /**
+     * The multiple at each order with a colour that a series is on the curve of: its term there, or {@code 0} where it
+     * has none and every term it has is of a higher order, too small to show beside that one. A series with a term of
+     * lower order is off that curve: {@code 1/x} at {@code 0} is {@code ω}, which is not {@code 0} at order one.
+     */
+    private static Map<Order, Double> terms(TreeMap<Integer, Double> s) {
+        Map<Order, Double> out = new java.util.EnumMap<>(Order.class);
+        for (Order order : Order.values()) {
+            Double c = s.get(order.power());
+            if (c != null) out.put(order, c);
+            else if (s.isEmpty() || s.firstKey() > order.power()) out.put(order, 0.0);
+        }
+        return out;
     }
 
     /**

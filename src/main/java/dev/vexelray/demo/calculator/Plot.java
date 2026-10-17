@@ -73,9 +73,9 @@ final class Plot {
         return node;
     }
 
-    /** Whether any sample on the curve is a multiple of {@code order}. */
+    /** Whether the plot has a curve of multiples of {@code order}. */
     private static boolean has(Graph graph, Graph.Order order) {
-        return graph.samples().stream().anyMatch(p -> p.onCurve() && p.order() == order);
+        return Graph.curves(graph.samples()).stream().anyMatch(c -> c.order() == order);
     }
 
     /** The pop-out button, for a landmark. */

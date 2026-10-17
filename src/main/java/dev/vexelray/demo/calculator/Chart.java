@@ -46,7 +46,8 @@ final class Chart {
      */
     static double[] range(List<Graph.Sample> samples, double xLo, double xHi) {
         double[] ys = samples.stream().filter(Graph.Sample::onCurve).filter(s -> s.x() >= xLo && s.x() <= xHi)
-                .mapToDouble(Graph.Sample::y).filter(Double::isFinite).sorted().toArray();
+                .flatMap(s -> s.terms().values().stream()).mapToDouble(Double::doubleValue)
+                .filter(Double::isFinite).sorted().toArray();
         if (ys.length == 0) return new double[]{-1, 1};
         double lo = ys[0];
         double hi = ys[ys.length - 1];
@@ -125,7 +126,7 @@ final class Chart {
         }
 
         if (style.places()) places(s, view, samples, w, h, text, well, mark);
-        curve(s, view, samples, style, w, h, theme);
+        for (Graph.Curve c : Graph.curves(samples)) curve(s, view, c.samples(), style, w, h, color(c.order(), theme));
         return s.picture();
     }
 
@@ -162,37 +163,35 @@ final class Chart {
     }
 
     /**
-     * The curve: a run of segments between neighbours both on it and multiples of the same power of zero, in that
-     * order's {@link #color}, broken where one jumps clean across the box (a pole between two samples); a sample
-     * with no such neighbour is a dot.
+     * One {@linkplain Graph#curves curve}, in its order's {@link #color}: a run of segments between neighbours both on
+     * it, broken where one jumps clean across the box (a pole between two samples); a sample with no such neighbour
+     * is a dot.
      */
     private static void curve(Sketch s, View view, List<Graph.Sample> all, Style style, double w, double h,
-                              Theme theme) {
+                              Color color) {
         int n = all.size();
         double[] xs = new double[n];
         double[] ys = new double[n];
         int run = 0;
-        Graph.Order order = Graph.Order.ONE;
         for (int i = 0; i < n; i++) {
             Graph.Sample p = all.get(i);
-            boolean joins = run > 0 && p.onCurve() && p.order() == order && !across(view, all.get(i - 1).y(), p.y());
+            boolean joins = run > 0 && p.onCurve() && !across(view, all.get(i - 1).y(), p.y());
             if (!joins) {
-                flush(s, xs, ys, run, color(order, theme));
+                flush(s, xs, ys, run, color);
                 run = 0;
             }
             if (p.onCurve()) {
                 xs[run] = view.px(p.x(), w);
                 ys[run] = py(view, p.y(), h);
-                order = p.order();
                 run++;
             }
         }
-        flush(s, xs, ys, run, color(order, theme));
+        flush(s, xs, ys, run, color);
 
         if (style.points()) {
             for (Graph.Sample p : all) {
                 if (p.onCurve() && view.showsX(p.x()) && p.y() >= view.yLo() && p.y() <= view.yHi()) {
-                    s.circle(view.px(p.x(), w), view.py(p.y(), h), 2, color(p.order(), theme));
+                    s.circle(view.px(p.x(), w), view.py(p.y(), h), 2, color);
                 }
             }
         }

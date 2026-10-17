@@ -20,7 +20,11 @@ class GraphTest {
     }
 
     private static Graph.Sample at(Graph g, String x) {
-        return g.samples().stream().filter(s -> s.xText().equals(x)).findFirst().orElseThrow();
+        return at(g.samples(), x);
+    }
+
+    private static Graph.Sample at(List<Graph.Sample> samples, String x) {
+        return samples.stream().filter(s -> s.xText().equals(x)).findFirst().orElseThrow();
     }
 
     @Test
@@ -86,6 +90,27 @@ class GraphTest {
         assertEquals(1.0, at(g, "0").y(), "0/0 = 0·ω = 1");
         assertTrue(g.samples().stream().filter(s -> s.onCurve() && !s.xText().equals("0"))
                 .allMatch(s -> s.order() == Graph.Order.OMEGA));
+    }
+
+    /** {@code (2x + 3)(5x + 7)(x + 0)} is a cubic plus {@code 0} times a quadratic: two curves, one at each order. */
+    @Test
+    void eachOrderIsACurveOfItsOwn() {
+        Graph g = plotted("(2x+3)(5x+7)(x+0)");
+        List<Graph.Curve> curves = Graph.curves(g.samples());
+        assertEquals(List.of(Graph.Order.ONE, Graph.Order.ZERO), curves.stream().map(Graph.Curve::order).toList());
+        assertEquals(10 * 8 + 29 * 4 + 21 * 2, at(curves.get(0).samples(), "2").y(), 1e-9);
+        assertEquals(10 * 4 + 29 * 2 + 21, at(curves.get(1).samples(), "2").y(), 1e-9);
+        assertEquals(0.0, at(curves.get(0).samples(), "0").y(), "42·0 is 0 at order one");
+        assertEquals(42.0, at(curves.get(1).samples(), "0").y(), "x = 0 is a written 0, so x + 0 is 2·0");
+    }
+
+    /** {@code 1/x} at {@code 0} is {@code ω}, off the curve at order one rather than a {@code 0} on it. */
+    @Test
+    void aLowerOrderTakesASampleOffTheCurve() {
+        List<Graph.Curve> curves = Graph.curves(plotted("1/x").samples());
+        assertEquals(List.of(Graph.Order.ONE, Graph.Order.OMEGA), curves.stream().map(Graph.Curve::order).toList());
+        assertTrue(Double.isNaN(at(curves.get(0).samples(), "0").y()));
+        assertEquals(1.0, at(curves.get(1).samples(), "0").y());
     }
 
     /** {@code ω·0} is {@code 0} at any order, so a zero of an amber curve is on it rather than breaking it. */
