@@ -276,6 +276,7 @@ final class Expressions {
             case B -> new Written<>(make.row(List.of(make.subscript(make.function("log"),
                     meaning(pair.p(), make).out()), factor(meaning(pair.q(), make), make))), Binding.PRODUCT);
             case S, D, C, E -> meaning(v, make);
+            case L -> new Written<>(constructors(pair, make), Binding.ATOM);
         };
     }
 

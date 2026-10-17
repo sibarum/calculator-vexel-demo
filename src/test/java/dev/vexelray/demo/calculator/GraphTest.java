@@ -201,10 +201,21 @@ class GraphTest {
     @Test
     void allRefusedIsNoPlot() {
         Model model = new Model();
-        model.enter("x^(1/2)");
+        model.enter("2^(x/2)");
         Doc.Entry e = model.doc().tape().getFirst();
         assertNull(e.graph());
         assertTrue(e.readings().startsWith("nothing to plot"), e.readings());
+    }
+
+    @Test
+    void aPowerInAnglesIsMarkedWhereItHasNoRealValue() {
+        Model model = new Model();
+        model.enter("x^(1/2)");
+        Graph g = model.doc().tape().getFirst().graph();
+        assertTrue(at(g, "-1").marker(), "(-1)^(1/2) is i, an L");
+        assertTrue(at(g, "0").marker(), "0^(1/2) is a zero magnitude turned half a turn");
+        assertTrue(at(g, "1").marker());
+        assertTrue(at(g, "2").refused(), "2 has no exact turn");
     }
 
     @Test

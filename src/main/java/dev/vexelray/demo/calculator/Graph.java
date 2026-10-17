@@ -388,7 +388,7 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
                 if (q.size() > 1 && !p.isEmpty()) p = new TreeMap<>(Map.of(p.firstKey(), p.firstEntry().getValue()));
                 yield shifted(p, -q.firstKey(), q.firstEntry().getValue());
             }
-            case E, B -> null;
+            case E, B, L -> null;
         };
     }
 
@@ -433,7 +433,7 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
                     case S -> p + q;
                     case Q -> q == 0 ? Double.NaN : quotient(pair, p, q);
                     case P -> p * q;
-                    case Z, E, B -> Double.NaN;
+                    case Z, E, B, L -> Double.NaN;
                 };
             }
             default -> Double.NaN;
