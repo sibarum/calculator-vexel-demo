@@ -31,13 +31,10 @@ import dev.vexelray.framework.shell.VexelApplication;
  * <p>A misspelled flag is refused by name with the alternatives listed, rather than a stack trace before any
  * window. Needs {@code --enable-native-access=ALL-UNNAMED}.
  *
- * <p><b>Two editions declare the application.</b> {@code CalculatorApp} is in {@code src/edition-debug} and
- * {@code src/edition-release}, and the pom compiles one of them. Its {@code starters} is everything configuring this
- * application beyond {@link Recipes}, listed rather than discovered. The debug edition's names
- * {@code AutomationStarter}, the driving socket — off unless {@code --automation} or {@code -Dautomation} asks, and
- * loopback-only when it is, because it hands whoever reaches it full control of the application's input. The release
- * edition names none, and {@code -Pnative-release} drops the automation modules from the classpath, so the shipped
- * binary links no socket at all.
+ * <p><b>{@code CalculatorApp} declares the application.</b> Its {@code starters} is everything configuring this
+ * application beyond {@link Recipes}, listed rather than discovered: {@code AutomationStarter}, the automation
+ * sockets, in every build — off unless the launch or the title bar's plug switches them on, and loopback-only when
+ * they are, because remote control hands whoever reaches it full control of the application's input.
  */
 public final class Calculator {
 

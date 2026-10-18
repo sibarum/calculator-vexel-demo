@@ -23,7 +23,7 @@ import sibarum.tactroller.api.Modifier;
  * {@code Gui} and its title bar. There is no phase to declare and none to get wrong: a part asking for something
  * that does not exist yet is not a part that can be written.
  *
- * <p>The driving socket is not here either. It comes from {@code AutomationStarter}, which the debug edition's
+ * <p>The automation sockets are not here either. They come from {@code AutomationStarter}, which
  * {@code CalculatorApp} names in its {@code @VexelApp} — so this application is drivable because it says so in one
  * place, and a {@code @Provides Driver} method here would replace the starter's with this application's own.
  *
