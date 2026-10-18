@@ -100,7 +100,7 @@ Say what the picture is *of* with options, and `ottermate` sets it first and sto
 
 ```
 ottermate --zoom 1.5 --dpi 2 --size 1600x900 shot big.png --launch ...   # pixels
-ottermate --size 24emx16em shot smallest.png --launch ...                # em, at the current zoom and density
+ottermate --size 24emx16em shot small.png --launch ...                   # em, at the current zoom and density
 ottermate --window settings shot settings.png --launch ...               # another window of this application
 ```
 

@@ -110,7 +110,9 @@ final class Ui {
                         gui.row().width(Length.FILL).gap(Type.GAP).alignItems(AlignItems.CENTER)
                                 .children(entry.node(), gear));
 
+        // Never scrolled: the tape is what scrolls, and a window too small for the rest crops it.
         gui.root().direction(Direction.COLUMN)
+                .scroll(false, false)
                 .background(gui.theme().color(Role.PAGE))
                 .children(titleBar.node(), tape, bottom);
         gui.focus(entry.node());

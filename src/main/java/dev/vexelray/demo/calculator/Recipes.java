@@ -6,7 +6,6 @@ import dev.vexelray.framework.shell.Appearance;
 import dev.vexelray.framework.shell.Window;
 import dev.vexelray.framework.shell.Windows;
 import dev.vexelray.gui.core.Gui;
-import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.krono.KronoGui;
 import dev.vexelray.gui.widget.TitleBar;
 import sibarum.tactroller.api.Key;
@@ -46,7 +45,8 @@ import sibarum.tactroller.api.Modifier;
 final class Recipes {
 
     /**
-     * The look, and the smallest window this UI is still coherent in — a floor, not the design size.
+     * The look, and no size floor. A floor in em grows with the zoom, and once it is past the window the root
+     * scrolls to reach the rest; this layout fits any window instead, the tape giving up its room first.
      *
      * <p>Built from nothing the framework makes, so it exists in the first phase, and the framework applies it the
      * moment it creates the {@code Gui}. That is what makes "the theme is applied before the first widget"
@@ -55,7 +55,7 @@ final class Recipes {
      */
     @Provides
     Appearance look() {
-        return Appearance.of(Look.THEME, Length.rem(Calculator.MIN_W_EM), Length.rem(Calculator.MIN_H_EM));
+        return Appearance.of(Look.THEME);
     }
 
     /** The one authoritative state, built before the tree because every control is a view onto it. */

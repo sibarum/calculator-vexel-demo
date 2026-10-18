@@ -52,16 +52,6 @@ public final class Calculator {
     static final int H = 640;
 
     /**
-     * The smallest this UI is still coherent at, in root ems — a floor, not the design size.
-     *
-     * <p>Named here rather than written at each use because it is read from two places that have to agree:
-     * {@link Recipes#look} declares it to the framework, and a screenshot at exactly the
-     * minimum (ottermate --size 24emx16em shot) is the picture that shows a panel outgrowing it.
-     */
-    static final float MIN_W_EM = 24;
-    static final float MIN_H_EM = 16;
-
-    /**
      * Entry point.
      *
      * <p>There is no screenshot flag here on purpose. A picture of a running window, at a chosen size, zoom and
