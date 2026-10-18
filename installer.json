@@ -3,7 +3,7 @@
   "name": "Calculator",
   "publisher": "sibarum",
   "description": "A small calculator window onto cott-engine.",
-  "version": "0.1.1",
+  "version": "0.1.1-SNAPSHOT",
 
   "repo": "sibarum/vexelray-dist",
   "branch": "main",
