@@ -1,0 +1,26 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<linearGradient id="b43t61" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#26240b"/>
+<stop offset="1" stop-color="#121103"/>
+</linearGradient>
+<linearGradient id="b43e61" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#d8d597" stop-opacity=".55"/>
+<stop offset=".45" stop-color="#d8d597" stop-opacity="0"/>
+</linearGradient>
+<clipPath id="b43c61">
+<rect x="2" y="2" width="60" height="60" rx="15"/>
+</clipPath>
+</defs>
+<g opacity=".6">
+<rect x="2" y="2" width="60" height="60" rx="15" fill="url(#b43t61)"/>
+<rect x="2" y="2" width="60" height="60" rx="15" fill="none" stroke="#373414" stroke-width="1"/>
+<rect x="13" y="13" width="17" height="17" rx="4.5" fill="#cac256"/>
+<rect x="34" y="13" width="17" height="17" rx="4.5" fill="#cac256"/>
+<rect x="13" y="34" width="17" height="17" rx="4.5" fill="#cac256"/>
+<rect x="34" y="34" width="17" height="17" rx="4.5" fill="#f0eec4"/>
+<path d="M21.5 16.8 V26.2 M16.8 21.5 H26.2 M37.8 21.5 H47.2 M17.9 38.9 L25.1 46.1 M25.1 38.9 L17.9 46.1 M37.8 40 H47.2 M37.8 45 H47.2" stroke="#151304" stroke-width="2.7" stroke-linecap="round"/>
+<rect x="2.6" y="2.6" width="58.8" height="58.8" rx="14.4" fill="none" stroke="url(#b43e61)" stroke-width="1.2"/>
+</g>
+<rect x="3" y="3" width="58" height="58" rx="14" fill="none" stroke="#cac256" stroke-width="4" stroke-dasharray="15.6 10.4" stroke-dashoffset="-5.2" stroke-linecap="round"/>
+</svg>
