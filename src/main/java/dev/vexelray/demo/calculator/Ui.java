@@ -4,16 +4,16 @@ import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
 import dev.vexelray.gui.core.layout.LayoutEnums.Direction;
+import dev.vexelray.gui.core.layout.LayoutEnums.Justify;
 import dev.vexelray.gui.core.layout.LayoutEnums.ScrollLock;
-import dev.vexelray.canvas.Color;
 import dev.vexelray.gui.core.input.ClaimScope;
 import dev.vexelray.gui.core.input.CursorShape;
 import dev.vexelray.gui.core.input.InteractionState;
 import dev.vexelray.gui.core.input.Shortcut;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.style.Role;
-import dev.vexelray.gui.draw.Picture;
-import dev.vexelray.gui.draw.Sketch;
+import dev.vexelray.gui.icons.Icon;
+import dev.vexelray.gui.icons.IconView;
 import dev.vexelray.gui.krono.KronoGui;
 import dev.vexelray.gui.widget.TextField;
 import dev.vexelray.gui.widget.TitleBar;
@@ -221,18 +221,20 @@ final class Ui {
     }
 
     /**
-     * The settings button: a gear, drawn, because the atlas font has no glyph for one. Square and as tall as the
+     * The settings button: the suite's gear ({@link Icon#SETTINGS}), in the dim ink. Square and as tall as the
      * entry's line, hover-shaded like the title bar's buttons, and a button to the keyboard too — it takes focus,
      * and Enter or Space presses it. Ctrl+, presses it from anywhere.
      */
     private Node gear() {
-        Node b = gui.box()
+        Node mark = IconView.of(gui, Icon.SETTINGS).size(Length.rem(1f)).tint(Role.DIM).node().hitInert(true);
+        Node b = gui.row()
                 .size(GEAR, GEAR)
                 .corner(Type.CORNER)
                 .background(gui.theme().color(Role.NONE))
-                .scroll(false, false);
-        gui.onResizeUi(b, layout -> b.picture(gearPicture(layout.rect().w(), layout.rect().h(),
-                gui.theme().color(Role.DIM))));
+                .justify(Justify.CENTER)
+                .alignItems(AlignItems.CENTER)
+                .scroll(false, false)
+                .children(mark);
         gui.onClick(b, this::openSettings);
         gui.onState(b, state -> b.background(
                 gui.theme().color(state == InteractionState.NORMAL ? Role.NONE : Role.RAISED)));
@@ -242,23 +244,5 @@ final class Ui {
         gui.cursor(b, CursorShape.POINTER);
         tips.attach(b, "Settings (Ctrl+,)");
         return b;
-    }
-
-    /** A gear centred in a {@code w × h} box: a ring for the body and eight teeth round it. In pixels. */
-    private static Picture gearPicture(double w, double h, Color ink) {
-        double s = Math.min(w, h);
-        if (s < 6) return null;
-        double cx = w / 2, cy = h / 2;
-        double body = s * 0.24;
-        double band = s * 0.11;
-        double tooth = s * 0.12;
-        Sketch k = new Sketch().ring(cx, cy, body, band, ink);
-        for (int i = 0; i < 8; i++) {
-            double a = i * Math.PI / 4;
-            double c = Math.cos(a), sn = Math.sin(a);
-            k.line(cx + c * body, cy + sn * body,
-                    cx + c * (body + tooth * 0.55), cy + sn * (body + tooth * 0.55), tooth, ink);
-        }
-        return k.picture();
     }
 }
