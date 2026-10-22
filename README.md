@@ -180,7 +180,9 @@ LOG.warn("could not save {}", path, exception);          // the exception goes l
 running window). Standard output is left for a program's own output, so nothing logs there. Levels, settings and
 the rules for what belongs at which level are in `atchung/docs/logging.md`.
 
-## The two documents
+## The three documents
 
 `docs/framework-notes.md` and `docs/TODO.md` start empty and are meant to be filled in as you go. See the note
-at the top of the first one — it is the more important of the two.
+at the top of the first one — it is the more important of the two. `docs/retrospective.md` is filled in at the end of
+each milestone: the pass over the notes that looks for what they have in common, and the one the framework reads
+first.
