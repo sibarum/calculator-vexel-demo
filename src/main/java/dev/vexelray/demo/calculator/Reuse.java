@@ -11,7 +11,6 @@ import dev.vexelray.gui.core.input.Shortcut;
 import dev.vexelray.gui.core.layout.NodeLayout;
 import dev.vexelray.gui.core.style.Role;
 import dev.vexelray.gui.draw.Sketch;
-import dev.vexelray.gui.krono.Colors;
 import dev.vexelray.gui.krono.KronoGui;
 import dev.vexelray.gui.widget.Cue;
 import dev.vexelray.gui.widget.Cues;
@@ -62,9 +61,6 @@ final class Reuse {
     private static final Key[] PAD = {Key.NUMPAD_1, Key.NUMPAD_2, Key.NUMPAD_3, Key.NUMPAD_4, Key.NUMPAD_5,
             Key.NUMPAD_6, Key.NUMPAD_7, Key.NUMPAD_8, Key.NUMPAD_9};
 
-    /** How long a wash takes to follow the pointer: quick enough that sweeping down the tape never trails. */
-    private static final Dur FADE = Dur.ms(120);
-
     /** How long the ring and the sweep take: an acknowledgement has to be long enough to be noticed. */
     private static final Dur CUE = Dur.ms(240);
 
@@ -91,7 +87,6 @@ final class Reuse {
     private final Model model;
     private final TextField entry;
     private final Tooltip tips;
-    private final KronoGui krono;
     private final Cues cues;
     private final List<Row> rows = new ArrayList<>();
 
@@ -111,7 +106,6 @@ final class Reuse {
         this.model = model;
         this.entry = entry;
         this.tips = tips;
-        this.krono = krono;
         this.cues = new Cues((progress, done) -> krono.ramp(CUE, Ease.LINEAR, progress, done));
 
         // Claims are heard before the field's own keys, and the field is one line, so Up and Down are free.
@@ -176,7 +170,7 @@ final class Reuse {
             used(node);
         });
         gui.cursor(node, CursorShape.POINTER);
-        gui.onState(node, new Wash(node)::to);
+        gui.onState(node, state -> wash(node, state));
         // The click is shown rather than said; only the chord, which nothing on screen can show, is in words.
         tips.attach(node, "Ctrl+number inserts at the caret.");
     }
@@ -190,43 +184,15 @@ final class Reuse {
 
     /**
      * A reusable line's background, following the pointer: clear at rest, a light accent wash under it, a deeper
-     * one while pressed. Each change fades from wherever the wash is drawn now, so a pointer that crosses a line
-     * and comes back never makes it jump.
+     * one while pressed. Set once per change; the window fades every colour change itself, from wherever it is drawn
+     * now, so a pointer that crosses a line and comes back never makes it jump.
      */
-    private final class Wash {
-
-        private final Node node;
-        private final Color accent = gui.theme().color(Role.ACCENT);
-        private Color drawn = Color.withAlpha(accent, 0f);
-        /** Which fade is the current one; a superseded fade's frames write nothing. */
-        private int epoch;
-
-        Wash(Node node) {
-            this.node = node;
-        }
-
-        void to(InteractionState state) {
-            Color target = Color.withAlpha(accent, switch (state) {
-                case NORMAL -> 0f;
-                case HOVER -> HOVER_ALPHA;
-                case PRESSED -> PRESS_ALPHA;
-            });
-            Color from;
-            int mine;
-            synchronized (this) {
-                from = drawn;
-                mine = ++epoch;
-            }
-            // Linear: a fade has nowhere to arrive at, and easing one reads as a delay and then a jump.
-            krono.ramp(FADE, Ease.LINEAR, p -> {
-                Color c = Colors.OKLAB.between(from, target, (float) p);
-                synchronized (this) {
-                    if (mine != epoch) return;
-                    drawn = c;
-                }
-                node.background(c);
-            }, () -> { });
-        }
+    private void wash(Node node, InteractionState state) {
+        node.background(Color.withAlpha(gui.theme().color(Role.ACCENT), switch (state) {
+            case NORMAL -> 0f;
+            case HOVER -> HOVER_ALPHA;
+            case PRESSED -> PRESS_ALPHA;
+        }));
     }
 
     // ---- Ctrl+number ----
