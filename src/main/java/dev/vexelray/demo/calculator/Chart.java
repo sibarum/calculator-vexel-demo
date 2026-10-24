@@ -7,10 +7,12 @@ import dev.vexelray.gui.draw.Picture;
 import dev.vexelray.gui.draw.Sketch;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
- * Samples drawn into a box: the grid with its values, the places with no real number, and the curve. One picture,
+ * Samples drawn into a box: the grid with its values, the places with no number, and the curves. One picture,
  * in pixels, for a {@link View} of plot space; shared by the {@link Plot} on the tape and the {@link PlotExplorer},
  * so the two draw a curve the same way and a fix to one is a fix to both.
  *
@@ -27,7 +29,7 @@ final class Chart {
      *
      * @param grid   lines at every tick, not only the axes
      * @param points a dot on every sample on the curve, so the sampling shows
-     * @param places the places with no real number: a dashed line and the value's own name
+     * @param places the places with no number, real or complex: a dashed line and the value's own name
      */
     record Style(boolean grid, boolean points, boolean places) {
 
@@ -40,14 +42,15 @@ final class Chart {
     // ---- the frame ----
 
     /**
-     * A y range for {@code samples}: every one on the curve, except that an end lying far beyond the bulk (more than
+     * A y range for {@code samples}: every one on the curve, and every imaginary part, except that an end lying far beyond the bulk (more than
      * twice the bulk's own span past its 2nd/98th percentile) is cut back to the bulk, and the result padded by a
      * tenth. Only samples from {@code xLo} to {@code xHi} count.
      */
     static double[] range(List<Graph.Sample> samples, double xLo, double xHi) {
         double[] ys = samples.stream().filter(Graph.Sample::onCurve).filter(s -> s.x() >= xLo && s.x() <= xHi)
-                .flatMap(s -> s.series().values().stream()).mapToDouble(Double::doubleValue)
-                .filter(Double::isFinite).sorted().toArray();
+                .flatMap(s -> s.offLine() ? Stream.concat(s.series().values().stream(), Stream.of(s.im()))
+                        : s.series().values().stream())
+                .mapToDouble(Double::doubleValue).filter(Double::isFinite).sorted().toArray();
         if (ys.length == 0) return new double[]{-1, 1};
         double lo = ys[0];
         double hi = ys[ys.length - 1];
@@ -126,10 +129,16 @@ final class Chart {
         }
 
         if (style.places()) places(s, view, samples, w, h, text, well, mark);
-        List<Graph.Curve> curves = Graph.curves(samples);
+        List<Graph.Curve> curves = new ArrayList<>(Graph.curves(samples));
         for (int k = 0; k < curves.size(); k++) {
             Graph.Curve c = curves.get(k);
             curve(s, view, c.samples(), coinciding(curves, k), style, w, h, color(c.order(), theme));
+        }
+        Graph.Curve imaginary = Graph.imaginary(samples);
+        if (imaginary != null) {
+            curves.add(imaginary);
+            curve(s, view, imaginary.samples(), coinciding(curves, curves.size() - 1), style, w, h,
+                    theme.color(Look.IMAGINARY));
         }
         return s.picture();
     }
@@ -157,7 +166,7 @@ final class Chart {
         return theme.color(Look.curve(order.power()));
     }
 
-    /** Places with no real number: a dashed line, a dot on the top edge, and the value's own name. */
+    /** Places with no number, real or complex: a dashed line, a dot on the top edge, and the value's own name. */
     private static void places(Sketch s, View view, List<Graph.Sample> samples, double w, double h, double text,
                                Color well, Color mark) {
         double lastLabel = Double.NEGATIVE_INFINITY;

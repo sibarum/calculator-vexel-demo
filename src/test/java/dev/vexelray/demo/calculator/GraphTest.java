@@ -215,14 +215,50 @@ class GraphTest {
     }
 
     @Test
-    void aPowerInAnglesIsMarkedWhereItHasNoRealValue() {
+    void aPowerInAnglesIsAPointWhereItHasOneAndMarkedWhereItHasNone() {
         Model model = new Model();
         model.enter("x^(1/2)");
         Graph g = model.doc().tape().getFirst().graph();
-        assertTrue(at(g, "-1").marker(), "(-1)^(1/2) is i, an L");
-        assertTrue(at(g, "0").marker(), "0^(1/2) is a zero magnitude turned half a turn");
-        assertTrue(at(g, "1").marker());
+        Graph.Sample minusOne = at(g, "-1");
+        assertTrue(minusOne.offLine(), "(-1)^(1/2) is i, an L");
+        assertEquals(0.0, minusOne.y());
+        assertEquals(1.0, minusOne.im());
+        assertTrue(at(g, "0").marker(), "0^(1/2) is a zero magnitude turned half a turn, no complex number");
+        assertEquals(1.0, at(g, "1").y(), "1^(1/2) has no turn, so it is on the line");
+        assertEquals(0.0, at(g, "1").im());
         assertTrue(at(g, "2").refused(), "2 has no exact turn");
+    }
+
+    /**
+     * {@code i^x} is a quarter turn per unit: an {@code L} between the whole numbers and a {@code C} on them, each a
+     * point, so it is {@code cos(πx/2)} on the plain curve and {@code sin(πx/2)} on the imaginary one, with no marker.
+     */
+    @Test
+    void iToTheXIsAQuarterTurnPerUnit() {
+        Graph g = plotted("i^x");
+        assertNotNull(g);
+        assertEquals(0, g.samples().stream().filter(Graph.Sample::marker).count());
+        for (Graph.Sample s : g.samples()) {
+            assertEquals(Math.cos(Math.PI * s.x() / 2), s.y(), 1e-12, s.xText());
+            assertEquals(Math.sin(Math.PI * s.x() / 2), s.im(), 1e-12, s.xText());
+        }
+        assertEquals("i", at(g, "1").value(), "the tape still writes the exact value");
+        assertEquals(0.0, at(g, "1").y(), "a whole quarter turn is exact");
+        assertEquals(1.0, at(g, "1").im());
+        assertEquals(-1.0, at(g, "2").y());
+        assertEquals(0.0, at(g, "2").im());
+
+        Graph.Curve imaginary = Graph.imaginary(g.samples());
+        assertNotNull(imaginary);
+        assertEquals(Math.sqrt(0.5), at(imaginary.samples(), "0.5").y(), 1e-12);
+        assertEquals(-1.0, at(imaginary.samples(), "-1").y());
+        double[] range = Chart.range(g);
+        assertTrue(range[0] < -1 && range[1] > 1, "the frame holds both curves");
+    }
+
+    @Test
+    void aRealCurveHasNoImaginaryOne() {
+        assertNull(Graph.imaginary(plotted("x^2 - 1").samples()));
     }
 
     @Test

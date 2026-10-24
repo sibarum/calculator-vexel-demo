@@ -60,7 +60,7 @@ final class Plot {
         long markers = graph.samples().stream().filter(Graph.Sample::marker).count();
         this.idle = graph.name() + " from " + Graph.FROM + " to " + Graph.TO
                 + (markers == 0 ? "" : "  ·  " + markers + (markers == 1 ? " place" : " places")
-                + " with no real number, marked")
+                + " with no number, marked")
                 + legend(graph);
 
         figure = gui.box().width(Length.FILL).height(HEIGHT).corner(Type.CORNER).textSize(Type.SMALL);
@@ -88,13 +88,17 @@ final class Plot {
         return node;
     }
 
-    /** Each curve but the plain one, and its colour: {@code   ·  0·n in green  ·  ω²·n in red}. */
+    /**
+     * Each curve but the plain one, and its colour: {@code   ·  0·n in green  ·  ω²·n in red}, and the imaginary
+     * parts where there are any.
+     */
     private static String legend(Graph graph) {
         StringBuilder out = new StringBuilder();
         for (Graph.Curve c : Graph.curves(graph.samples())) {
             if (c.order().power() == 0) continue;
             out.append("  ·  ").append(c.order().multiple()).append(" in ").append(Look.curveName(c.order().power()));
         }
+        if (Graph.imaginary(graph.samples()) != null) out.append("  ·  imaginary part in ").append(Look.IMAGINARY_NAME);
         return out.toString();
     }
 

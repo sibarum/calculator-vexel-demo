@@ -82,6 +82,15 @@ final class Look {
         return p -> Oklab.polar(p.accent().l(), p.accent().chroma(), hue).toColor();
     }
 
+    /**
+     * The curve of imaginary parts, beside the plain curve's real parts: the accent turned to lime, a hue no order's
+     * curve has.
+     */
+    static final Role IMAGINARY = p -> Oklab.polar(p.accent().l(), p.accent().chroma(), 110).toColor();
+
+    /** The name of {@link #IMAGINARY}'s colour, for a caption. */
+    static final String IMAGINARY_NAME = "lime";
+
     /** The name of {@link #curve}'s colour, for a caption. */
     static String curveName(int power) {
         return switch (power) {

@@ -536,7 +536,9 @@ final class PlotExplorer implements AutoCloseable {
     /** A reading as the status line says it: the exact value, and its decimal where that says something more. */
     private String describe(Graph.Sample p) {
         String out = graph.name() + " = " + p.xText() + "   →   " + (p.refused() ? "no value" : p.value());
-        if (p.onCurve()) {
+        if (p.offLine()) {
+            out += "      y = " + shortDecimal(p.y()) + "   im = " + shortDecimal(p.im());
+        } else if (p.onCurve()) {
             String y = shortDecimal(p.y());
             if (!y.equals(p.value())) out += "      y = " + y;
         }

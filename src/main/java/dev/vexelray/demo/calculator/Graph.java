@@ -2,6 +2,7 @@ package dev.vexelray.demo.calculator;
 
 import sibarum.cott.algebra.Cancellation;
 import sibarum.cott.algebra.Pair;
+import sibarum.cott.algebra.Readings;
 import sibarum.cott.algebra.Simplifier;
 import sibarum.cott.algebra.TractionAlgebra;
 import sibarum.cott.calculator.CalculatorException;
@@ -39,9 +40,10 @@ import java.util.function.Function;
  * settings have been changed to since.
  *
  * <p>Each sample is read on the real line. Where the value has a real number — a finite double, or a pair whose
- * algebra's meaning comes to one with no zero denominator and no imaginary part — that is its height. Where it has none, the sample is a
- * {@linkplain Sample#marker() marker} carrying the engine's own text for the value ({@code ω}, {@code 0ω},
- * {@code ∞}, a point off the line), to be drawn as a label rather than as a gap or a spike.
+ * algebra's meaning comes to one with no zero denominator and no imaginary part — that is its height. A point off the
+ * line stands at its real part, with its imaginary part on a {@linkplain #imaginary curve of its own}. Where it has
+ * neither, the sample is a {@linkplain Sample#marker() marker} carrying the engine's own text for the value
+ * ({@code ω}, {@code 0ω}, {@code ∞}, {@code 0} turned), to be drawn as a label rather than as a gap or a spike.
  *
  * <p>A multiple of zero or of {@code ω} is read as its multiple, with its {@linkplain Order order} kept beside it:
  * {@code Z(3, 1)} is {@code 0·3} and stands at 3, and {@code Q(3, 0)} and {@code Z(3, −1)} are {@code ω·3} and stand
@@ -155,8 +157,11 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
      * @param series the multiple at each order the value has a term at, power of {@code 0} to coefficient, with no
      *               coefficient {@code 0}: {@code (0 + 3)^2 = 9 + 6·0 + 0^2} is {0: 9, 1: 6, 2: 1}. Null where the
      *               value has no such reading. See {@link #curves}.
+     * @param im     the imaginary part: {@code 0} on the real line, the complex number's own where the value is a point
+     *               off it, as {@code i^(1/2)}, and NaN where {@code y} is. See {@link #imaginary}.
      */
-    record Sample(double x, String xText, String value, double y, Order order, SortedMap<Integer, Double> series) {
+    record Sample(double x, String xText, String value, double y, Order order, SortedMap<Integer, Double> series,
+                  double im) {
 
         Sample {
             series = series == null ? null : Collections.unmodifiableSortedMap(new TreeMap<>(series));
@@ -164,7 +169,8 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
 
         Sample(double x, String xText, String value, double y, Order order) {
             this(x, xText, value, y, order,
-                    value != null && !Double.isNaN(y) ? new TreeMap<>(Map.of(order.power(), y)) : null);
+                    value != null && !Double.isNaN(y) ? new TreeMap<>(Map.of(order.power(), y)) : null,
+                    Double.isNaN(y) ? Double.NaN : 0);
         }
 
         Sample(double x, String xText, String value, double y) {
@@ -175,13 +181,18 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
             return value == null;
         }
 
-        /** Evaluated, but with no real number to put on the y axis. */
+        /** Evaluated, but with no number, real or complex, to put on the y axis. */
         boolean marker() {
             return value != null && Double.isNaN(y);
         }
 
         boolean onCurve() {
             return value != null && !Double.isNaN(y);
+        }
+
+        /** A point off the real line: a complex number with an imaginary part. */
+        boolean offLine() {
+            return onCurve() && im != 0 && !Double.isNaN(im);
         }
     }
 
@@ -207,11 +218,24 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
                 Sample s = samples.get(i);
                 Double c = s.series() == null ? null : s.series().get(order.power());
                 double y = c != null ? c : s.series() == null || pole(samples, i) ? Double.NaN : 0;
-                on.add(new Sample(s.x(), s.xText(), s.value(), y, order, s.series()));
+                on.add(new Sample(s.x(), s.xText(), s.value(), y, order, s.series(), s.im()));
             }
             out.add(new Curve(order, on));
         }
         return out;
+    }
+
+    /**
+     * The imaginary parts, each sample standing at its {@code im}, or null where every sample is on the real line. A
+     * point off the line stands on the plain curve at its real part and here at its imaginary part, so {@code i^x} is
+     * {@code cos(πx/2)} on the one and {@code sin(πx/2)} on the other, through {@code 1}, {@code i}, {@code −1},
+     * {@code −i} at the whole numbers.
+     */
+    static Curve imaginary(List<Sample> samples) {
+        if (samples.stream().noneMatch(Sample::offLine)) return null;
+        List<Sample> on = new ArrayList<>(samples.size());
+        for (Sample s : samples) on.add(new Sample(s.x(), s.xText(), s.value(), s.im(), Order.ONE, null, s.im()));
+        return new Curve(Order.ONE, on);
     }
 
     /** Whether sample {@code i} leads at an order below every neighbour's that has a series. */
@@ -281,7 +305,7 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
             try {
                 Result.Value v = evaluate.apply(bind(expr, name, literal(at)));
                 Reading r = reading(v.value());
-                out.add(new Sample(x, xText, written(v, cancellation), r.y(), r.order(), r.series()));
+                out.add(new Sample(x, xText, written(v, cancellation), r.y(), r.order(), r.series(), r.im()));
             } catch (CalculatorException | SyntaxException | ArithmeticException refused) {
                 if (refusal == null) refusal = refused.getMessage();
                 out.add(new Sample(x, xText, null, Double.NaN));
@@ -308,7 +332,8 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
             if (s.order() != null) continue;
             Order order = neighbour(out, k, -1);
             if (order == null) order = neighbour(out, k, 1);
-            out.set(k, new Sample(s.x(), s.xText(), s.value(), s.y(), order == null ? Order.ONE : order, s.series()));
+            out.set(k, new Sample(s.x(), s.xText(), s.value(), s.y(), order == null ? Order.ONE : order, s.series(),
+                    s.im()));
         }
         return out;
     }
@@ -348,22 +373,36 @@ record Graph(String name, List<Sample> samples, String refusal, Expr expr, Map<M
         return n.signum() < 0 ? new Expr.Neg(magnitude) : magnitude;
     }
 
-    private record Reading(double y, Order order, SortedMap<Integer, Double> series) {
+    private record Reading(double y, Order order, SortedMap<Integer, Double> series, double im) {
     }
 
     /**
      * A value on the real line, with the power of zero it is a multiple of: its {@linkplain #series series} in
      * {@code 0}, read at its leading order, the one that outweighs the rest. {@code (0 + 3)^2 = 9 + 6·0 + 0^2} stands at
      * 9, {@code ω + 1} at {@code ω·1}, and {@code (−1/2)/0 = Q(−1, Z(2, 1))} at {@code ω·(−1/2)}. A value with no series
-     * is marked. A value whose every coefficient is {@code 0} is {@code 0} at any order, so it has none of its own (a
-     * null order), and takes its neighbours'.
+     * is read as a {@linkplain #point point}. A value whose every coefficient is {@code 0} is {@code 0} at any order, so
+     * it has none of its own (a null order), and takes its neighbours'.
      */
     private static Reading reading(Object v) {
         TreeMap<Integer, Double> s = series(v);
-        if (s == null) return new Reading(Double.NaN, Order.ONE, null);
+        if (s == null) return point(v);
         s.values().removeIf(c -> c == 0);
-        if (s.isEmpty()) return new Reading(0, null, s);
-        return new Reading(s.firstEntry().getValue(), new Order(s.firstKey()), s);
+        if (s.isEmpty()) return new Reading(0, null, s, 0);
+        return new Reading(s.firstEntry().getValue(), new Order(s.firstKey()), s, 0);
+    }
+
+    /**
+     * A value off the real line, as the complex number the engine reads it as: its real part on the plain curve and
+     * its imaginary part beside it. {@code i} is {@code C(1, 0)} and {@code i^(1/2)} is {@code L(0/2, 1/8)}, and both
+     * are points. A value that is no complex number ({@code 0} turned, a {@code Z} inside a point, {@code 0/0}), or a
+     * double's infinity, is marked.
+     */
+    private static Reading point(Object v) {
+        double[] z = Readings.complex(v).filter(c -> Double.isFinite(c[0]) && Double.isFinite(c[1])).orElse(null);
+        if (z == null) return new Reading(Double.NaN, Order.ONE, null, Double.NaN);
+        TreeMap<Integer, Double> s = new TreeMap<>();
+        if (z[0] != 0) s.put(0, z[0]);
+        return new Reading(z[0], s.isEmpty() ? null : Order.ONE, s, z[1]);
     }
 
     /**
