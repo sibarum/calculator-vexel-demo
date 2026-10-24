@@ -12,8 +12,8 @@ import dev.vexelray.framework.automation.AutomationStarter;
  * port open or not and anything connected now or earlier; {@code --automation.available=none} leaves them out of a
  * run altogether. The processor generates {@code CalculatorAppWiring} from this.
  */
-@VexelApp(name = Calculator.APP, title = Calculator.TITLE, width = Calculator.W, height = Calculator.H,
-        icon = "/calculator.ico", starters = AutomationStarter.class)
+@VexelApp(name = Calculator.APP, formerNames = Calculator.FORMER, title = Calculator.TITLE, width = Calculator.W,
+        height = Calculator.H, icon = "/calculator.ico", starters = AutomationStarter.class)
 final class CalculatorApp {
 
     private CalculatorApp() {

@@ -28,6 +28,7 @@
     "binaries": [
       {
         "name": "calculator",
+        "appId": "dev.vexelray.demo.calculator-vexel-demo",
         "source": "target-linux/calculator",
         "icon": "src/main/rc/calculator.ico",
         "addToPath": true,
