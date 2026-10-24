@@ -38,8 +38,14 @@ import dev.vexelray.framework.shell.VexelApplication;
  */
 public final class Calculator {
 
-    /** The application's own name, which is what its settings directory is called. Stable across releases. */
-    static final String APP = "calculator-vexel-demo";
+    /**
+     * The application's own name: its settings directory, and its installer id (installer.json), which the build
+     * checks are the same. Stable across releases; a rename lists the old one in {@link #FORMER}.
+     */
+    static final String APP = "calculator";
+
+    /** The names it had before, whose settings directory moves to {@link #APP}'s on the first launch after. */
+    static final String FORMER = "calculator-vexel-demo";
 
     /** The window's title. */
     static final String TITLE = "Calculator";
