@@ -6,7 +6,7 @@
 
     <groupId>dev.vexelray.demo</groupId>
     <artifactId>calculator-vexel-demo</artifactId>
-    <version>0.1.2-SNAPSHOT</version>
+    <version>0.1.2</version>
 
     <name>calculator-vexel-demo</name>
     <description>
@@ -17,11 +17,11 @@
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <vexelray-framework.version>0.1.2-SNAPSHOT</vexelray-framework.version>
-        <vexelray-gui.version>0.1.2-SNAPSHOT</vexelray-gui.version>
-        <vexelray.version>0.1.2-SNAPSHOT</vexelray.version>
-        <tactroller.version>1.2-SNAPSHOT</tactroller.version>
-        <vexelray-codec.version>0.1.2-SNAPSHOT</vexelray-codec.version>
+        <vexelray-framework.version>0.1.2</vexelray-framework.version>
+        <vexelray-gui.version>0.1.2</vexelray-gui.version>
+        <vexelray.version>0.1.2</vexelray.version>
+        <tactroller.version>1.2</tactroller.version>
+        <vexelray-codec.version>0.1.2</vexelray-codec.version>
         <junit.version>5.11.4</junit.version>
 
         <app.mainClass>dev.vexelray.demo.calculator.Calculator</app.mainClass>
@@ -112,7 +112,7 @@
         <dependency>
             <groupId>sibarum.cott</groupId>
             <artifactId>cott-engine</artifactId>
-            <version>0.1.2-SNAPSHOT</version>
+            <version>0.1.2</version>
         </dependency>
 
         <dependency>
@@ -247,7 +247,7 @@
             <plugin>
                 <groupId>dev.vexelray.build</groupId>
                 <artifactId>vexelray-build-maven-plugin</artifactId>
-                <version>0.1.2-SNAPSHOT</version>
+                <version>0.1.2</version>
                 <executions>
                     <execution>
                         <goals>
