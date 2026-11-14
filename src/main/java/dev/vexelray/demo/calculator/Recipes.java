@@ -6,10 +6,7 @@ import dev.vexelray.framework.shell.Appearance;
 import dev.vexelray.framework.shell.Window;
 import dev.vexelray.framework.shell.Windows;
 import dev.vexelray.gui.core.Gui;
-import dev.vexelray.gui.krono.KronoGui;
 import dev.vexelray.gui.widget.TitleBar;
-import sibarum.tactroller.api.Key;
-import sibarum.tactroller.api.Modifier;
 
 /**
  * What this application builds — one recipe per part — and nothing about when.
@@ -77,62 +74,34 @@ final class Recipes {
      * node and supplies every colour in it.
      */
     @Provides
-    Ui ui(Gui gui, Model model, TitleBar titleBar, KronoGui krono) {
-        Ui ui = new Ui(gui, model, titleBar, krono);
-        // Every change to the state redraws what is derived from it, on the committing thread -- which is a
-        // worker, because every control's handler is. The GUI thread never reads the model.
-        model.onChange(ui::show);
+    Ui ui(Gui gui, Model model, TitleBar titleBar) {
+        Ui ui = new Ui(gui, model, titleBar);
         ui.show(model.doc());
-        zoomShortcuts(gui);
         return ui;
     }
 
     /**
-     * The settings window, kept in step with the document the same way the main one is, and the gear that opens it.
+     * The settings window: one drop-down per cott-engine modeset, kept in step with the document by the
+     * {@link Screen}, which also carries out what the gear asks.
      *
      * <p>One declaration: the framework builds the window's tree now, beside the main one, and claims the window
-     * once there is a device, so this needs no window and is not main-thread. The window's handle is safe from any
-     * thread, and its {@code show} is what the gear does.
+     * once there is a device, so this needs no window and is not main-thread. Showing it is a
+     * {@code WindowCommand}, which only a part with a sender can send, so the gear's press goes through the screen.
      */
     @Provides
-    SettingsWindow settingsWindow(Windows windows, Model model, Ui ui) {
-        Window window = windows.named(SettingsWindow.DECLARED);
-        SettingsWindow settings = new SettingsWindow(window, model);
-        // Its own Gui, so its own zoom: the look gave it the range, and the chords are given here.
-        zoomShortcuts(window.gui());
-        model.onChange(settings::show);
+    SettingsWindow settingsWindow(Windows windows, Model model) {
+        SettingsWindow settings = new SettingsWindow(windows.named(SettingsWindow.DECLARED));
         settings.show(model.doc());
-        ui.onSettings(window::show);
         return settings;
     }
 
     /**
      * The plot explorer: a window a plot on the tape pops out into, to be panned, zoomed and read closely. Declared
-     * as the settings window is, and the tape's pop-out buttons open it.
+     * as the settings window is, and the tape's pop-out buttons open it, through the {@link Screen}.
      */
     @Provides
-    PlotExplorer plotExplorer(Windows windows, Model model, Ui ui) {
+    PlotExplorer plotExplorer(Windows windows, Model model) {
         Window window = windows.named(PlotExplorer.DECLARED);
-        PlotExplorer explorer = new PlotExplorer(window, model);
-        zoomShortcuts(window.gui());
-        ui.onExplore(explorer::open);
-        return explorer;
-    }
-
-    /**
-     * Ctrl+= / Ctrl+- / Ctrl+0, and the numpad's three, on every window's {@code Gui}: each has its own zoom.
-     *
-     * <p>An application decision, which is why it is here: which chord zooms, or whether zooming exists at all, is
-     * not something a framework should choose. <b>How far the zoom goes is</b>, and it is not stated here — that is
-     * {@code Appearance.ZoomRange}, applied by the framework before the first widget, so every window on the desk
-     * agrees about it.
-     */
-    private static void zoomShortcuts(Gui gui) {
-        gui.shortcut(Key.EQUAL, gui::zoomIn, Modifier.CONTROL);
-        gui.shortcut(Key.MINUS, gui::zoomOut, Modifier.CONTROL);
-        gui.shortcut(Key.DIGIT_0, gui::resetZoom, Modifier.CONTROL);
-        gui.shortcut(Key.NUMPAD_ADD, gui::zoomIn, Modifier.CONTROL);
-        gui.shortcut(Key.NUMPAD_SUBTRACT, gui::zoomOut, Modifier.CONTROL);
-        gui.shortcut(Key.NUMPAD_0, gui::resetZoom, Modifier.CONTROL);
+        return new PlotExplorer(window, model);
     }
 }

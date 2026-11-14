@@ -78,12 +78,12 @@ frames later.
 
 ### Threading, in one paragraph
 
-The GUI loop runs on its own thread. Every handler — a click, a text change — runs on a worker. They meet at
-`Model`, whose compare-and-set puts concurrent edits in an order, and that is the only synchronisation in the
-application. A listener registered with `Model.onChange` fires on the committing thread, which is also a
-worker; writing a node's props from there is correct and is the framework's own idiom, because a prop written
-off the GUI thread is queued and applied by the next drain. What is not allowed is the other direction:
-nothing inside the frame loop reads the model.
+The widgets, and `Screen`, the application's `@View`, are the GUI thread's: `Screen` hears what the widgets say
+(a press, the entry's Enter, a drop-down's choice, a chord's `Act`) in each frame's widget tick and hands it to the
+`Ui`, the `SettingsWindow` or the `PlotExplorer`. Nothing slow runs there. A line goes to `Evaluate` and a mode change
+to `ChangeMode`, both `@Job`s on the job lane, which commit to `Model`, and when their reply arrives `Screen` draws the
+model's new document into both windows. `Model`'s compare-and-set and its calculator lock put concurrent work in an
+order. The plot explorer still resamples on a thread of its own, as it did in 0.1 (see [TODO](docs/TODO.md)).
 
 To drive the same objects a user does from a test, hold the wiring: `VexelApplication.tree(new CalculatorAppWiring(), args)` builds as far as the tree with no window, and `wiring.model()` and `wiring.ui()` return what `Recipes` built.
 

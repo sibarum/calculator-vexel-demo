@@ -2,30 +2,29 @@ package dev.vexelray.demo.calculator;
 
 import dev.vexelray.canvas.Color;
 import dev.vexelray.gui.core.Gui;
+import dev.vexelray.demo.calculator.Messages.Act;
+import dev.vexelray.demo.calculator.Messages.Action;
+import dev.vexelray.framework.core.CloseRequested;
 import dev.vexelray.gui.core.Node;
+import dev.vexelray.gui.core.NodeEvent;
+import sibarum.atchung.Sender;
+import dev.vexelray.gui.core.Timing;
 import dev.vexelray.gui.core.input.ClaimScope;
 import dev.vexelray.gui.core.input.CursorShape;
-import dev.vexelray.gui.core.input.InputTopics;
 import dev.vexelray.gui.core.input.InteractionState;
 import dev.vexelray.gui.core.input.Shortcut;
 import dev.vexelray.gui.core.layout.NodeLayout;
 import dev.vexelray.gui.core.style.Role;
 import dev.vexelray.gui.draw.Sketch;
-import dev.vexelray.gui.krono.KronoGui;
 import dev.vexelray.gui.widget.Cue;
 import dev.vexelray.gui.widget.Cues;
 import dev.vexelray.gui.widget.TextField;
 import dev.vexelray.gui.widget.Tooltip;
-import sibarum.kronometer.Dur;
-import sibarum.kronometer.anim.Ease;
-import sibarum.tactroller.api.InputEvent;
 import sibarum.tactroller.api.Key;
 import sibarum.tactroller.api.Modifier;
 
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
-import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -62,7 +61,7 @@ final class Reuse {
             Key.NUMPAD_6, Key.NUMPAD_7, Key.NUMPAD_8, Key.NUMPAD_9};
 
     /** How long the ring and the sweep take: an acknowledgement has to be long enough to be noticed. */
-    private static final Dur CUE = Dur.ms(240);
+    private static final Timing CUE = Timing.millis(240, Timing.Curve.LINEAR);
 
     /** The wash's alpha under the pointer, and while the button is held on it. */
     private static final float HOVER_ALPHA = 0.14f;
@@ -95,54 +94,68 @@ final class Reuse {
     /** What the entry said when Up was first pressed, for Down to come back to. */
     private String draft = "";
 
-    private final Set<Key> held = EnumSet.noneOf(Key.class);
+    /** Control and Shift as last held in this window, from the framework's {@code Modifiers}. */
+    private boolean control;
+    private boolean shift;
     private boolean focused;
     /** What the badges were last drawn for: off, or on and over the values, or on and over what was typed. */
     private boolean numbered;
     private boolean numberedTyped;
 
-    Reuse(Gui gui, Model model, TextField entry, Tooltip tips, KronoGui krono) {
+    Reuse(Gui gui, Model model, TextField entry, Tooltip tips) {
         this.gui = gui;
         this.model = model;
         this.entry = entry;
         this.tips = tips;
-        this.cues = new Cues((progress, done) -> krono.ramp(CUE, Ease.LINEAR, progress, done));
+        this.cues = new Cues(gui, CUE);
 
-        // Claims are heard before the field's own keys, and the field is one line, so Up and Down are free.
         Node field = entry.node();
-        gui.claimUi(field, Shortcut.of(Key.UP), ClaimScope.FOCUSED, () -> step(1));
-        gui.claimUi(field, Shortcut.of(Key.DOWN), ClaimScope.FOCUSED, () -> step(-1));
-        for (int i = 0; i < NUMBERED; i++) {
-            int n = i + 1;
-            for (Key k : new Key[]{DIGITS[i], PAD[i]}) {
-                gui.claimUi(field, Shortcut.of(k, Modifier.CONTROL), ClaimScope.FOCUSED, () -> insert(n, false));
-                gui.claimUi(field, Shortcut.of(k, Modifier.CONTROL, Modifier.SHIFT), ClaimScope.FOCUSED,
-                        () -> insert(n, true));
-            }
-        }
-
-        gui.bus().subscribe(gui.focusEvents(), e -> {
+        gui.mailbox(gui.focusEvents(), e -> {
             if (e.nodeId() == field.id()) {
                 synchronized (this) {
                     focused = e.gained();
                     badges(false);
                 }
             }
-        });
-        gui.bus().subscribe(InputTopics.INPUT, e -> {
-            synchronized (this) {
-                switch (e) {
-                    case InputEvent.KeyPressed k -> held.add(k.key());
-                    case InputEvent.KeyReleased k -> held.remove(k.key());
-                    // A key let go in another window never comes back up here.
-                    case InputEvent.FocusChanged f when !f.focused() -> held.clear();
-                    default -> {
-                        return;
-                    }
-                }
-                badges(false);
+        }, 64);
+    }
+
+    /**
+     * The chords, declared once the {@link Screen} hands over what they send. Claims are heard before the field's own
+     * keys, and the field is one line, so Up and Down are free.
+     */
+    void declare(Sender<Act> acts) {
+        Node field = entry.node();
+        String main = CloseRequested.MAIN;
+        gui.claim(field, Shortcut.of(Key.UP), ClaimScope.FOCUSED, acts, new Act(Action.OLDER, main));
+        gui.claim(field, Shortcut.of(Key.DOWN), ClaimScope.FOCUSED, acts, new Act(Action.NEWER, main));
+        for (int i = 0; i < NUMBERED; i++) {
+            int n = i + 1;
+            for (Key k : new Key[]{DIGITS[i], PAD[i]}) {
+                gui.claim(field, Shortcut.of(k, Modifier.CONTROL), ClaimScope.FOCUSED, acts,
+                        new Act(Action.INSERT_VALUE, main, n));
+                gui.claim(field, Shortcut.of(k, Modifier.CONTROL, Modifier.SHIFT), ClaimScope.FOCUSED, acts,
+                        new Act(Action.INSERT_TYPED, main, n));
             }
-        });
+        }
+    }
+
+    /** One of the chords {@link #declare} claimed, heard. */
+    void act(Act act) {
+        switch (act.action()) {
+            case OLDER -> step(1);
+            case NEWER -> step(-1);
+            case INSERT_VALUE -> insert(act.n(), false);
+            case INSERT_TYPED -> insert(act.n(), true);
+            default -> { }
+        }
+    }
+
+    /** Control and Shift as now held in this window. A window losing focus says neither. */
+    synchronized void held(boolean control, boolean shift) {
+        this.control = control;
+        this.shift = shift;
+        badges(false);
     }
 
     /** The entry has been taken: whatever Up had reached, the next Up starts from the newest line again. */
@@ -164,13 +177,13 @@ final class Reuse {
     // ---- clicking ----
 
     private void pick(Node node, String text) {
-        gui.onClick(node, () -> {
+        gui.hear(node, NodeEvent.CLICK, click -> {
             entry.replace(join(entry.text(), entry.text().length(), text));
             gui.focus(entry.node());
             used(node);
         });
         gui.cursor(node, CursorShape.POINTER);
-        gui.onState(node, state -> wash(node, state));
+        gui.hear(node, NodeEvent.STATE, state -> wash(node, state));
         // The click is shown rather than said; only the chord, which nothing on screen can show, is in words.
         tips.attach(node, "Ctrl+number inserts at the caret.");
     }
@@ -219,8 +232,8 @@ final class Reuse {
      * because the rows have: a new line takes 1 and every other number goes up by one.
      */
     private void badges(boolean changed) {
-        boolean on = focused && (held.contains(Key.LEFT_CONTROL) || held.contains(Key.RIGHT_CONTROL));
-        boolean typedOne = held.contains(Key.LEFT_SHIFT) || held.contains(Key.RIGHT_SHIFT);
+        boolean on = focused && control;
+        boolean typedOne = shift;
         if (!changed && on == numbered && (!on || typedOne == numberedTyped)) return;
         if (!on && !numbered) return;
         numbered = on;

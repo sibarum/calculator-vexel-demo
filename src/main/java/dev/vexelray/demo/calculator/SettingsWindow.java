@@ -1,5 +1,6 @@
 package dev.vexelray.demo.calculator;
 
+import dev.vexelray.demo.calculator.Messages.SetMode;
 import dev.vexelray.framework.shell.NamedWindow;
 import dev.vexelray.framework.shell.Window;
 import dev.vexelray.gui.core.Gui;
@@ -40,15 +41,17 @@ final class SettingsWindow implements AutoCloseable {
     static final NamedWindow DECLARED = NamedWindow.of("settings", "Settings", 500, 640).satellite();
 
     private final Gui gui;
+    private final String key;
     private final Map<Modeset, Select<Mode>> selects = new EnumMap<>(Modeset.class);
     private final Map<Modeset, Node> details = new EnumMap<>(Modeset.class);
 
     /**
      * The tree, which needs no window: built beside the main window's, and shown in its own window when the gear
-     * asks. Whatever the two windows have to agree about goes through the {@link Model}.
+     * asks. Whatever the two windows have to agree about goes through the {@link Model}, by way of the {@link Screen}.
      */
-    SettingsWindow(Window window, Model model) {
+    SettingsWindow(Window window) {
         this.gui = window.gui();
+        this.key = window.key();
 
         Node body = gui.column()
                 .width(Length.FILL).height(Length.grow(1f))
@@ -60,11 +63,6 @@ final class SettingsWindow implements AutoCloseable {
 
         for (Modeset modeset : Modeset.values()) {
             Select<Mode> select = new Select<Mode>(gui, SettingsWindow::label).options(modeset.modes());
-            // Back to the main window's entry is the user's move, not this one's: several settings are often
-            // changed together, so the window stays up until it is closed.
-            select.onCommit(chosen -> {
-                if (!chosen.isEmpty()) model.set(chosen.iterator().next());
-            });
             gui.landmark(Landmarks.setting(modeset), select.node());
             selects.put(modeset, select);
 
@@ -83,6 +81,30 @@ final class SettingsWindow implements AutoCloseable {
         gui.root().direction(Direction.COLUMN)
                 .background(gui.theme().color(Role.PAGE))
                 .children(window.titleBar().node(), body);
+    }
+
+    /** The window's key, as its {@code Modifiers}, its {@code WindowCommand}s and its zoom {@code Act}s name it. */
+    String key() {
+        return key;
+    }
+
+    Gui gui() {
+        return gui;
+    }
+
+    /**
+     * What a drop-down's commit asks for, or null when {@code m} is not one of this window's or chose nothing. Back
+     * to the main window's entry is the user's move, not this one's: several settings are often changed together, so
+     * the window stays up until it is closed.
+     */
+    SetMode chosen(Select.Committed m) {
+        for (Map.Entry<Modeset, Select<Mode>> e : selects.entrySet()) {
+            if (!e.getValue().address().equals(m.select())) continue;
+            if (m.chosen().isEmpty() || !(m.chosen().iterator().next() instanceof Mode mode)) return null;
+            int index = e.getKey().modes().indexOf(mode);
+            return index < 0 ? null : new SetMode(e.getKey(), index);
+        }
+        return null;
     }
 
     /** The drop-downs' subscriptions. The tree is the framework's, and it closes it. */

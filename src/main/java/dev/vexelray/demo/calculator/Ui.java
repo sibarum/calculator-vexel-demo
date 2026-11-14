@@ -14,7 +14,6 @@ import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.style.Role;
 import dev.vexelray.gui.icons.Icon;
 import dev.vexelray.gui.icons.IconView;
-import dev.vexelray.gui.krono.KronoGui;
 import dev.vexelray.gui.widget.TextField;
 import dev.vexelray.gui.widget.TitleBar;
 import dev.vexelray.gui.widget.Tooltip;
@@ -25,13 +24,15 @@ import dev.vexelray.gui.typeset.Profile;
 import dev.vexelray.gui.typeset.Recipes;
 import dev.vexelray.gui.typeset.Typeset;
 import dev.vexelray.gui.typeset.TypesetBlock;
-import dev.vexelray.gui.core.input.InputTopics;
-import sibarum.tactroller.api.InputEvent;
+import dev.vexelray.demo.calculator.Messages.Act;
+import dev.vexelray.demo.calculator.Messages.Action;
+import dev.vexelray.framework.core.CloseRequested;
+import dev.vexelray.gui.core.NodeEvent;
+import sibarum.atchung.Sender;
 import sibarum.tactroller.api.Key;
-import sibarum.tactroller.api.Modifier;
 
-import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
@@ -54,8 +55,11 @@ final class Ui {
     private final Tooltip tips;
     private volatile Runnable settings = () -> { };
     private volatile Consumer<Doc.Entry> explore = e -> { };
-    private final List<Plot> plots = new CopyOnWriteArrayList<>();
+    /** Each pop-out button's address, and the line it pops out. */
+    private final Map<String, Doc.Entry> explores = new ConcurrentHashMap<>();
     private final Reuse reuse;
+    private final TextField entry;
+    private final Node gear;
     private int shown;
 
     // The math typesetter a tape answer is written in, or null where the atlas it measures with is missing; then the
@@ -63,7 +67,7 @@ final class Ui {
     private final Profile math = Profile.math();
     private final Typeset typeset;
 
-    Ui(Gui gui, Model model, TitleBar titleBar, KronoGui krono) {
+    Ui(Gui gui, Model model, TitleBar titleBar) {
         this.gui = gui;
         this.typeset = typesetter(math);
 
@@ -86,20 +90,11 @@ final class Ui {
         gui.landmark(Landmarks.ENTRY, entry.node());
 
         tips = new Tooltip(gui);
-        reuse = new Reuse(gui, model, entry, tips, krono);
-        // A refused line stays where it is, to be fixed; a taken one is cleared with replace rather than text,
-        // so Ctrl+Z brings it back.
-        entry.onSubmit(line -> {
-            if (model.enter(line)) {
-                reuse.submitted();
-                entry.replace("");
-                tape.scrollToEdge();
-            }
-        });
+        reuse = new Reuse(gui, model, entry, tips);
+        this.entry = entry;
 
-        Node gear = gear();
+        gear = gear();
         gui.landmark(Landmarks.SETTINGS, gear);
-        gui.shortcut(Key.COMMA, this::openSettings, Modifier.CONTROL);
 
         Node bottom = gui.column()
                 .width(Length.FILL).height(Length.AUTO)
@@ -116,14 +111,53 @@ final class Ui {
                 .background(gui.theme().color(Role.PAGE))
                 .children(titleBar.node(), tape, bottom);
         gui.focus(entry.node());
+    }
 
-        // The framework has no per-node pointer-move hook, so the plots read moves off the input bus and each
-        // hit-tests its own box. Kept for the life of the window.
-        gui.bus().subscribe(InputTopics.INPUT, e -> {
-            if (e instanceof InputEvent.PointerMoved m) {
-                for (Plot p : plots) p.pointer(m.x(), m.y());
-            }
-        });
+    /**
+     * The chords this tree claims, declared once the {@link Screen} hands over what they send: Enter and Space on the
+     * focused gear, and {@link Reuse}'s keys in the entry.
+     */
+    void declare(Sender<Act> acts) {
+        Act settings = new Act(Action.SETTINGS, CloseRequested.MAIN);
+        gui.claim(gear, Shortcut.of(Key.ENTER), ClaimScope.FOCUSED, acts, settings);
+        gui.claim(gear, Shortcut.of(Key.SPACE), ClaimScope.FOCUSED, acts, settings);
+        reuse.declare(acts);
+    }
+
+    /** The entry's address, which its {@code Submitted} carries. */
+    String entryAddress() {
+        return entry.address();
+    }
+
+    /**
+     * The line submitted was taken. A refused line stays where it is, to be fixed; a taken one is cleared with replace
+     * rather than text, so Ctrl+Z brings it back.
+     */
+    void taken() {
+        reuse.submitted();
+        entry.replace("");
+        tape.scrollToEdge();
+    }
+
+    Reuse reuse() {
+        return reuse;
+    }
+
+    /** A button press heard by the {@link Screen}: whether it was one of this tree's pop-out buttons. */
+    boolean pressed(String button) {
+        Doc.Entry e = explores.get(button);
+        if (e == null) return false;
+        explore.accept(e);
+        return true;
+    }
+
+    /** A chord's {@link Act}, if it is this tree's. */
+    void act(Act act) {
+        switch (act.action()) {
+            case SETTINGS -> openSettings();
+            case OLDER, NEWER, INSERT_VALUE, INSERT_TYPED -> reuse.act(act);
+            default -> { }
+        }
     }
 
     /**
@@ -150,7 +184,7 @@ final class Ui {
         if (e.graph() != null) {
             Plot plot = new Plot(gui, e.graph(), () -> explore.accept(e));
             gui.landmark(Landmarks.explore(index + 1), plot.exploreButton());
-            plots.add(plot);
+            explores.put(plot.exploreAddress(), e);
             node.append(plot.node().padding(Length.ZERO, Type.WASH));
         }
         if (!e.readings().isEmpty()) {
@@ -235,12 +269,10 @@ final class Ui {
                 .alignItems(AlignItems.CENTER)
                 .scroll(false, false)
                 .children(mark);
-        gui.onClick(b, this::openSettings);
-        gui.onState(b, state -> b.background(
+        gui.hear(b, NodeEvent.CLICK, click -> openSettings());
+        gui.hear(b, NodeEvent.STATE, state -> b.background(
                 gui.theme().color(state == InteractionState.NORMAL ? Role.NONE : Role.RAISED)));
         gui.focusable(b, true);
-        gui.claim(b, Shortcut.of(Key.ENTER), ClaimScope.FOCUSED, this::openSettings);
-        gui.claim(b, Shortcut.of(Key.SPACE), ClaimScope.FOCUSED, this::openSettings);
         gui.cursor(b, CursorShape.POINTER);
         tips.attach(b, "Settings (Ctrl+,)");
         return b;

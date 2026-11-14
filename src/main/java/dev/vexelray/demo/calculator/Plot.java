@@ -3,6 +3,8 @@ package dev.vexelray.demo.calculator;
 import dev.vexelray.canvas.Color;
 import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.Node;
+import dev.vexelray.gui.core.NodeEvent;
+import dev.vexelray.gui.core.input.PointerEvent;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
 import dev.vexelray.gui.core.layout.Length;
 import dev.vexelray.gui.core.layout.NodeLayout;
@@ -50,7 +52,7 @@ final class Plot {
     private float lineEm = LINE_EM;
     private int fits = Integer.MAX_VALUE;
 
-    /** @param explore what popping this plot out does */
+    /** @param explore what a double-click on the plot does: pops it out, as the button's press does through the {@link Screen} */
     Plot(Gui gui, Graph graph, Runnable explore) {
         this.gui = gui;
         this.graph = graph;
@@ -71,17 +73,17 @@ final class Plot {
         shown = idle;
         this.explore = new IconButton(gui, Icon.POP_OUT, "Open in the plot explorer")
                 .size(Length.rem(1.25f), Length.rem(0.875f))
-                .tip("Open in the plot explorer (or double-click the plot)")
-                .onPress(explore);
+                .tip("Open in the plot explorer (or double-click the plot)");
         node = gui.column().width(Length.FILL).height(Length.AUTO).gap(Type.TIGHT).children(figure,
                 gui.row().width(Length.FILL).gap(Type.GAP).alignItems(AlignItems.CENTER)
                         .children(line, this.explore.node()));
-        gui.onResizeUi(line, layout -> fit());
-        gui.onResizeUi(readout, layout -> fit());
-        gui.onResizeUi(figure, layout -> figure.picture(Chart.draw(view, graph.samples(), Chart.Style.TAPE,
+        gui.hear(line, NodeEvent.RESIZE, layout -> fit());
+        gui.hear(readout, NodeEvent.RESIZE, layout -> fit());
+        gui.hear(figure, NodeEvent.POINTER, this::pointer);
+        gui.hear(figure, NodeEvent.RESIZE, layout -> figure.picture(Chart.draw(view, graph.samples(), Chart.Style.TAPE,
                 gui.theme(), layout.rect().w(), layout.rect().h(),
                 layout.textSizePx() > 0 ? layout.textSizePx() : 11, layout.cornerTopPx())));
-        gui.onDoubleClick(figure, explore);
+        gui.hear(figure, NodeEvent.DOUBLE_CLICK, click -> explore.run());
     }
 
     Node node() {
@@ -107,12 +109,16 @@ final class Plot {
         return explore.node();
     }
 
+    /** The pop-out button's address, which its press carries on {@code Button.PRESSED}. */
+    String exploreAddress() {
+        return explore.address();
+    }
+
     // ---- the pointer ----
 
-    /** The pointer is at {@code (x, y)} in window pixels: mark the nearest sample if it is over the box. */
-    synchronized void pointer(float x, float y) {
-        NodeLayout layout = figure.layout();
-        if (!layout.present() || !layout.visibleRect().contains(x, y)) {
+    /** The pointer over the box, or leaving it: mark the sample nearest it, or take the mark off. */
+    synchronized void pointer(PointerEvent e) {
+        if (!e.over() || e.nodeW() <= 0 || e.nodeH() <= 0) {
             if (hovered != -1) {
                 hovered = -1;
                 figure.overlay(null);
@@ -120,10 +126,10 @@ final class Plot {
             }
             return;
         }
-        double w = layout.rect().w();
-        double h = layout.rect().h();
+        double w = e.nodeW();
+        double h = e.nodeH();
         List<Graph.Sample> all = graph.samples();
-        int i = (int) Math.round((x - layout.rect().x()) / w * (all.size() - 1));
+        int i = (int) Math.round(e.localX() / w * (all.size() - 1));
         i = Math.clamp(i, 0, all.size() - 1);
         if (i == hovered) return;
         hovered = i;

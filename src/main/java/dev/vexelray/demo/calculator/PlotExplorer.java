@@ -7,8 +7,14 @@ import dev.vexelray.gui.core.Gui;
 import dev.vexelray.gui.core.Node;
 import dev.vexelray.gui.core.input.CursorShape;
 import dev.vexelray.gui.core.input.DragEvent;
-import dev.vexelray.gui.core.input.InputTopics;
+import dev.vexelray.demo.calculator.Messages.Act;
+import dev.vexelray.demo.calculator.Messages.Action;
+import dev.vexelray.gui.core.NodeEvent;
 import dev.vexelray.gui.core.input.KeyEvent;
+import dev.vexelray.gui.core.input.Menu;
+import dev.vexelray.gui.core.input.PointerEvent;
+import dev.vexelray.gui.core.input.WheelEvent;
+import sibarum.atchung.Sender;
 import dev.vexelray.gui.core.layout.LayoutEnums.AlignItems;
 import dev.vexelray.gui.core.layout.LayoutEnums.Direction;
 import dev.vexelray.gui.core.layout.Length;
@@ -22,14 +28,14 @@ import dev.vexelray.gui.widget.IconButton;
 import dev.vexelray.gui.widget.Segment;
 import dev.vexelray.gui.widget.StatusBar;
 import sibarum.probe.Log;
-import sibarum.tactroller.api.InputEvent;
 import sibarum.tactroller.api.Modifier;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
@@ -57,9 +63,9 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <h2>Threads</h2>
  *
- * <p>Input arrives on workers and on the bus, sampling finishes on the sampler, and a resize lands on the GUI thread.
- * They all meet at this object's lock, which guards the view, the samples and the pins; a picture is drawn under it
- * so that the last one written is the one for the latest state.
+ * <p>Input arrives on the GUI thread, heard through {@code gui.hear} or handed over by the {@link Screen}, and sampling
+ * finishes on the sampler. They meet at this object's lock, which guards the view, the samples and the pins; a picture
+ * is drawn under it so that the last one written is the one for the latest state.
  */
 final class PlotExplorer implements AutoCloseable {
 
@@ -102,8 +108,21 @@ final class PlotExplorer implements AutoCloseable {
         }
     }
 
+    /** The wheel's step, as vexelray-gui's dispatcher scrolls by it. */
+    private static final double WHEEL_STEP_EM = 3;
+
     private final Window window;
+    private final String key;
     private final Gui gui;
+    /** The tools and the chips by address, for the presses and toggles the {@link Screen} hears. */
+    private final Map<String, Runnable> tools = new HashMap<>();
+    private final Map<String, java.util.function.Consumer<Boolean>> chips = new HashMap<>();
+    private final String densityAddress;
+    private volatile Sender<Act> acts;
+    private boolean menuDeclared;
+    private boolean menuPinned;
+    private boolean heldShift;
+    private boolean heldControl;
     private final Model model;
     private final Node heading;
     private final Node canvas;
@@ -149,6 +168,7 @@ final class PlotExplorer implements AutoCloseable {
 
     PlotExplorer(Window window, Model model) {
         this.window = window;
+        this.key = window.key();
         this.gui = window.gui();
         this.model = model;
 
@@ -180,7 +200,8 @@ final class PlotExplorer implements AutoCloseable {
 
         Segment<Density> samples = new Segment<Density>(gui).undoable(false);
         for (Density d : Density.values()) samples.option(d.label, d);
-        samples.show(Density.NORMAL).onChange(this::density);
+        samples.show(Density.NORMAL);
+        this.densityAddress = samples.address();
         gui.landmark(Landmarks.EXPLORER_DENSITY, samples.node());
 
         Node options = gui.row().width(Length.FILL).height(Length.AUTO).gap(Type.GAP).alignItems(AlignItems.CENTER)
@@ -193,21 +214,11 @@ final class PlotExplorer implements AutoCloseable {
         this.canvas = c;
         gui.landmark(Landmarks.EXPLORER_PLOT, c);
         gui.cursor(c, CursorShape.GRAB);
-        gui.onResizeUi(c, this::laidOut);
-        gui.onDrag(c, this::drag);
-        gui.onKey(c, this::key);
-        gui.onContextMenu(c, menu -> {
-            boolean pinned;
-            synchronized (this) {
-                pinned = !pins.isEmpty();
-            }
-            menu.item(Icon.HOME, "Reset the view", this::reset)
-                    .item(Icon.SCALE, "Fit y to the curve on show", this::fitY)
-                    .item(Icon.ZOOM_IN, "Zoom in", () -> zoom(ZOOM_STEP))
-                    .item(Icon.ZOOM_OUT, "Zoom out", () -> zoom(1 / ZOOM_STEP))
-                    .separator()
-                    .item(Icon.TRASH, "Clear the pinned readings", pinned, this::clearPins);
-        });
+        gui.hear(c, NodeEvent.RESIZE, this::laidOut);
+        gui.hear(c, NodeEvent.DRAG, this::drag);
+        gui.hear(c, NodeEvent.KEY, this::key);
+        gui.hear(c, NodeEvent.POINTER, this::pointer);
+        gui.hear(c, NodeEvent.WHEEL, this::wheel);
         Node area = gui.column().width(Length.FILL).height(Length.grow(1f))
                 .padding(Type.WIDE, Type.EDGE).children(c);
 
@@ -223,14 +234,90 @@ final class PlotExplorer implements AutoCloseable {
                 .background(gui.theme().color(Role.PAGE))
                 .children(window.titleBar().node(), top, options, area, status.node());
 
-        // No per-node hooks for the pointer's moves or the wheel, so both are read off this window's own bus, as the
-        // tape's plots read theirs, and hit-tested against the canvas here.
-        gui.bus().subscribe(InputTopics.INPUT, e -> {
-            if (e instanceof InputEvent.PointerMoved m) pointer(m.x(), m.y());
-            else if (e instanceof InputEvent.Scrolled s) wheel(s);
-        });
-        // Samples nobody can see are not worth the engine's time.
-        window.onClosed(generation::incrementAndGet);
+    }
+
+    /**
+     * What the context menu and the window's zoom chords send, handed over by the {@link Screen}. The menu is declared
+     * now and again whenever whether there are pins to clear changes, since a declared menu is data (T7.5).
+     */
+    void declare(Sender<Act> acts) {
+        this.acts = acts;
+        synchronized (this) {
+            menu();
+        }
+    }
+
+    /** The context menu, as things are now. Holding the lock. */
+    private void menu() {
+        Sender<Act> to = acts;
+        if (to == null) return;
+        boolean pinned = !pins.isEmpty();
+        if (pinned == menuPinned && menuDeclared) return;
+        menuPinned = pinned;
+        menuDeclared = true;
+        gui.menu(canvas, Menu.builder()
+                .item(Icon.HOME, "Reset the view", to, new Act(Action.EXPLORE_RESET, key))
+                .item(Icon.SCALE, "Fit y to the curve on show", to, new Act(Action.EXPLORE_FIT, key))
+                .item(Icon.ZOOM_IN, "Zoom in", to, new Act(Action.EXPLORE_ZOOM_IN, key))
+                .item(Icon.ZOOM_OUT, "Zoom out", to, new Act(Action.EXPLORE_ZOOM_OUT, key))
+                .separator()
+                .item(Icon.TRASH, "Clear the pinned readings", pinned, to, new Act(Action.EXPLORE_CLEAR_PINS, key))
+                .build());
+    }
+
+    /** The window's key, as its {@code Modifiers}, {@code WindowClosed} and {@code Act}s name it. */
+    String key() {
+        return key;
+    }
+
+    Gui gui() {
+        return gui;
+    }
+
+    /** One of the menu's {@link Act}s. */
+    void act(Act act) {
+        switch (act.action()) {
+            case EXPLORE_RESET -> reset();
+            case EXPLORE_FIT -> fitY();
+            case EXPLORE_ZOOM_IN -> zoom(ZOOM_STEP);
+            case EXPLORE_ZOOM_OUT -> zoom(1 / ZOOM_STEP);
+            case EXPLORE_CLEAR_PINS -> clearPins();
+            default -> { }
+        }
+    }
+
+    /** A button's press, heard by the {@link Screen}: whether it was one of this window's tools. */
+    boolean pressed(String button) {
+        Runnable r = tools.get(button);
+        if (r == null) return false;
+        r.run();
+        return true;
+    }
+
+    /** A chip toggled, heard by the {@link Screen}: whether it was one of this window's. */
+    boolean toggled(String button, boolean on) {
+        java.util.function.Consumer<Boolean> c = chips.get(button);
+        if (c == null) return false;
+        c.accept(on);
+        return true;
+    }
+
+    /** The density control moved, heard by the {@link Screen}. */
+    boolean segment(String segment, Object value) {
+        if (!segment.equals(densityAddress) || !(value instanceof Density d)) return false;
+        density(d);
+        return true;
+    }
+
+    /** Shift and Control as now held in this window, for the wheel. */
+    synchronized void held(boolean shift, boolean control) {
+        heldShift = shift;
+        heldControl = control;
+    }
+
+    /** The window was closed: samples nobody can see are not worth the engine's time. */
+    void closed() {
+        generation.incrementAndGet();
     }
 
     /** The sampler. The tree and the subscriptions on it are the framework's, and it closes them. */
@@ -261,7 +348,6 @@ final class PlotExplorer implements AutoCloseable {
             draw();
         }
         window.titleBar().title("Plot: " + line.input());
-        window.show();
         gui.focus(canvas);
         resample();
     }
@@ -559,12 +645,11 @@ final class PlotExplorer implements AutoCloseable {
 
     // ---- the mouse ----
 
-    private void pointer(float x, float y) {
-        NodeLayout layout = canvas.layout();
-        boolean in = layout.present() && layout.visibleRect().contains(x, y);
+    private void pointer(PointerEvent e) {
+        boolean in = e.over();
         synchronized (this) {
-            double px = in ? x - layout.rect().x() : Double.NaN;
-            double py = in ? y - layout.rect().y() : Double.NaN;
+            double px = in ? e.localX() : Double.NaN;
+            double py = in ? e.localY() : Double.NaN;
             if (Double.isNaN(px) && Double.isNaN(pointerX)) return;
             pointerX = px;
             pointerY = py;
@@ -573,23 +658,27 @@ final class PlotExplorer implements AutoCloseable {
         }
     }
 
-    private void wheel(InputEvent.Scrolled e) {
-        NodeLayout layout = canvas.layout();
-        if (!layout.present() || !layout.visibleRect().contains(e.x(), e.y())) return;
-        Set<Modifier> held = gui.modifiers().value();
+    /**
+     * The wheel over the canvas, which comes as a distance at the framework's step of {@value #WHEEL_STEP_EM} em a
+     * notch; turned back into notches here. It zooms about the pointer, which the last {@link #pointer} said.
+     */
+    private void wheel(WheelEvent e) {
         View v;
         synchronized (this) {
             if (graph == null || w <= 0) return;
-            double x = view.x(e.x() - layout.rect().x(), w);
-            double y = view.y(e.y() - layout.rect().y(), h);
+            double notch = WHEEL_STEP_EM * text;
+            double up = -e.dy() / notch;
+            double across = e.dx() / notch;
+            double x = Double.isNaN(pointerX) ? (view.xLo() + view.xHi()) / 2 : view.x(pointerX, w);
+            double y = Double.isNaN(pointerY) ? (view.yLo() + view.yHi()) / 2 : view.y(pointerY, h);
             v = view;
-            if (e.yOffset() != 0) {
-                double f = Math.pow(ZOOM_STEP, e.yOffset());
-                boolean xOnly = held.contains(Modifier.SHIFT) && !equalAxes;
-                boolean yOnly = held.contains(Modifier.CONTROL) && !equalAxes;
+            if (up != 0) {
+                double f = Math.pow(ZOOM_STEP, up);
+                boolean xOnly = heldShift && !equalAxes;
+                boolean yOnly = heldControl && !equalAxes;
                 v = v.zoomed(yOnly ? 1 : f, xOnly ? 1 : f, x, y);
             }
-            if (e.xOffset() != 0) v = v.panned(e.xOffset() * PAN_STEP * v.width(), 0);
+            if (across != 0) v = v.panned(across * PAN_STEP * v.width(), 0);
         }
         move(v);
     }
@@ -645,12 +734,14 @@ final class PlotExplorer implements AutoCloseable {
     private void pin(Graph.Sample p) {
         if (!pins.removeIf(q -> q.xText().equals(p.xText()))) pins.add(p);
         marks();
+        menu();
     }
 
     void clearPins() {
         synchronized (this) {
             pins.clear();
             marks();
+            menu();
         }
     }
 
@@ -708,8 +799,10 @@ final class PlotExplorer implements AutoCloseable {
     }
 
     /** Act as a click on a chip would, so the chip, the picture and the handler agree. */
-    private static void toggle(Button chip) {
-        chip.pressed(!chip.pressed());
+    private void toggle(Button chip) {
+        boolean on = !chip.pressed();
+        chip.pressed(on);
+        toggled(chip.address(), on);
     }
 
     /**
@@ -738,14 +831,15 @@ final class PlotExplorer implements AutoCloseable {
     }
 
     private IconButton tool(Icon icon, String name, String tip, String landmark, Runnable action) {
-        IconButton b = new IconButton(gui, icon, name).tip(tip).onPress(action);
+        IconButton b = new IconButton(gui, icon, name).tip(tip);
+        tools.put(b.address(), action);
         gui.landmark(landmark, b.node());
         return b;
     }
 
     private Button chip(String label, boolean on, String landmark, java.util.function.Consumer<Boolean> action) {
-        Button b = new Button(gui, label).kind(Button.Kind.SECONDARY).toggle(true).undoable(false).show(on)
-                .onToggle(action);
+        Button b = new Button(gui, label).kind(Button.Kind.SECONDARY).toggle(true).undoable(false).show(on);
+        chips.put(b.address(), action);
         gui.landmark(landmark, b.node());
         return b;
     }

@@ -118,3 +118,45 @@ A plot explorer per popped-out plot would be the natural shape, but `Windows.nam
 documents in windows (an image viewer, a second editor) needs windows made at run time. That could be a pool
 declared up front, or a `Windows.open(NamedWindow)` that claims at the next frame.
 
+
+## FN-8 · There is no 0.1 → 0.2 port guide, and the one compile error hides forty more 🔬
+
+Moving this application from the 0.1.3 stack to 0.2.0 (2026-11-14) was described from outside as one processor
+error: `Recipes.ui takes krono, a dev.vexelray.gui.krono.KronoGui, and nothing provides one`. Fixing it uncovered
+the rest, because javac stops at the processor's error. 0.2 took every callback an application held (T7.2), and
+the calculator held about forty, across six classes. The replacements were each findable, but only by reading
+`threading.md` T7.2 to T7.6, vexelray-gui's `docs/reference/seams.md`, the template's `View.java`, and the widget
+sources for each topic. What this application used and what replaced it:
+
+| 0.1 | 0.2 |
+| --- | --- |
+| `KronoGui` in a recipe; `new Cues((p, done) -> krono.ramp(...))` | `new Cues(gui, Timing.millis(240, Timing.Curve.LINEAR))`; a view is handed no `KronoGui` |
+| `IconButton.onPress`, `Button.onToggle`, `TextField.onSubmit`, `Segment.onChange`, `Select.onCommit` | a `@View` hears `Button.Pressed` / `Toggled`, `TextField.Submitted`, `Segment.Changed`, `Select.Committed`, and tells by the widget's `address()` |
+| `gui.onClick`, `onState`, `onResizeUi`, `onDoubleClick`, `onDrag`, `onKey` | `gui.hear(node, NodeEvent.CLICK / STATE / RESIZE / DOUBLE_CLICK / DRAG / KEY, ...)` |
+| `gui.onContextMenu(node, menu -> ...)`, built per click | `gui.menu(node, Menu.builder()...build())`, each item a message, declared again when what it shows changes |
+| `gui.shortcut(key, runnable, mods)`, `gui.claim(node, chord, scope, runnable)`, `claimUi` | `Keymap.action(...).sends(sender, message)` in the main window; `gui.claim(node, chord, scope, sender, message)` elsewhere |
+| `Window.show()`, `Window.onClosed(...)` | send `WindowCommand.show(key)`; hear `WindowClosed` |
+| `gui.modifiers().value()`, held keys off `InputTopics.INPUT` | hear the framework's `Modifiers` |
+| pointer moves and the wheel off `InputTopics.INPUT`, hit-tested by hand | `gui.hear(node, NodeEvent.POINTER / WHEEL, ...)` |
+| `model.onChange(ui::show)` from a worker | a `@Job` does the slow work and the view draws when its reply comes |
+
+The result is `Screen` (the `@View`), `Messages`, and the jobs `Evaluate` and `ChangeMode`. A table like this one
+in vexelray-framework's docs, kept by whoever removes the next 0.1 call, would have made this a few hours shorter,
+and vexelray-maistro and vexelray-sim-physics need the same port.
+
+## FN-9 · `WheelEvent` is a distance with no pointer and no notch count 🔬
+
+The explorer zooms about the pointer, one step of 0.8 a notch. `NodeEvent.WHEEL` gives `WheelEvent(dx, dy)`, a
+distance in layout px at the dispatcher's step, and nothing else. So the explorer turns the distance back into
+notches by dividing by `3 em`, which copies `InputDispatcher.WHEEL_STEP_EM`, a private constant, and it zooms about
+where the last `NodeEvent.POINTER` said the pointer was. A wheel that turns before any pointer move has been heard
+zooms about the middle instead. A wheel event that also carried the pointer's local position and the notches turned
+(or the step it was scaled by) would make both exact.
+
+## FN-10 · Only the main window has a `Keymap`, so a second window's chords are bare claims 🔬
+
+The main window's zoom chords are `Keymap` actions, so the title bar's key button lists them and the person can
+rebind them. A view is handed one `Keymap`, the main window's. The settings window and the plot explorer have their
+own trees and zoom separately, so their Ctrl+= / Ctrl+- / Ctrl+0 are `gui.claim` calls over each root with
+`ClaimScope.VISIBLE`. They work, but no key button lists them and they can't be rebound. A `Keymap` per declared
+window, or `@View(window = ...)` being handed that window's, would close this.
